@@ -1,0 +1,63 @@
+# SkywardRecomp
+
+Work-in-progress static recompilation of *The Legend of Zelda: Skyward Sword HD* (Switch, v1.0.0) into a native
+Windows app with a Vulkan renderer. Derived from [LAS Recomp](https://github.com/peiikai/LASRecomp).
+
+> **Unofficial fan project, not affiliated with or endorsed by Nintendo.** "The Legend of Zelda" and "Skyward Sword"
+> are trademarks of Nintendo. This repository contains **no** game code, assets, fonts, keys or game files.
+> You must supply your own legally obtained copy of the game; the build generates C code locally from your files,
+> and that output (`generated/`, `extracted/`, `input/`) is git-ignored and must never be shared.
+
+## Progress
+
+**Overall: ~55%** (estimate as of 2026-11-16)
+
+```
+[███████████░░░░░░░░░] 55%
+```
+
+| Area | Progress | State |
+|---|---|---|
+| Loader, kernel/HLE services, boot to title screen | `██████████` 100% | done |
+| Threading (condvar lost-wakeup fix), 30 fps pacing | `██████████` 100% | done |
+| Audio (audren voices) | `██████████` 100% | done |
+| Vulkan renderer: textures, depth/stencil, dual-source blend (eyes) | `█████████░` 90% | done, eyes fix not yet re-verified in every scene |
+| Character lighting | `███████░░░` 70% | works, needs more verification |
+| Shadow rendering | `███░░░░░░░` 30% | **bug, under investigation** |
+| Save-file names (`□□` glyphs) | `░░░░░░░░░░` 0% | open |
+| LA-specific HLE modules and address tables replaced for SS | `██░░░░░░░░` 20% | open |
+| 60 fps, ultrawide, resolution options | `░░░░░░░░░░` 0% | not started |
+| Long-session stability / full playthrough | `███░░░░░░░` 30% | 150 s+ runs OK, no full playthrough |
+
+The percentage is a rough milestone estimate, not a measured figure.
+
+## Building (Windows)
+
+See [docs/BUILD-windows.md](docs/BUILD-windows.md) (MSYS2 UCRT64, clang, Vulkan 1.3 GPU, AVX2/FMA CPU).
+
+## Legal
+
+- Code in this repository: MIT, see [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- The license does not cover Nintendo's game or trademarks.
+- Do not open issues or PRs containing game files, keys, extracted data or instructions for obtaining them.
+
+## Credits
+
+SkywardRecomp stands on the work of these projects. Thank you.
+
+- **[LAS Recomp](https://github.com/peiikai/LASRecomp)** by Peiikai: the base of this project (recompiler pipeline,
+  runtime, HLE services, Vulkan backend). MIT.
+- **nxnative** and **MacNativeGames**: the runtime and target layer that LAS Recomp builds on (see
+  `ss-reference/COPIES-mac-port.md` for exact sources). MIT.
+- **Ryujinx**: Maxwell shader translator sources (`third_party/ryujinx`). MIT.
+- **[Dear ImGui](https://github.com/ocornut/imgui)** by Omar Cornut. MIT.
+- **[SMAA](https://github.com/iryoku/smaa)** by Jorge Jimenez et al.
+- **[RenderDoc](https://renderdoc.org)** by Baldur Karlsson: used for GPU capture debugging.
+- **[libnx / switchbrew](https://github.com/switchbrew/libnx)**: Switch OS structures and service references.
+- **BIZ UDPGothic, Baloo 2, DejaVu** fonts: see `third_party/fonts/`.
+
+Not affiliated with any of the above or with Nintendo.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
