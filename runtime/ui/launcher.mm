@@ -15,6 +15,7 @@
 #include <dirent.h>
 #include <pthread.h>
 #include <string>
+#include <thread>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
@@ -431,14 +432,11 @@ static float extract_progress(void) {
 
 // Builds the game code from the copied files (a few minutes); false = failed (the job line says so)
 static bool build_game_code(void) {
-    // The parameters the player (or a build-params.txt) chose; the defaults are what the app was built for.
-    char pwhy[256] = "";
-    GameBuildParams params;
-    if (!gamebuild_params_init(&params, NULL, pwhy, sizeof pwhy)) fprintf(stderr, "[launcher] build parameters: %s\n", pwhy);
-    char desc[GAMEBUILD_CFLAGS_SIZE + 32];
-    gamebuild_params_describe(&params, desc, sizeof desc);
-    fprintf(stderr, "[launcher] game code build: %s\n", desc);
-    GameBuildOpts o = gamebuild_opts(&params, build_progress, build_cancelled);
+    // The build takes the defaults this app was built for; gamebuild_run logs generator, compiler and jobs.
+    GameBuildOpts o = {0};
+    o.progress = build_progress;
+    o.cancelled = build_cancelled;
+    o.jobs = (int)std::thread::hardware_concurrency();
     char why[256] = "";
     g_build_frac = 0;
     bool ok = gamebuild_run(g_root.c_str(), &o, why, sizeof why);

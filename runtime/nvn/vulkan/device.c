@@ -498,6 +498,7 @@ static void create_device(void) {
     b->fillModeNonSolid = h->fillModeNonSolid;
     b->samplerAnisotropy = h->samplerAnisotropy;
     b->textureCompressionBC = h->textureCompressionBC;
+    b->logicOp = h->logicOp;
     b->shaderInt64 = h->shaderInt64;
     b->depthBiasClamp = h->depthBiasClamp;
     b->depthClamp = h->depthClamp;
@@ -509,6 +510,7 @@ static void create_device(void) {
     b->vertexPipelineStoresAndAtomics = h->vertexPipelineStoresAndAtomics;
     b->robustBufferAccess = h->robustBufferAccess;  // guest shaders index cbufs freely: keep OOB reads harmless
     g_vk.ssbo_chunks = h->fragmentStoresAndAtomics && h->vertexPipelineStoresAndAtomics && h->robustBufferAccess;
+    g_vk.logic_op = h->logicOp;
     b->shaderClipDistance = h->shaderClipDistance;
     if (!h->shaderInt64) LOG("[vk] warning: no shaderInt64 (64-bit address math in shaders)\n");
     float prio = 1.0f;
@@ -1134,8 +1136,6 @@ static void present_hooks(void) {
     if (slow_ms > 0 && total_frames > 2600 && (!slow_until || (long)total_frames < slow_until)) SDL_Delay((Uint32)slow_ms);
     extern void fnprof_frame(uint64_t frame);
     fnprof_frame(total_frames);
-    extern void warp_frame(uint64_t frame);
-    warp_frame(total_frames);
     extern void reboot_test_frame(uint64_t frame);  // runtime/main.c (LARECOMP_REBOOT_AT)
     reboot_test_frame(total_frames);
     extern void save_editor_frame(uint64_t frame);

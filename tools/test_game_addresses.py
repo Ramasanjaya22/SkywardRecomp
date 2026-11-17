@@ -39,22 +39,24 @@ parser.add_argument('--game', action='append', default=[], metavar='KEY=FOLDER')
 parser.add_argument('--seeds', type=Path)
 args = parser.parse_args()
 
-# ---- every version: the same names, one header each, distinct values
+# ---- every version: the same names, one header each, distinct non-zero values
+SS_NAMES = set()  # names with a verified SS value; every other name must be 0
 assert list(VERSIONS)[0] == 'v1_0_0'
 tables = {}
 for key in VERSIONS:
     patch_values, runtime_values = load_table(table_path(key)), load_table(table_path(key, 'runtime'))
     assert not patch_values.keys() & runtime_values.keys(), f'{key}: define each address in one header'
     values = patch_values | runtime_values
-    assert len(values) == len(set(values.values())), f'{key}: use the existing name for shared addresses'
+    assert all(v == 0 for name, v in values.items() if name not in SS_NAMES), f'{key}: LA leftover names must be 0'
+    nonzero = [v for v in values.values() if v]
+    assert len(nonzero) == len(set(nonzero)), f'{key}: use the existing name for shared addresses'
     tables[key] = (patch_values, runtime_values)
     if key != 'v1_0_0':  # same names in the same order (the C struct is laid out from v1_0_0's)
         assert list(patch_values) == list(tables['v1_0_0'][0]), f'patches_{key}.h names differ from v1_0_0'
         assert list(runtime_values) == list(tables['v1_0_0'][1]), f'runtime_{key}.h names differ from v1_0_0'
 assert len({bid for _, bid in VERSIONS.values()}) == len(VERSIONS)
-assert version_for_build_id('ae16f71e002af8cb059a9a74c4d90f34ba984892') == 'v1_0_0'
-assert version_for_build_id('909E904AF78AC1B8DEEFE97AB2CCDB51968F0EC7') == 'v1_0_1'
-for bad in ('', 'ae16f71e002af8cb', 'ae16f71e002af8cb059a9a74c4d90f34ba98489200000001', '00' * 20):
+assert version_for_build_id('D824D4B1BBD45D03668380D6D041BA4CA00A64FF') == 'v1_0_0'
+for bad in ('', 'ae16f71e002af8cb059a9a74c4d90f34ba984892', 'ae16f71e002af8cb', 'ae16f71e002af8cb059a9a74c4d90f34ba98489200000001', '00' * 20):
     try:
         version_for_build_id(bad)
     except UnknownGameVersion:
@@ -73,14 +75,7 @@ sys.modules.pop('patches', None)
 select_version('v1_0_0')
 import patches  # noqa: E402
 patch_values, runtime_values = tables['v1_0_0']
-fixture = json.loads((ROOT/'tools/tests/patches_v1_0_0.json').read_text())
-assert set(patches.PATCHES) == {int(a, 16) for a in fixture['patches']}
-for address, expected in fixture['patches'].items():
-    address = int(address, 16)
-    gen = SimpleNamespace(base=address, nso=SimpleNamespace(image=struct.pack('<I', int(expected['word'], 16))))
-    code = patches.PATCHES[address](gen, address)
-    assert hashlib.sha256(code.encode()).hexdigest() == expected['sha256'], f'Patch output changed at {address:x}'
-assert hashlib.sha256(json.dumps(patches.HOOKS, sort_keys=True).encode()).hexdigest() == fixture['hooks_sha256']
+assert not patches.PATCHES and not patches.HOOKS, 'SS has no LA patches or hooks (tools/patches.py clears both)'
 assert addr_text('f_@HAS_ITEM@(c);') == f'f_{ADDRESS.HAS_ITEM:x}(c);'
 try:
     addr_text('@UNKNOWN_ADDRESS@')
@@ -89,14 +84,6 @@ except AttributeError:
 else:
     raise AssertionError('An unknown address name was accepted')
 assert all(a < 0x7004000000 for a in list(patches.PATCHES) + list(patches.HOOKS)), 'patch sites are main addresses'
-# every version: the same patches and hooks, at that version's addresses
-for key in VERSIONS:
-    select_version(key)
-    p = importlib.reload(patches)
-    assert len(p.PATCHES) == len(fixture['patches']) and len(p.HOOKS) == len(patches.HOOKS), key
-    assert set(p.PATCHES) | set(p.HOOKS) <= set(tables[key][0].values()), key
-select_version('v1_0_0')
-patches = importlib.reload(patches)
 
 # ---- the native side: the same values, selected by build ID; release labels
 _tmp = tempfile.TemporaryDirectory()  # (kept to the end: the native helper checks the game files too)
@@ -180,13 +167,12 @@ def fake_game(name, bid, npdm=b'fixture npdm'):
     (d/'main').write_bytes(b'NSO0' + bytes(0x3c) + bytes.fromhex(bid) + bytes(0x0c) + bytes(0x20))
     (d/'main.npdm').write_bytes(npdm)
     return d.parent
-g0, g1 = fake_game('g0', VERSIONS['v1_0_0'][1]), fake_game('g1', VERSIONS['v1_0_1'][1])
+g0 = fake_game('g0', VERSIONS['v1_0_0'][1])
 gx = fake_game('gx', '11' * 20)
 assert native('label', g0/'exefs') == ['1.0.0']
-assert ' '.join(native('label', g1/'exefs')) == '1.0.1 / 1.1.0'  # (an npdm of neither release)
 assert native('label', gx/'exefs') == ['none']
 assert native('label', tmp/'missing') == ['none']
-assert native('select', g1)[:2] == ['1', 'v1_0_1']
+assert native('id', 'ae16f71e002af8cb059a9a74c4d90f34ba984892') == ['none']  # LA's 1.0.0 is refused
 out = native('select', gx)
 assert out[0] == '0' and 'unsupported version' in ' '.join(out), out
 assert native('select', tmp/'missing')[0] == '0'

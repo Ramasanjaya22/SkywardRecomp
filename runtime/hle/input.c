@@ -15,6 +15,7 @@
 #include "../nvn/renderer.h"
 #include "../settings.h"
 #include "../input_bind.h"
+#include "zr_tap.h"
 #include "../rumble.h"
 #include "../led.h"
 #include "../ui/menu.h"
@@ -719,6 +720,16 @@ uint64_t input_buttons_now(void) { return (menu_input_captured() ? 0 : key_butto
 
 static int32_t clamp_axis(int32_t v) { return v > 32767 ? 32767 : v < -32767 ? -32767 : v; }
 
+// Free camera session toggle: a short L press flips it without touching g_settings.free_cam; a longer hold leaves
+// L to the game. free_cam_l_down / free_cam_l_ms are the press edge and its timestamp.
+enum { FREE_CAM_TAP_MS = 300 };
+static bool free_cam_on = true;
+static bool free_cam_l_down;
+static uint64_t free_cam_l_ms;
+static ZrTap zr_tap;
+
+bool input_free_cam_active(void) { return free_cam_on; }  // on-screen indicator state
+
 // NpadFullKeyState / NpadHandheldState / NpadJoy*State share this layout (0x28 bytes):
 // {int64 sampling, u64 buttons, AnalogStick L {x,y}, AnalogStick R {x,y}, u32 attributes}
 static void fill_state(Cpu *c) {
@@ -729,24 +740,7 @@ static void fill_state(Cpu *c) {
     static int nlog;
     if (nlog < 6 && (sampling % 600) == 1) { nlog++; LOG("[input] GetNpadState id %#x lr %llx\n", id, c->x[30]); }
     if (id != 0) return;  // docked: only player 1 (FullKey); Handheld stays disconnected
-    extern void warp_game_tick(Cpu *c);
-    warp_game_tick(c);  // game main thread, once per frame: apply a queued warp
-    { extern void give_item_tick(Cpu *c, uint64_t frame); extern uint64_t renderer_present_count(void);
-      give_item_tick(c, renderer_present_count());
-      extern void chamber_game_tick(Cpu *c, uint64_t frame);
-      chamber_game_tick(c, renderer_present_count());
-      extern void digs_game_tick(Cpu *c, uint64_t frame);
-      digs_game_tick(c, renderer_present_count());
-      extern void pot_bush_game_tick(Cpu *c, uint64_t frame);
-      pot_bush_game_tick(c, renderer_present_count());
-      extern void shell_spots_tick(Cpu *c, uint64_t frame);
-      shell_spots_tick(c, renderer_present_count());
-      extern void qol_tick(void);
-      qol_tick();
-      extern void run_timer_tick(void);
-      run_timer_tick();  // (run timer / LiveSplit: runtime/hle/run_timer.c)
-      extern void pets_game_tick(Cpu *c);
-      pets_game_tick(c); }
+    // LA per-frame ticks (warp, give-item, digs, pets, ...) are not run in SS: they read LA addresses.
     extern uint64_t g_watch_lo, g_watch_hi;
     if (id == 0 && !g_pad_obj) g_pad_obj = c->x[1] - 8;
     if (id == 0 && !g_watch_lo && getenv("LARECOMP_WATCH_PAD")) {
@@ -823,13 +817,55 @@ static void fill_state(Cpu *c) {
         b = tracker_map_input(b, st);
         lx = st[0], ly = st[1], rx = st[2], ry = st[3];
     }
+    // ZR tap -> the game's own jab (right-stick click). In the button-only scheme ZR is the item wheel, so a
+    // tap of it is free; a hold still opens the wheel, and R / ZL keep their own action.
+    if (g_settings.zr_attack) {
+        const bool zr_now = (b >> BTN_ZR) & 1;
+        const bool held_elsewhere = menu || ((b >> BTN_R) & 1) || ((b >> BTN_ZL) & 1);
+        if (zr_tap_step(&zr_tap, zr_now, held_elsewhere, SDL_GetTicks())) b |= 1ull << BTN_RSTICK;
+    } else zr_tap = (ZrTap){0};
     *(uint64_t *)(s + 8) = b;
     static uint64_t last_b;
     if (b != last_b && getenv("LARECOMP_INPUT")) LOG("[input] id %#x buttons %#llx (sampling %lld, lr %llx)\n", id, (unsigned long long)b, (long long)sampling, c->x[30]);
     last_b = b;
+    const int32_t rstick_note_ry = ry;  // raw stick for other features, before free-camera scaling
+    // Free camera: right-stick motion implies L, so the camera turns without holding L. A short L press toggles
+    // the session (setting unchanged); holding L while it is on withholds L and suspends the camera so the stick
+    // swings the sword. ZR/ZL/R held keep it off; free_cam_sens scales the camera stick only.
+    const bool l_now = (b >> BTN_L) & 1;
+    if (g_settings.free_cam) {
+        if (l_now && !free_cam_l_down) {  // press: remember when it started
+            free_cam_l_down = true;
+            free_cam_l_ms = SDL_GetTicks();
+        } else if (!l_now && free_cam_l_down) {  // release: a short tap toggles, a hold does not
+            free_cam_l_down = false;
+            if (SDL_GetTicks() - free_cam_l_ms <= FREE_CAM_TAP_MS) {
+                free_cam_on = !free_cam_on;
+                LOG("[freecam] free camera %s (short L press)\n", free_cam_on ? "on" : "off");
+            }
+        }
+        const bool hold_off = l_now && free_cam_on;  // held L suspends the camera and stays withheld
+        const bool r_held = (b >> BTN_R) & 1;
+        const bool zl_held = (b >> BTN_ZL) & 1;
+        const bool zr_held = (b >> BTN_ZR) & 1;
+        if (hold_off) b &= ~(1ull << BTN_L);  // held L: withhold it so the stick swings the sword
+        // Camera off or those buttons held: only skip synthesis, vanilla L + right stick still works.
+        const bool synth_off = !free_cam_on || hold_off || r_held || zl_held || zr_held;
+        if (!synth_off && (abs(rx) > 8000 || abs(ry) > 8000)) {
+            b |= 1ull << BTN_L;
+            const float sens = g_settings.free_cam_sens;
+            rx = clamp_axis((int32_t)(rx * sens));
+            ry = clamp_axis((int32_t)(ry * sens));
+        }
+    } else {
+        free_cam_on = true;  // re-enabling the setting starts with the camera active
+        if (l_now && !free_cam_l_down) free_cam_l_ms = SDL_GetTicks();
+        free_cam_l_down = l_now;
+    }
+    *(uint64_t *)(s + 8) = b;  // (stored once above; re-stored here with the blocks' own changes)
     *(int32_t *)(s + 16) = lx;
     *(int32_t *)(s + 20) = ly;
-    { extern void input_note_rstick(int32_t ry); input_note_rstick(ry); }
+    { extern void input_note_rstick(int32_t ry); input_note_rstick(rstick_note_ry); }
     *(int32_t *)(s + 24) = rx;
     *(int32_t *)(s + 28) = ry;
     *(uint32_t *)(s + 32) = 1;  // IsConnected

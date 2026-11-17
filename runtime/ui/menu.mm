@@ -41,6 +41,7 @@ bool warp_tab_draw(float scale);  // warp_tab.mm: true when a warp started
 extern "C" void cheats_draw(float scale);  // cheats.mm
 extern "C" void difficulty_draw(float scale);  // difficulty.mm
 void controls_tab_draw(float scale);  // controls_ui.mm
+bool input_free_cam_active(void);  // runtime/hle/input.c
 bool controls_ui_took_back(void);
 bool rando_tab_took_back(void);  // rando_tab.mm: B went back from the Triforce hunt's count
 #include "../input_bind.h"
@@ -416,6 +417,10 @@ static void tab_display(void) {
         g_want_fullscreen_apply.store(true);
     }
     opt_toggle("Show FPS", &g_settings.show_fps, false, "Shows the frame rate in the top right corner.");
+    opt_toggle("Free camera look", &g_settings.free_cam, false, "Move the camera with the right stick without holding L. Tap L to switch it on/off for this session.");
+    if (g_settings.free_cam)
+        opt_slider("Free camera sensitivity", &g_settings.free_cam_sens, 0.25f, 2.0f, 0.05f, 1.0f, "%.2f", "Camera-only right-stick speed.");
+    opt_toggle("ZR sword jab", &g_settings.zr_attack, false, "A tap of ZR jabs with the sword (the right-stick click). Hold ZR still opens the item wheel.");
 
     opt_section("Rendering");
     // display order -> RES_* (the ini / enum order predates the menu order)
@@ -463,10 +468,30 @@ static void tab_display(void) {
         if (opt_choice("Upscaler", &ui, ups, 2, g_default_upscaler == UPSCALE_BILINEAR ? 0 : 1, ud))
             g_settings.upscaler = ui ? UPSCALE_SHARP : UPSCALE_BILINEAR, g_settings.upscaler_auto = false;
     }
+    {   // RCAS is already FSR 1's sharpening pass: expose it without adding a second sharpen shader
+        static const char *sh[] = {"Off", "On"};
+        int v = g_settings.sharpen ? 1 : 0;
+        if (opt_choice("Sharpening", &v, sh, 2, 0, "Contrast-adaptive sharpening of the final image (RCAS)."))
+            g_settings.sharpen = v != 0;
+    }
     static const char *aa[] = {"Off", "SMAA"};
     opt_choice("Anti-aliasing", &g_settings.antialias, aa, 2, AA_OFF,
                "Smooths jagged edges of the game image before it is scaled to the window. SMAA: finds the edges and "
                "blends only along them, so textures stay sharp. Most useful at a lower internal resolution.");
+    static const char *aa[] = {LN("Off"), LN("SMAA")};
+    preview_text(LN("Configure the smoothing of jagged edges. SMAA keeps textures sharp."), NULL);
+    opt_preview("Anti-aliasing", &g_settings.antialias, aa, 2, AA_OFF,
+               "Smooths jagged edges. SMAA keeps textures sharp and helps most at a lower internal resolution.");
+    static const char *ao[] = {LN("Default"), LN("High"), LN("Off")};
+    preview_text(LN("Configure the soft shadows where objects meet the ground and walls."), NULL);
+    opt_preview("Ambient occlusion", &g_settings.ao_quality, ao, 3, AO_SWITCH,
+               "The soft shadows in corners and around objects. High draws them at up to twice the Switch's resolution, "
+               "so their edges are sharper. Off removes them.");
+    static const char *shadows[] = {LN("Default"), LN("High")};
+    preview_text(LN("Configure the shadows that objects and characters cast."), NULL);
+    opt_preview("Shadows", &g_settings.shadow_quality, shadows, 2, SHADOW_DEFAULT,
+               "The shadows that objects and characters cast. High draws them at twice the Switch's resolution, so their "
+               "edges are sharper.");
 
     opt_section("Game");
     opt_toggle("Remove blur", &g_settings.blur_removal, false,
@@ -739,10 +764,10 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     if (prelaunch) tabs[ntabs++] = {"Prelaunch", -1, true};
     static const char *names[] = {"Video", "Audio", "Save Editor", "Randomizer", "Warp", "Cheats", "Gameplay",
                                   "Cosmetics", "Controls", "Quit"};
-    static const int order[] = {8, 0, 1, 6, 7, 3, 5, 4, 2, 9};  // Controls, Video, Audio, Gameplay, Cosmetics, Randomizer,
-                                                                // Cheats, Warp, Save Editor, Quit (ids stay: test hooks)
+    static const int order[] = {8, 0, 1, 6, 7, 9};  // Controls, Video, Audio, Gameplay, Cosmetics, Quit (ids stay: test hooks;
+                                                     // LA tabs 2-5 hidden: they read LA state)
     for (int i : order)  // (Quit: in game only - the start screen has its own QUIT, and an eleventh tab cut names short)
-        if (i != 9 || !prelaunch) tabs[ntabs++] = {names[i], i, in_game || (i != 2 && i != 4 && i != 5)};
+        if (i != 9 || !prelaunch) tabs[ntabs++] = {names[i], i, true};
     int cur = 0;  // g_tab / g_tab_request hold ids
     for (int i = 0; i < ntabs; i++) if (tabs[i].id == g_tab) cur = i;
     if (!tabs[cur].on) cur = 0;
@@ -845,13 +870,6 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 case -1: prelaunch(scale); break;
                 case 0: tab_display(); break;
                 case 1: tab_audio(); break;
-                case 2:
-                    if (game_in_play()) save_editor_draw(scale);
-                    else ImGui::TextDisabled("Load a save file and get into the game to edit it.");
-                    break;
-                case 3: rando_tab_draw(scale); break;
-                case 4: if (warp_tab_draw(scale)) set_open(false); break;
-                case 5: cheats_draw(scale); break;
                 case 6: difficulty_draw(scale); break;
                 case 7: tab_cosmetics(); break;
                 case 8: controls_tab_draw(scale); break;
@@ -892,9 +910,9 @@ void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, v
 }
 
 // Whether menu_render draws anything: the menu, the keyboard, an overlay (FPS, inventory, tracker, chaos, race, a
-// pickup card).
+// pickup card). Free camera keeps this alive so its ON/OFF indicator is drawn even when no other overlay is active.
 static bool render_needed(bool open, bool kbd, bool inv, bool trk, bool trkd, bool chaos, bool race, bool flyin) {
-    return open || kbd || g_settings.show_fps || inv || trk || trkd || chaos || race || flyin;
+    return open || kbd || g_settings.show_fps || inv || trk || trkd || chaos || race || flyin || g_settings.free_cam;
 }
 
 #ifdef __APPLE__
@@ -905,13 +923,9 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     const double tw = target_w, th = target_h;
 #endif
     bool open = g_open.load();
-    bool inv = !open && inventory_overlay_wanted();
-    bool trk = !open && tracker_overlay_wanted();
-    bool trkd = !open && tracker_dungeon_wanted();
-    bool chaos = !open && chaos_overlay_wanted();
+    // LA overlays (inventory, tracker, chaos, race, pickup fly-in) read LA addresses: never drawn over SS
+    bool inv = false, trk = false, trkd = false, chaos = false, race = false, flyin = false;
     bool kbd = g_kbd.load() == 1;
-    bool race = race_overlay_wanted();  // (run timer, race seed hash: race_overlay.mm)
-    bool flyin = pickup_flyin_wanted() && !open;  // (a silent pickup's card)
     if (!render_needed(open, kbd, inv, trk, trkd, chaos, race, flyin)) {
         if (g_inited) { pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock); }
         g_ov_same = 0;  // (shown again: built afresh first)
@@ -941,8 +955,9 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
             pthread_mutex_lock(&q_lock);
             bool events = !q_events.empty();
             pthread_mutex_unlock(&q_lock);
-            if (!events) snprintf(key, sizeof key, "%.0fx%.0f fps %d %.0f | %s", tw, th, (int)g_settings.show_fps,
-                                  g_settings.show_fps ? g_fps_shown : 0.0, rk);
+            if (!events) snprintf(key, sizeof key, "%.0fx%.0f fps %d %.0f | %s%s", tw, th, (int)g_settings.show_fps,
+                                  g_settings.show_fps ? g_fps_shown : 0.0, rk,
+                                  g_settings.free_cam ? (input_free_cam_active() ? " | FREECAM ON" : " | FREECAM OFF") : "");
         }
         ImDrawData *dd = ImGui::GetDrawData();
         if (key[0] && g_ov_same >= 3 && !strcmp(key, g_ov_key) && dd && dd->Valid) {
@@ -1000,6 +1015,17 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         ImGui::Begin("##fps", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                                         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
         ImGui::Text("%.0f fps", g_ov_cache ? g_fps_shown : io.Framerate);
+        ImGui::End();
+    }
+    if (g_settings.free_cam) {
+        // (below the FPS counter when shown; same top-right corner otherwise)
+        float y = 16 * scale;
+        if (g_settings.show_fps) y += ImGui::GetFontSize() + 2 * ImGui::GetStyle().WindowPadding.y + 8 * scale;
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 16 * scale, y), 0, ImVec2(1, 0));
+        ImGui::SetNextWindowBgAlpha(0.5f);
+        ImGui::Begin("##freecam", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                           ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
+        ImGui::Text("FREECAM %s", input_free_cam_active() ? "ON" : "OFF");
         ImGui::End();
     }
 

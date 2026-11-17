@@ -26,6 +26,7 @@ Settings g_settings = {
     .aspect = ASPECT_UNLOCKED,
     .fullscreen = false,
     .volume = 1.0f,
+    .free_cam_sens = 1.0f,
     .reverb = true,
     .movie_audio = true,
     .rumble = true,
@@ -43,6 +44,7 @@ Settings g_settings = {
     .walk_speed_dungeons = false,
     .upscaler = UPSCALE_SHARP,  // (MetalFX on macOS, AMD FSR 1 on Windows)
     .upscaler_auto = true,
+    .sharpen = false,
     .res_auto = true,
     .livesplit_host = "localhost:16834",
 #ifndef __APPLE__
@@ -175,8 +177,14 @@ void settings_load(void) {
             else g_settings.upscaler = g_default_upscaler;
         }
         else if (!strcmp(key, "antialias")) g_settings.antialias = !strcmp(val, "off") ? AA_OFF : AA_SMAA;  // ("fxaa": SMAA now)
+        else if (!strcmp(key, "sharpen")) g_settings.sharpen = atoi(val) != 0;
+        else if (!strcmp(key, "shadows")) g_settings.shadow_quality = !strcmp(val, "high") ? SHADOW_HIGH : SHADOW_DEFAULT;
+        else if (!strcmp(key, "ambient_occlusion")) g_settings.ao_quality = !strcmp(val, "high") ? AO_HIGH : !strcmp(val, "off") ? AO_OFF : AO_SWITCH;
         else if (!strcmp(key, "inv_keys")) g_settings.inv_keys = atoi(val) != 0;
         else if (!strcmp(key, "dpad_move")) g_settings.dpad_move = atoi(val) != 0;
+        else if (!strcmp(key, "free_cam")) g_settings.free_cam = atoi(val) != 0;
+        else if (!strcmp(key, "zr_attack")) g_settings.zr_attack = atoi(val) != 0;
+        else if (!strcmp(key, "free_cam_sens")) g_settings.free_cam_sens = (float)atof(val);
         else if (!strcmp(key, "rumble")) g_settings.rumble = atoi(val) != 0;
         else if (!strcmp(key, "rumble_strength")) g_settings.rumble_strength = atoi(val);
         else if (!strcmp(key, "controller_light")) g_settings.controller_light = atoi(val) != 0;
@@ -239,6 +247,9 @@ void settings_load(void) {
     if (!aspect_key) g_settings.aspect_asked = true;  // (likewise: the aspect ratio was chosen already)
     if (g_settings.volume < 0) g_settings.volume = 0;
     if (g_settings.volume > 2) g_settings.volume = 2;
+    if (!isfinite(g_settings.free_cam_sens)) g_settings.free_cam_sens = 1.0f;  // a hand-edited nan/inf must not reach the ini
+    if (g_settings.free_cam_sens < 0.25f) g_settings.free_cam_sens = 0.25f;
+    if (g_settings.free_cam_sens > 2.0f) g_settings.free_cam_sens = 2.0f;
     if (g_settings.rumble_strength < 25 || g_settings.rumble_strength > 100) g_settings.rumble_strength = 100;
     LOG("[settings] loaded %s\n", SETTINGS_FILE);
 }
@@ -258,9 +269,15 @@ void settings_save(void) {
     fprintf(f, "upscaler = %s\n", g_settings.upscaler_auto ? "auto" : g_settings.upscaler == UPSCALE_METALFX ? "metalfx" :
                                    g_settings.upscaler == UPSCALE_FSR1 ? "fsr1" : "bilinear");
     fprintf(f, "antialias = %s\n", g_settings.antialias == AA_SMAA ? "smaa" : "off");
+    fprintf(f, "sharpen = %d\n", g_settings.sharpen);
+    fprintf(f, "shadows = %s\n", g_settings.shadow_quality == SHADOW_HIGH ? "high" : "default");
+    fprintf(f, "ambient_occlusion = %s\n", g_settings.ao_quality == AO_HIGH ? "high" : g_settings.ao_quality == AO_OFF ? "off" : "switch");
     fprintf(f, "resolution = %s\n", g_settings.res_auto ? "auto" : res_name(g_settings.res_mode));
     fprintf(f, "inv_keys = %d\n", g_settings.inv_keys);
     fprintf(f, "dpad_move = %d\n", g_settings.dpad_move);
+    fprintf(f, "free_cam = %d\n", g_settings.free_cam);
+    fprintf(f, "zr_attack = %d\n", g_settings.zr_attack);
+    fprintf(f, "free_cam_sens = %.2f\n", g_settings.free_cam_sens);
     fprintf(f, "rumble = %d\n", g_settings.rumble);
     fprintf(f, "rumble_strength = %d\n", g_settings.rumble_strength);
     fprintf(f, "controller_light = %d\n", g_settings.controller_light);

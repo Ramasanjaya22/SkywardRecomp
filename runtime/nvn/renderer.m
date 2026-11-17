@@ -2996,6 +2996,7 @@ static void rec_from_state(ShaderRec *r, bool flip_x, uint32_t mode) {
         if (!r->ncolor && st.rt.depth->samples > 1) r->samples = st.rt.depth->samples;
     }
     r->a2c = st.ms[0xC] != 0;
+    r->logic_op = st.color_state[1];
     r->topo = shader_topo_class(mode);
     r->poly_fill = st.poly[2] != 1;
 }

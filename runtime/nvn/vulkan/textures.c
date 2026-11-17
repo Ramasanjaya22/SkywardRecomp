@@ -15,6 +15,8 @@
 #include "../tex_hash.h"
 #include "../renderer.h"
 #include "../texpatch.h"
+#include "../texpack_packs.h"
+#include "../xxh3_128.h"
 
 // ================================================================== formats
 typedef struct { VkFormat vf; uint8_t expand_rgb, alpha_one; } VkFmt;
@@ -203,7 +205,14 @@ static bool tex_guest_sized_ao(const NvnTexture *t) {
     return t->format == 0x1 || (t->format == 0x35 && t->width <= 480);  // R8 unorm / D24S8, 16:9 (checked by the caller)
 }
 
+// The game's shadow map (one 2048x2048 depth-stencil, not 16:9, so the frame's scale never reaches it): its own scale,
+// output_scale_shadow(). Issue #602.
+static bool tex_shadow(const NvnTexture *t) {
+    return output_scale_is_shadow_map(t->target, t->samples, t->width, t->height, t->format, (t->flags & 8) != 0);
+}
+
 static bool tex_scalable(const NvnTexture *t) {
+    if (tex_shadow(t)) return true;  // (its scale can change in the menu: 1 at Default)
     static int off = -1;  // (per texture lookup: cached)
     if (off < 0) off = getenv("LARECOMP_NO_SCALE") != NULL;
     if (off) return false;
@@ -212,6 +221,10 @@ static bool tex_scalable(const NvnTexture *t) {
     if (!(a > 1.74f && a < 1.81f)) return false;  // 16:9 (1920x1080 and its fractions, 704x396, 60x33...)
     return !tex_guest_sized_ao(t);
 }
+// The scale a scalable texture is allocated and drawn at: the ambient occlusion's own, else the frame's
+// (the AO: uniform, by the height's)
+static float tex_alloc_x(const TexBackend *b) { if (b->shadow) return output_scale_shadow(); return b->ao ? output_scale_ao(g_al_y) : g_al_x; }
+static float tex_alloc_y(const TexBackend *b) { if (b->shadow) return output_scale_shadow(); return b->ao ? output_scale_ao(g_al_y) : g_al_y; }
 
 bool renderer_texture_first_write(NvnTexture *t) {
     TexBackend *b = t ? (TexBackend *)t->backend : NULL;
@@ -237,7 +250,7 @@ bool renderer_texture_frame_fresh(NvnTexture *t) {
     TexBackend *b = t ? (TexBackend *)t->backend : NULL;
     extern uint64_t renderer_exec_frame(void);
     uint64_t total_frames = renderer_exec_frame();  // (the frame being translated)
-    if (!b || !b->scalable || b->frame_cleared == total_frames + 1) return false;
+    if (!b || !b->scalable || b->shadow || b->frame_cleared == total_frames + 1) return false;
     // LARECOMP_NO_FRAME_CLEAR skips the clear only while the contents cover the whole target: below 1x a frame draws
     // into part of it, and the rest would show what an earlier frame left there (issue #205: the upper part flickered)
     // (Dynamic: the contents cover the whole target only at the factor 1 - its render scale is the allocation's)
@@ -251,7 +264,7 @@ bool renderer_texture_level_fresh(NvnTexture *t) {
     static int keep = -1;
     if (keep < 0) keep = getenv("LARECOMP_KEEP_TARGETS") != NULL;
     if (!b || keep || b->level_gen == g_level_gen) return false;
-    if (!b->scalable) { b->level_gen = g_level_gen; return false; }
+    if (!b->scalable || b->shadow) { b->level_gen = g_level_gen; return false; }
     bool fresh = b->level_gen != 0;
     b->level_gen = g_level_gen;
     return fresh;
@@ -339,6 +352,10 @@ static void create_image(NvnTexture *t, TexBackend *b) {
     b->ay = b->scalable ? g_al_y : 1;
     b->sx = b->scalable ? g_rs_x : 1;
     b->sy = b->scalable ? g_rs_y : 1;
+    b->ax = b->scalable ? tex_alloc_x(b) : 1;
+    b->ay = b->scalable ? tex_alloc_y(b) : 1;
+    b->sx = b->scalable ? (b->ao || b->shadow ? b->ax : g_rs_x) : 1;
+    b->sy = b->scalable ? (b->ao || b->shadow ? b->ay : g_rs_y) : 1;
     uint32_t tw = t->width ? t->width : 1, th = t->height ? t->height : 1;
     if (b->scalable) {
         tw = (uint32_t)lroundf(tw * b->ax); th = (uint32_t)lroundf(th * b->ay);
@@ -521,6 +538,8 @@ static TexBackend *tex_backend(NvnTexture *t) {
     vk_collect_dead();
     b = calloc(1, sizeof *b);
     b->scalable = tex_scalable(t);
+    b->shadow = tex_shadow(t);
+    b->ao = b->scalable && !b->shadow && tex_ao(t);
     create_image(t, b);
     t->backend = b;
     live_add(t, b);
@@ -535,6 +554,8 @@ void backend_texture_destroyed(NvnTexture *t) {
         live_remove(b);
         destroy_image(b);
         free(b->pending_rgba);
+        if (b->pack) { texpack_packs_dds_free((TexPackDds *)b->pack); free(b->pack); }
+        if (b->pack_png) { texpack_packs_png_free((TexPackPng *)b->pack_png); free(b->pack_png); }
         free(b);
     }
     t->backend = NULL;
@@ -601,6 +622,121 @@ static void upload_pending(TexBackend *b) {
 }
 
 uint64_t prof_tex_checks, prof_tex_samples, prof_tex_full, prof_tex_full_bytes, prof_tex_dyn, prof_tex_watch_skips;
+// Kenji-NX identity (MIT): XXH3-128 of the fully linearized guest texture, all levels and layers.
+static bool pack_select(NvnTexture *t, TexBackend *b, uint64_t guest_hash) {
+    if (b->pack_checked && b->pack_data_hash == guest_hash) return b->pack != NULL;
+    if (!texpack_packs_enabled()) { b->pack_checked = true; b->pack_data_hash = guest_hash; return false; }
+    if (b->pack) { texpack_packs_dds_free((TexPackDds *)b->pack); free(b->pack); b->pack = NULL; }
+    if (b->pack_png) { texpack_packs_png_free((TexPackPng *)b->pack_png); free(b->pack_png); b->pack_png = NULL; }
+    b->pack_checked = true;
+    b->pack_data_hash = guest_hash;
+    if (b->astc_bw) return false;  // no BCn pack can replace an ASTC upload in v1
+
+    VkFmt mf = fmt_of(t->format);
+    uint8_t bc = 0;
+    switch (mf.vf) {
+    case VK_FORMAT_BC1_RGB_UNORM_BLOCK: case VK_FORMAT_BC1_RGB_SRGB_BLOCK:
+    case VK_FORMAT_BC1_RGBA_UNORM_BLOCK: case VK_FORMAT_BC1_RGBA_SRGB_BLOCK: bc = 1; break;
+    case VK_FORMAT_BC2_UNORM_BLOCK: case VK_FORMAT_BC2_SRGB_BLOCK:
+    case VK_FORMAT_BC3_UNORM_BLOCK: case VK_FORMAT_BC3_SRGB_BLOCK: bc = 3; break;
+    case VK_FORMAT_BC5_UNORM_BLOCK: bc = 5; break;
+    case VK_FORMAT_BC7_UNORM_BLOCK: case VK_FORMAT_BC7_SRGB_BLOCK: bc = 7; break;
+    default: break;
+    }
+    if (!bc) return false;
+
+    uint32_t layers = t->layout.layers ? t->layout.layers : 1;
+    if (layers > b->layers && b->depth == 1) layers = b->layers;
+    uint32_t levels = t->layout.levels < b->levels ? t->layout.levels : b->levels;
+    const FormatInfo *fi = t->layout.fmt;
+    uint8_t bpb = fi->bpb;
+    size_t total = 0;
+    for (uint32_t layer = 0; layer < layers; layer++)
+        for (uint32_t lv = 0; lv < levels; lv++) {
+            LevelLayout l = tegra_level(&t->layout, lv);
+            total += (size_t)l.wb * l.hb * l.d * bpb;
+        }
+    if (!total || total > (256u << 20)) return false;
+    uint8_t *buf = (uint8_t *)malloc(total);
+    if (!buf) return false;
+    size_t off = 0;
+    uint64_t layer_size = tegra_layer_size(&t->layout);
+    bool linear = (t->flags & 0x10) != 0;
+    for (uint32_t layer = 0; layer < layers; layer++)
+        for (uint32_t lv = 0; lv < levels; lv++) {
+            LevelLayout l = tegra_level(&t->layout, lv);
+            const uint8_t *src = (const uint8_t *)(uintptr_t)t->addr + layer * layer_size + l.offset;
+            size_t n = (size_t)l.wb * l.hb * l.d * bpb;
+            if (linear) {
+                uint32_t row = l.wb * bpb;
+                for (uint32_t y = 0; y < l.hb * l.d; y++) memcpy(buf + off + (size_t)y * row, src + (size_t)y * t->stride, row);
+            } else {
+                tegra_deswizzle(src, buf + off, l.wb, l.hb, l.d, bpb, l.block_height_log2, l.block_depth_log2);
+            }
+            off += n;
+        }
+    uint64_t hash[2];
+    xxh3_128(buf, total, hash);
+    free(buf);
+
+    char name[256];
+    uint32_t d = (t->layout.depth ? t->layout.depth : 1) * (t->layout.layers ? t->layout.layers : 1);
+    texpack_packs_name(name, sizeof name, t->target, hash, t->layout.width, t->layout.height, d);
+    const char *path = texpack_packs_find(name);
+    if (!path) {  // KenjiNX also writes a level/slice-suffixed name for level 0, slice 0
+        char sliced[256];
+        size_t nl = strlen(name);
+        if (nl > 4) {
+            memcpy(sliced, name, nl - 4);
+            snprintf(sliced + nl - 4, sizeof sliced - (nl - 4), "_0x0.dds");
+            path = texpack_packs_find(sliced);
+        }
+    }
+    bool is_png = false;
+    if (!path) {  // PNG packs use the same hash and size, with a .png extension
+        char pn[256];
+        size_t nl0 = strlen(name);
+        memcpy(pn, name, nl0 - 4);
+        memcpy(pn + nl0 - 4, ".png", 5);
+        path = texpack_packs_find(pn);
+        if (!path && nl0 > 4) {
+            memcpy(pn, name, nl0 - 4);
+            snprintf(pn + nl0 - 4, sizeof pn - (nl0 - 4), "_0x0.png");
+            path = texpack_packs_find(pn);
+        }
+        if (path) is_png = true;
+    }
+    if (!path) {
+        static int misses;
+        if (misses++ < 3) fprintf(stderr, "[texpack] no pack for %s\n", name);
+        return false;
+    }
+    if (is_png) {
+        if (!b->astc_bw) return false;  // RGBA8 cannot replace compressed blocks without re-encoding
+        TexPackPng *png = (TexPackPng *)calloc(1, sizeof *png);
+        if (!png) return false;
+        // The filename's w/h are the guest dimensions; the image itself is often an upscale of them.
+        // Sampling to each level's guest size below is what makes such packs usable.
+        if (!texpack_packs_png_load(path, png) || !png->rgba) {
+            texpack_packs_png_free(png); free(png); return false;
+        }
+        b->pack_png = png;
+        fprintf(stderr, "[texpack] using %s\n", path);
+        return true;
+    }
+    TexPackDds *p = (TexPackDds *)calloc(1, sizeof *p);
+    if (!p) return false;
+    if (!texpack_packs_dds_load(path, p)) { free(p); return false; }
+    if (p->w != t->layout.width || p->h != t->layout.height || p->bc != bc || p->bpb != bpb) {
+        static bool told;
+        if (!told) { told = true; fprintf(stderr, "[texpack] %s: format/size mismatch, using game texture\n", name); }
+        texpack_packs_dds_free(p); free(p); return false;
+    }
+    b->pack = p;
+    fprintf(stderr, "[texpack] using %s\n", name);
+    return true;
+}
+
 static void upload_texture(NvnTexture *t, TexBackend *b) {
     if (!t->addr || t->target == 10) return;
     uint64_t frame = vk_frame_counter();
@@ -650,6 +786,7 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
     extern void slow_note_full_hash(void), slow_note_upload(uint64_t bytes);  // (slowframe.h)
     slow_note_full_hash();
     uint64_t h = fast ? tex_hash_full(mem, total) : hash_full(mem, total);
+    pack_select(t, b, h);
     b->full_frame = frame;
     // (the sample is only compared while the texture isn't dynamic, and a dynamic one stays so: none for those)
     if (!fast) b->sample_hash = fnv_sample(mem, total);
@@ -680,7 +817,12 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
                 else tegra_deswizzle(src, blocks, l.wb, l.hb, 1, 16, l.block_height_log2, l.block_depth_log2);
                 if (b->tp > 0 && layer == 0) texpatch_apply(b->tp - 1, lv, blocks, l.w, l.h, l.wb * 16);
                 VkSpan s = vk_transient((uint64_t)l.w * l.h * 4, 16);
-                astc_decode_ldr(blocks, l.w, l.h, b->astc_bw, b->astc_bh, b->astc_srgb, s.ptr);
+                bool png_used = false;
+                if (b->pack_png) {
+                    const uint8_t *px = texpack_packs_png_sample((TexPackPng *)b->pack_png, l.w, l.h);
+                    if (px) { memcpy(s.ptr, px, (size_t)l.w * l.h * 4); png_used = true; }
+                }
+                if (!png_used) astc_decode_ldr(blocks, l.w, l.h, b->astc_bw, b->astc_bh, b->astc_srgb, s.ptr);
                 free(blocks);
                 VkBufferImageCopy rg = {.bufferOffset = s.off, .bufferRowLength = l.w, .bufferImageHeight = l.h,
                                         .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, lv, layer, 1},
@@ -700,6 +842,15 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
                 for (uint32_t y = 0; y < l.hb; y++) memcpy(lin + (uint64_t)y * row, src + (uint64_t)y * t->stride, row);
             } else {
                 tegra_deswizzle(src, lin, l.wb, l.hb, l.d, fi->bpb, l.block_height_log2, l.block_depth_log2);
+            }
+            if (b->pack && !expand) {
+                const uint8_t *pd; size_t pb; uint32_t pw, ph;
+                if (texpack_packs_dds_level((TexPackDds *)b->pack, lv, &pd, &pb, &pw, &ph) && pb == sz) {
+                    memcpy(lin, pd, pb);
+                } else if (lv == 0) {
+                    static bool told;
+                    if (!told) { told = true; fprintf(stderr, "[texpack] mip missing or size mismatch, using game texture\n"); }
+                }
             }
             if (b->tp > 0 && layer == 0) texpatch_apply(b->tp - 1, lv, lin, l.w, l.h, row);
             if (expand) {  // RGB8 -> RGBA8
@@ -745,6 +896,7 @@ void renderer_mark_gpu_owned(NvnTexture *t) {
     TexBackend *b = tex_backend(t);
     b->gpu_owned = true;
     if (b->scalable) { b->sx = g_rs_x; b->sy = g_rs_y; }
+    if (b->scalable && !b->ao && !b->shadow) { b->sx = g_rs_x; b->sy = g_rs_y; }
 }
 bool renderer_is_gpu_owned(NvnTexture *t) { return tex_backend(t)->gpu_owned; }
 void backend_pool_written(uint64_t addr, uint64_t size) { (void)addr; (void)size; }

@@ -119,6 +119,15 @@ typedef struct {
     bool glsl;               // emit Vulkan GLSL: dialect-specific constructs here, the rest via glsl_rewrite()
     bool uses_gmem_store;    // STG present: the gmem buffer is not readonly
     uint32_t cbuf_need[18];  // highest constant vec4 index + 1 per cbuf (array size of the GLSL block)
+    // GLSL, LARECOMP_VK_STATIC_STACKS: every SYNC / BRK / CONT's target resolved at translation time
+    // (static_stacks_resolve): the pops become plain jumps and the SSY / PBK / PCNT stacks go away
+    bool static_stacks;
+    bool structured;       // LARECOMP_VK_STRUCTURE: branches as nested if / else / do-while (ast_*), no pc state machine
+    int struct_vars;       // its goto flags g0.. (GotoElimination)
+    uint32_t *pop_target;  // per instruction word: the pc a SYNC / BRK / CONT goes to
+    bool ao_taps;          // the AO blur's taps follow rscale[65].y (ao_grid_fix)
+    bool shadow_tap[2];    // the shadow map's texel size (x, y) is read: shadow_taps
+    bool ao_pass;          // the AO pass: white while rscale[65].z > 0 (ao_grid_fix)
 } Ctx;
 
 static uint64_t bits(uint64_t w, int lo, int n) { return (w >> lo) & ((n == 64) ? ~0ull : ((1ull << n) - 1)); }
@@ -172,6 +181,12 @@ static const char *cbuf_ref(Ctx *c, int idx, int64_t off, const char *dyn, char 
     if (off + 16 > (int64_t)c->info->cbuf_size[idx]) c->info->cbuf_size[idx] = (uint32_t)((off + 16 + 255) & ~255);
     if (dyn) c->info->cbuf_dynamic |= 1u << idx;
     if (!dyn && idx < 18 && off >= 0 && (uint32_t)(off >> 4) + 1 > c->cbuf_need[idx]) c->cbuf_need[idx] = (uint32_t)(off >> 4) + 1;
+    if (!dyn && c->stage == STAGE_FRAGMENT && idx == 4 && (off == 0x240 || off == 0x244)) {  // (see shadow_taps)
+        int k = off == 0x244;
+        c->shadow_tap[k] = true;
+        sprintf(buf, "stap%d", k);
+        return buf;
+    }
     if (dyn) sprintf(buf, "cbr(cb%d, (%s) + %lldu)", idx, dyn, (long long)off);
     else sprintf(buf, "cb%d[%lld][%lld]", idx, (long long)(off >> 4), (long long)((off >> 2) & 3));
     return buf;
@@ -903,6 +918,97 @@ static void light_tiles_fix(Ctx *c, const uint64_t *code, size_t end, uint32_t p
     cbuf_ref(c, 4, 0x1c4, NULL, h);  // target height
     cbuf_ref(c, 4, 0x1c0, NULL, w);  // target width
     sp(&c->body, "    r%d = as_type<uint>(as_type<float>(r%d) * (as_type<float>(%s) * as_type<float>(%s) / as_type<float>(%s)));\n", d, d, a, h, w);  // (GLSL: as_type is rewritten)
+}
+
+// The game's ambient occlusion at High (runtime/nvn/output_scale.c output_scale_ao: its targets at up to twice the
+// Switch's size). The AO pass picks a sample rotation from a 4x4 table by pixel: x = uv / texel size, with the game's
+// texel size (1/480, 1/270), so at twice the size two pixels in a row shared a rotation and the pattern was 8 pixels
+// wide (issue #356). Its pixel index (pc 0x50: x, 0x58: y) is scaled by the render target's scale, rscale[0]: the real
+// pixel again, and the same value at the Switch's size. The rest of the pass stays in the game's units: its sample
+// radius (guest pixels times the texel size) is a distance in the image, and the depth it reads is snapped to a
+// 960x540 grid, the size of its depth input.
+// Its blur (a 9-tap Gaussian in 5 bilinear taps, the shader the bloom uses too) has its tap offsets from the vertex
+// shader, in uv of the Switch's size: spread twice as far in pixels, they missed rotations of the pattern and left it
+// as a crosshatch. For the two blurs of the AO itself the renderer sets rscale[65].y to the AO's scale
+// (renderer_ao_blur_scale; 0 for every other draw of this shader), and the offsets from the centre tap (v2) are
+// divided by it: the Switch's blur in pixels. The 240x135 level after it keeps the game's offsets (smooth by then).
+// Ambient occlusion Off: the renderer sets rscale[65].z for the AO pass and its output is 1 (unoccluded), so the
+// blurs after it and the composite that multiplies the scene by it change nothing.
+// LARECOMP_AO_NO_GRID=1 (A/B): the game's own pixel grid at any AO scale.
+static void ao_grid_fix(Ctx *c, const uint64_t *code, size_t end, uint32_t pc) {
+    static int off = -1;
+    if (off < 0) off = getenv("LARECOMP_AO_NO_GRID") != NULL;
+    if (c->stage != STAGE_FRAGMENT) return;
+    static const uint64_t pass[][2] = {{0x8, 0x4c98079404c70005ull}, {0x18, 0x4c98079404d70009ull},
+                                       {0x30, 0x5080000000470505ull}, {0x38, 0x5080000000470909ull},
+                                       {0x50, 0x5c68100000470500ull}, {0x58, 0x5c68100000870901ull}};
+    if ((pc == 0x50 || pc == 0x58) && end > 0x58 / 8) {
+        for (size_t i = 0; i < sizeof pass / sizeof pass[0]; i++)
+            if (code[pass[i][0] / 8] != pass[i][1]) return;
+        int d = pc == 0x50 ? 0 : 1;  // (r0 = x, r1 = y)
+        c->uses_rscale = true;
+        c->ao_taps = c->ao_pass = true;  // (66 rows: [65].z is Off)
+        if (off) return;
+        sp(&c->body, "    r%d = as_type<uint>(as_type<float>(r%d) * rscale[0][%d]);\n", d, d, d);
+        return;
+    }
+    // (the ten IPAs: v1, v0, v2, v3, v4 x / y into r19 r21, r12 r13, r8 r9, r4 r5, r0 r1; then the first sample)
+    static const uint64_t blur[][2] = {{0x8, 0xe003ff890ff7ff13ull}, {0x10, 0xe003ff894ff7ff15ull}, {0x18, 0xe003ff880ff7ff0cull},
+                                       {0x28, 0xe003ff884ff7ff0dull}, {0x30, 0xe003ff8a0ff7ff08ull}, {0x38, 0xe003ff8a4ff7ff09ull},
+                                       {0x48, 0xe003ff8b0ff7ff04ull}, {0x50, 0xe003ff8b4ff7ff05ull}, {0x58, 0xe003ff8c0ff7ff00ull},
+                                       {0x68, 0xe003ff8c4ff7ff01ull}, {0x70, 0xd832008101571312ull}};
+    if (off || pc != 0x68 || end <= 0x70 / 8) return;
+    for (size_t i = 0; i < sizeof blur / sizeof blur[0]; i++)
+        if (code[blur[i][0] / 8] != blur[i][1]) return;
+    c->uses_rscale = true;
+    c->ao_taps = true;
+    static const int tap[4][2] = {{19, 21}, {12, 13}, {4, 5}, {0, 1}};
+    sp(&c->body, "    if (rscale[65][1] > 1.0f) {\n");
+    for (int i = 0; i < 4; i++)
+        for (int k = 0; k < 2; k++)
+            sp(&c->body, "      r%d = as_type<uint>(as_type<float>(r%d) + (as_type<float>(r%d) - as_type<float>(r%d)) / rscale[65][1]);\n",
+               tap[i][k], k ? 9 : 8, tap[i][k], k ? 9 : 8);
+    sp(&c->body, "    }\n");
+}
+
+// The game's shadow lookups (issue #602): four compare taps on its shadow map (a 2D array sampler, one layer), offset
+// by the texel size the game writes to its scene constants (c4[0x240]: 1/2048, 1/2048). With the map larger than the
+// game's size (output_scale_shadow) the taps stay that far apart in the map, so the edges stay as wide as the Switch's.
+// The texel size is divided by the map's scale, rscale[1 + slot].x: the real texel again, and the game's value at the
+// Switch's size. The reads go through a local set at the start, so a raw move of the constant is covered too. Without
+// a shadow array in the shader c4[0x240] is something else and is left alone.
+static void shadow_taps(Ctx *c, Str *s) {
+    int slot = -1;
+    for (int i = 0; i < c->info->ntex && slot < 0; i++)
+        if (c->info->tex[i].shadow && c->info->tex[i].type == TEXTYPE_2D_ARRAY) slot = i;
+    for (int k = 0; k < 2; k++) {
+        if (!c->shadow_tap[k]) continue;
+        if (slot >= 0 && c->uses_rscale)
+            sp(s, c->glsl ? "  uint stap%d = floatBitsToUint(uintBitsToFloat(cb4[36][%d]) / rscale[%d][0]);\n"
+                          : "  uint stap%d = as_type<uint>(as_type<float>(cb4[36][%d]) / rscale[%d][0]);\n", k, k, slot + 1);
+        else
+            sp(s, "  uint stap%d = cb4[36][%d];\n", k, k);
+    }
+}
+
+// A push / pop on stack `n` (ssy, pbk, pcnt). GLSL (maxwell_glsl_stack_vars, shader.h): 16 named variables, the
+// index masked; otherwise (and MSL) an array of 16.
+static void stack_push(Ctx *c, const char *n, uint32_t v) {
+    if (c->static_stacks) return;  // (its pops know their target)
+    if (!c->glsl || !maxwell_glsl_stack_vars) { sp(&c->body, "    %s[%s_n++] = %uu;\n", n, n, v); return; }
+    sp(&c->body, "    { uint i_ = (%s_n++) & 15u;", n);
+    for (int k = 0; k < 16; k++) sp(&c->body, " %sif (i_ == %du) %s%d = %uu;", k ? "else " : "", k, n, k, v);
+    sp(&c->body, " }\n");
+}
+static void stack_pop(Ctx *c, const char *n, bool keep, uint32_t pc) {  // keep: the top stays (CONT)
+    if (c->static_stacks) { sp(&c->body, "    pc = %uu; continue;\n", c->pop_target[pc / 8]); return; }
+    if (!c->glsl || !maxwell_glsl_stack_vars) {
+        sp(&c->body, keep ? "    pc = %s[%s_n - 1]; continue;\n" : "    pc = %s[--%s_n]; continue;\n", n, n);
+        return;
+    }
+    sp(&c->body, keep ? "    { uint i_ = (%s_n - 1u) & 15u; pc = " : "    { uint i_ = (--%s_n) & 15u; pc = ", n);
+    for (int k = 0; k < 15; k++) sp(&c->body, "i_ == %du ? %s%d : ", k, n, k);
+    sp(&c->body, "%s15; } continue;\n", n);
 }
 
 static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
@@ -2122,6 +2228,7 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     }
     for (int i = 0; i < 256; i++)
         if (c->reg_used[i]) sp(&s, "  uint r%d = 0u;\n", i);
+    shadow_taps(c, &s);
     for (int i = 0; i < 7; i++)
         if (c->pred_used[i]) sp(&s, "  bool p%d = false;\n", i);
     if (c->uses_cc) sp(&s, "  uint cc = 0u; bool ccz = false, ccs = false;\n");
@@ -2419,6 +2526,7 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
         for (int i = 0; i < info->ntex; i++) sp(&s, "  sampler s%d = ss[smap[%d]];\n", i, i);
     for (int i = 0; i < 256; i++)
         if (c->reg_used[i]) sp(&s, "  uint r%d = 0;\n", i);
+    shadow_taps(c, &s);
     for (int i = 0; i < 7; i++)
         if (c->pred_used[i]) sp(&s, "  bool p%d = false;\n", i);
     if (c->uses_cc) sp(&s, "  uint cc = 0; bool ccz = false, ccs = false;\n");

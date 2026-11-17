@@ -27,6 +27,32 @@ with tempfile.TemporaryDirectory() as directory:
                   ('auto', {'LC_ALL': 'zh_CN.UTF-8', 'LC_MESSAGES': 'zh_HK.UTF-8'}, 'zh-Hans'),
                   ('auto', {'LC_ALL': 'ja_JP.UTF-8'}, 'ja'), ('auto', {'LC_ALL': 'C'}, 'en-US')]
     count = 0
+    # free camera: the toggle and right-stick scale round-trip; out-of-range scales clamp to 0.25..2.0
+    for lines, enabled, sens in [
+        (['free_cam = 1'], '1', '1.00'),
+        (['free_cam = 1', 'free_cam_sens = 1.50'], '1', '1.50'),
+        (['free_cam = 1', 'free_cam_sens = 5.0'], '1', '2.00'),
+        (['free_cam = 1', 'free_cam_sens = 0.01'], '1', '0.25'),
+        (['free_cam = 0'], '0', '1.00'),
+        (['free_cam = 1', 'free_cam_sens = nan'], '1', '1.00'),
+    ]:
+        ini = directory / 'test.ini'
+        ini.write_text('\n'.join(lines) + '\n')
+        subprocess.run([str(exe), 'free-cam', enabled, sens], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)), check=True,
+                       capture_output=True)
+        saved = ini.read_text()
+        for line in ('free_cam = ' + enabled, 'free_cam_sens = ' + sens):
+            assert line + '\n' in saved, (lines, saved)
+        count += 1
+    # ZR sword jab: the toggle round-trips and stays off unless the file asks for it
+    for lines, enabled in [(['zr_attack = 1'], '1'), (['zr_attack = 0'], '0'), ([], '0'), (['zr_attack = 2'], '1')]:
+        ini = directory / 'test.ini'
+        ini.write_text('\n'.join(lines) + '\n')
+        subprocess.run([str(exe), 'zr-attack', enabled], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)), check=True,
+                       capture_output=True)
+        saved = ini.read_text()
+        assert 'zr_attack = ' + enabled + '\n' in saved, (lines, saved)
+        count += 1
     for newline in ['\n', '\r\n']:
         for setting, locale, code in cases:
             for seed in ['Regression seed', '']:
@@ -61,6 +87,13 @@ with tempfile.TemporaryDirectory() as directory:
         env.pop('LARECOMP_INTEGRATED', None)
         subprocess.run([str(exe), mode], env=env, check=True, capture_output=True)
         assert f'resolution = {saved}\n' in ini.read_text(), (lines, ini.read_text())
+        count += 1
+    # Shadows (issue #602): Default unless the file says High, and written back the same way
+    for lines, saved in [([], 'default'), (['shadows = default'], 'default'), (['shadows = high'], 'high'), (['shadows = ultra'], 'default')]:
+        ini = directory / 'test.ini'
+        ini.write_text('\n'.join(['resolution = 1x'] + lines) + '\n')
+        subprocess.run([str(exe), 'res-chosen'], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)), check=True, capture_output=True)
+        assert f'shadows = {saved}\n' in ini.read_text(), (lines, ini.read_text())
         count += 1
     # Cosmetics colour rows (shared palette): older names map onto it, Custom is a hex value, unknown -> Default
     ini = directory / 'test.ini'

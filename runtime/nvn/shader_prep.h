@@ -39,6 +39,7 @@ typedef struct {
     uint32_t channel_mask;   // color write masks, 4 bits per target
     uint8_t blend_on;        // blending enabled, 1 bit per target
     uint8_t blend[8][8];     // NVN blend state per target (zero where blending is off)
+    uint8_t logic_op;        // NVN color-state logic op (3: COPY, 7: OR)
     uint8_t a2c;             // alpha to coverage
     uint8_t topo;            // primitive class: 0 points, 1 lines, 2 triangles
     uint8_t poly_fill;       // filled polygons (0: lines)

@@ -419,6 +419,44 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
 double output_scale_dynamic_factor(void) { return g_dyn; }
 double output_scale_dynamic_hold_fps(void) { return g_hold_dt > 0 ? 1000 / g_hold_dt : 0; }
 
+// The game's ambient occlusion is drawn at a quarter of 1080p (480x270, then blurred, and a 240x135 level) and kept at
+// that size at every render scale (issue #356: scaled with it, its sample pattern fell apart - see metal.m tex_ao).
+// Stretched over a large frame it is soft and flickers at the edges of objects (issue #602). High draws it at the size
+// of the depth it is made from (the depth pyramid's 960x540 level, at the render scale) - twice the Switch's at 1x and
+// up, at four times the AO's cost (a sixteenth of a 4K frame's pixels) - and never below the Switch's size. The
+// shaders are told the real pixel grid (maxwell/translate.c ao_grid_fix). By the allocation scale `al`, which Dynamic
+// resolution keeps (no reallocation at its steps). LARECOMP_AO_SCALE=<n> (test): n times the Switch's size.
+float output_scale_ao(float al) {
+    static int mode = -1;  // (-1: unread, 0: the setting, 1: scaled with the frame, 2: LARECOMP_AO_SCALE)
+    static float test;
+    if (mode < 0) {
+        const char *e = getenv("LARECOMP_AO_SCALE");
+        test = e ? (float)atof(e) : 0;
+        mode = getenv("LARECOMP_AO_SCALED") ? 1 : test >= 1 && test <= 4 ? 2 : 0;
+    }
+    if (mode == 1) return 0;
+    if (mode == 2) return test;
+    return g_settings.ao_quality == AO_HIGH ? fminf(2, fmaxf(1, 2 * al)) : 1;
+}
+
+// The game's shadow map: one 2048x2048 D24S8 render target for the whole scene (2D, not multisampled). Lit shaders take
+// four compare taps one texel apart, in the game's texel size (maxwell/translate.c shadow_taps).
+bool output_scale_is_shadow_map(uint32_t target, uint32_t samples, uint32_t w, uint32_t h, uint32_t format, bool render_target) {
+    return target == 1 && samples <= 1 && w == 2048 && h == 2048 && format == 0x35 && render_target;
+}
+
+// Its scale: the Switch's size, or twice it (High), at any render scale. At four times the size the edges gained
+// little more for 300 MB. LARECOMP_SHADOW_SCALE=<n> (test): n times the Switch's size.
+float output_scale_shadow(void) {
+    static float test = -1;
+    if (test < 0) {
+        const char *e = getenv("LARECOMP_SHADOW_SCALE");
+        test = e ? (float)atof(e) : 0;
+    }
+    if (test >= 1 && test <= 4) return test;
+    return g_settings.shadow_quality == SHADOW_HIGH ? 2 : 1;
+}
+
 void output_scale_log(unsigned long long frame, double dw, double dh, const OutScale *o) {
     static double psx, psy, pdw, pdh;
     static int nlog;

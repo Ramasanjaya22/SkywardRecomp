@@ -59,7 +59,7 @@ static void steady_clock(Service *s, IpcReq *req, IpcResp *resp) {
 static void to_calendar(int64_t t, IpcResp *resp, int utc) {
     time_t tt = (time_t)t;
     struct tm tm;
-    if (utc) gmtime_r(&tt, &tm); else localtime_r(&tt, &tm);
+    if (utc) { gmtime_s(&tm, &tt); } else { localtime_s(&tm, &tt); }
     uint8_t *o = resp->data;
     *(uint16_t *)o = (uint16_t)(tm.tm_year + 1900);
     o[2] = (uint8_t)(tm.tm_mon + 1); o[3] = (uint8_t)tm.tm_mday;
@@ -68,7 +68,7 @@ static void to_calendar(int64_t t, IpcResp *resp, int utc) {
     *(uint32_t *)(o + 12) = (uint32_t)tm.tm_yday;
 #ifdef _WIN32  // no tm_zone / tm_gmtoff: offset = local broken-down time read back as UTC, minus now
     struct tm g;
-    gmtime_r(&tt, &g);
+    gmtime_s(&g, &tt);
     long gmtoff = (long)difftime(_mkgmtime(&tm), _mkgmtime(&g));
     memcpy(o + 16, utc ? "UTC" : "LCL", 4);
 #else

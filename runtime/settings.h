@@ -13,6 +13,8 @@ enum { UPSCALE_BILINEAR = 0, UPSCALE_METALFX = 1 /* macOS */, UPSCALE_FSR1 = 2 /
 #define UPSCALE_SHARP UPSCALE_FSR1
 #endif
 enum { AA_OFF = 0, AA_SMAA = 1 };
+enum { SHADOW_DEFAULT = 0, SHADOW_HIGH = 1 };  // the game's shadow map: the Switch's size or twice it (output_scale_shadow)
+enum { AO_SWITCH = 0, AO_HIGH = 1, AO_OFF = 2 };  // the game's ambient occlusion: the Switch's size, up to twice it (output_scale_ao), or none
 enum { PROMPTS_AUTO = 0, PROMPTS_NINTENDO = 1, PROMPTS_XBOX = 2, PROMPTS_PLAYSTATION = 3 };
 // Which face button confirms in our own menus (runtime/ui/pad_nav.mm); the game's input is never affected
 enum { MENU_CONFIRM_GAME = 0, MENU_CONFIRM_CONTROLLER = 1 };
@@ -32,14 +34,20 @@ typedef struct {
     bool res_auto;       // never chosen: the default for this GPU (settings_resolve_defaults); saved as "auto"
     int upscaler;        // UPSCALE_*: how a lower internal resolution reaches the window (MetalFX: macOS, FSR 1: Windows)
     bool upscaler_auto;  // never chosen: the default for this GPU (settings_resolve_defaults); saved as "auto"
+    bool sharpen;        // contrast-adaptive sharpening of the final image (Vulkan RCAS), independent of upscaling
     int antialias;       // AA_*: anti-aliasing of the game image before it is scaled to the window
     int anisotropy;      // forced anisotropic filtering for mipmapped textures: 0 = the game's own, else 2/4/8/16
     float lod_bias;      // added to the game's mip LOD bias, -2..0 (negative = sharper textures)
+    int ao_quality;      // AO_*: the resolution of the game's ambient occlusion
+    int shadow_quality;  // SHADOW_*: the resolution of the game's shadow map
     float volume;        // master volume, 1 = 100%
     bool reverb;         // room reverb effect
     bool movie_audio;
     bool show_fps;
     bool dpad_move;      // the d-pad (and arrow keys) move Link like the stick
+    bool free_cam;       // free camera without holding L
+    bool zr_attack;      // a ZR tap jabs with the sword (runtime/hle/zr_tap.h)
+    float free_cam_sens; /* camera-only right-stick scale, 0.25..2.0 */
     bool rumble;         // controller vibration from the game (runtime/hle/input.c)
     int rumble_strength; // its intensity, percent (25 / 50 / 75 / 100)
     bool controller_light; // the controller's light bar shows Link's health (runtime/led.h, hle/input.c)

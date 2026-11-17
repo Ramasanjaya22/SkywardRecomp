@@ -35,6 +35,15 @@ The percentage is a rough milestone estimate, not a measured figure.
 
 See [docs/BUILD-windows.md](docs/BUILD-windows.md) (MSYS2 UCRT64, clang, Vulkan 1.3 GPU, AVX2/FMA CPU).
 
+## Texture packs (Vulkan, experimental)
+
+Put your own DDS files in `textures/` under the data root (next to `extracted/` and `save/`). Filenames follow
+Kenji-NX: `<prefix>_<32 hex XXH3-128>_<w>x<h>x<d>.dds`, for example `tex2d_99aa06d3014798d86001c324468d497f_1024x1024x1.dds`.
+Only BC1, BC3, BC5 and BC7 files that match the game texture's format and top-level dimensions are used; a missing
+file, a wrong format or a short mip chain is logged once and the game texture is kept. Kenji-NX's level/slice form
+(`..._0x0.dds`) is accepted too. 8-bit RGB/RGBA PNG packs are also read: their image is sampled to the game
+texture's size (and to each mip), for ASTC textures. No texture packs ship with the app.
+
 ## Legal
 
 - Code in this repository: MIT, see [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
@@ -50,6 +59,7 @@ SkywardRecomp stands on the work of these projects. Thank you.
 - **nxnative** and **MacNativeGames**: the runtime and target layer that LAS Recomp builds on (see
   `ss-reference/COPIES-mac-port.md` for exact sources). MIT.
 - **Ryujinx**: Maxwell shader translator sources (`third_party/ryujinx`). MIT.
+- **[Kenji-NX](https://git.ryujinx.app/projects/Kenji-NX)**: texture-pack filename scheme and XXH3-128 identity (`runtime/nvn/xxh3_128.c`). MIT.
 - **[Dear ImGui](https://github.com/ocornut/imgui)** by Omar Cornut. MIT.
 - **[SMAA](https://github.com/iryoku/smaa)** by Jorge Jimenez et al.
 - **[RenderDoc](https://renderdoc.org)** by Baldur Karlsson: used for GPU capture debugging.

@@ -39,6 +39,7 @@ typedef struct {
     // VK_EXT_vertex_input_dynamic_state (exec.c): the vertex layout is set per draw (vkCmdSetVertexInputEXT), not
     // baked into each pipeline - fewer pipelines. Off: no extension / feature, or LARECOMP_VK_DYN_VERTEX=0.
     bool vids;
+    bool logic_op;  // VK_EXT logic op feature (exec.c: NVN ColorState logic op on the color blend state)
     PFN_vkCmdSetVertexInputEXT set_vertex_input;
     // LARECOMP_VK_GPL_PROBE=1 only (exec.c gpl_probe, measurement): VK_EXT_graphics_pipeline_library enabled
     bool gpl_probe;
@@ -112,6 +113,10 @@ typedef struct TexBackend {
     bool astc_srgb;
     int tp;              // runtime/nvn/texpatch.c: 0 not checked yet, -1 none, else known UI texture + 1
     uint32_t tp_gen;     // texpatch_generation() it was last uploaded with
+    void *pack;              // user-supplied DDS replacement (runtime/nvn/texpack_packs.h)
+    void *pack_png;          // user-supplied PNG replacement (decoded RGBA8)
+    uint64_t pack_data_hash; // guest data hash this replacement was chosen for
+    bool pack_checked;
     int reg;  // slot in textures.c's live list + 1 (a reboot destroys them all)
     // (g_vk.lean_usage) the only formats views of this image may have: nview_fmt 0 = any compatible one
     VkFormat view_fmt[2];

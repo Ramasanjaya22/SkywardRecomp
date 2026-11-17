@@ -62,7 +62,7 @@ FFMPEG   := $(or $(DEPS),/opt/homebrew/opt/ffmpeg)
 EXE      := $(B)/lasrecomp
 DEPINC   := -I$(SDL)/include -I$(FFMPEG)/include
 LDFLAGS  := -L$(SDL)/lib -lSDL3 -Wl,-rpath,$(SDL)/lib -L$(FFMPEG)/lib -lavformat -lavcodec -lavutil -lswscale -Wl,-rpath,$(FFMPEG)/lib \
-            -framework CoreFoundation -framework Foundation -framework Metal -framework MetalFX -framework QuartzCore -framework AppKit -framework ImageIO -framework CoreGraphics -framework UniformTypeIdentifiers
+            -framework CoreFoundation -framework Foundation -framework Metal -framework MetalFX -framework QuartzCore -framework AppKit -framework ImageIO -framework CoreGraphics -framework UniformTypeIdentifiers -lz
 BACKEND_SRC := $(wildcard runtime/nvn/*.m)
 BACKEND_OBJ := $(patsubst runtime/%.m,$(B)/rt/%.o,$(BACKEND_SRC))
 IMGUI_OBJ += $(B)/imgui/imgui_impl_metal.o
@@ -83,7 +83,7 @@ OSFLAGS  := -Wno-format  # (%llx for uint64_t, which is unsigned long here: the 
 SHADERC  ?= $(shell pkg-config --libs shaderc 2>/dev/null || echo -lshaderc)
 # -rdynamic: crash backtraces name host functions (runtime/platform/linux.c)
 LDFLAGS  := -fuse-ld=lld -rdynamic $(if $(DEPS),-L$(DEPS)/lib) -lSDL3 -lavformat -lavcodec -lavutil -lswscale \
-            -lvulkan $(SHADERC) -lpthread -ldl -lm
+            -lvulkan $(SHADERC) -lpthread -ldl -lm -lz
 BACKEND_SRC := $(wildcard runtime/nvn/vulkan/*.c) $(wildcard runtime/nvn/vulkan/*.cpp)
 BACKEND_OBJ := $(patsubst runtime/%.cpp,$(B)/rt/%.o,$(patsubst runtime/%.c,$(B)/rt/%.o,$(BACKEND_SRC)))
 IMGUI_OBJ += $(B)/imgui/imgui_impl_vulkan.o
@@ -99,7 +99,7 @@ OSFLAGS  := -D_FILE_OFFSET_BITS=64 -D_POSIX_THREAD_SAFE_FUNCTIONS -D_CRT_RAND_S 
 GENARCH  ?= -march=x86-64-v3  # AVX2 + FMA for the lifted FP/SIMD code (simd.h); override for older CPUs
 GENFLAGS += -D_FILE_OFFSET_BITS=64 $(GENARCH)
 LDFLAGS  := -fuse-ld=lld -Wl,--stack,16777216 $(if $(DEPS),-L$(DEPS)/lib) -lSDL3 -lavformat -lavcodec -lavutil -lswscale \
-            -lvulkan-1 -lws2_32 -lwinmm -lole32 -lshell32 -lcomdlg32 -luuid -lshaderc_shared \
+            -lvulkan-1 -lws2_32 -lwinmm -lole32 -lshell32 -lcomdlg32 -luuid -lshaderc_shared -lz \
             $(if $(RELEASE),-Wl$(comma)--subsystem$(comma)windows -Wl$(comma)--strip-debug)  # release: no console window (log -> lasrecomp.log + lasrecomp-backup-*.log), no debug info
 BACKEND_SRC := $(wildcard runtime/nvn/vulkan/*.c) $(wildcard runtime/nvn/vulkan/*.cpp)
 BACKEND_OBJ := $(patsubst runtime/%.cpp,$(B)/rt/%.o,$(patsubst runtime/%.c,$(B)/rt/%.o,$(BACKEND_SRC)))
@@ -370,7 +370,14 @@ appimages:
 smoketest:
 	tools/linux/smoketest.sh
 
-.PHONY: dmg all gen gen-helper gen-objs runtime-objs deps deps-windows app dist rando-helper appimage appimages smoketest
+.PHONY: dmg all gen gen-helper gen-objs runtime-objs deps deps-windows app dist rando-helper appimage appimages smoketest test_texpack
 
 build/test_shaders: tools/test_shaders.m runtime/nvn/maxwell/translate.c runtime/nvn/maxwell/shader.h
 	clang -O1 -fobjc-arc -framework Metal -framework Foundation -o $@ tools/test_shaders.m runtime/nvn/maxwell/translate.c
+
+test_texpack:
+	mkdir -p build
+	clang -O1 -std=c11 -Wall -I. -Iruntime -Iruntime/nvn -o build/test_xxh3_128 tools/test_xxh3_128.c runtime/nvn/xxh3_128.c
+	clang -O1 -std=c11 -Wall -I. -Iruntime -Iruntime/nvn -o build/test_texpack_packs tools/test_texpack_packs.c runtime/nvn/texpack_packs.c -lz
+	./build/test_xxh3_128
+	./build/test_texpack_packs

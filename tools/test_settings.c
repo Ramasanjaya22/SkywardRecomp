@@ -1,6 +1,8 @@
 // Exercise the actual parser/resolver/save path with isolated configuration files.
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "settings.h"
 
@@ -52,6 +54,19 @@ int main(int argc, char **argv) {
         assert(g_settings.shield.pick == COL_DEFAULT);                               // unknown -> Default
         assert(g_settings.skin.pick == COL_RANDOM);
         settings_save();
+        return 0;
+    }
+    if (argc == 3 && !strcmp(argv[1], "zr-attack")) {  // the ZR sword jab toggle
+        settings_load();
+        assert(g_settings.zr_attack == (atoi(argv[2]) != 0));
+        settings_save();  // rewrite for the test to check
+        return 0;
+    }
+    if (argc == 4 && !strcmp(argv[1], "free-cam")) {  // free camera: persisted toggle and clamped right-stick scale
+        settings_load();
+        assert(g_settings.free_cam == (atoi(argv[2]) != 0));
+        assert(fabsf(g_settings.free_cam_sens - (float)atof(argv[3])) < 0.005f);
+        settings_save();  // rewrite for the test to check
         return 0;
     }
     if (argc == 3 && !strcmp(argv[1], "rando-options")) {  // the New seed options (an opaque seed ID), kept as saved

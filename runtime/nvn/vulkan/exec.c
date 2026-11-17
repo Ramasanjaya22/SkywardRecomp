@@ -2217,7 +2217,7 @@ typedef struct {
     uint32_t attr_mask;
     uint32_t stride[17], divisor[17], used_streams;
     uint8_t blend[8][8];
-    uint8_t blend_on, a2c, topo_class, poly_fill;
+    uint8_t blend_on, logic_op, a2c, topo_class, poly_fill;
     uint32_t write_mask[8];
 } PipeKey;
 
@@ -2240,7 +2240,7 @@ struct PipeMemo {
     int nattrib, nstream;
     VkFormat color[8], depth, stencil;
     uint32_t attrib[16], stream[16][2], rt_fmt[8];
-    uint8_t blend[8][8], blend_on, a2c, cls, poly_fill;
+    uint8_t blend[8][8], blend_on, logic_op, a2c, cls, poly_fill;
     Pipe *pp;
     VtxLayout vl;  // the layout pipe_key_fill made from these inputs (dynamic vertex input leaves it out of pp's key)
 };
@@ -2274,6 +2274,7 @@ typedef struct {
     const uint32_t *rt_fmt;         // color target texture formats (0: none)
     uint32_t channel_mask;
     uint8_t blend_on;               // color state blend enables
+    uint8_t logic_op;               // NVN color-state logic op
     const uint8_t (*blend)[8];
     uint8_t a2c, topo_class, poly_fill;
 } PipeIn;
@@ -2290,6 +2291,7 @@ static void pipe_key_fill(PipeKey *k, Prog *pr, const PipeIn *in, const VkFormat
     k->depth = depth;
     k->stencil = stencil;
     k->samples = samples;
+    k->logic_op = in->logic_op;
     VtxLayout l_, *l = vl ? vl : &l_;
     memset(l, 0, sizeof *l);
     for (int i = 0; i < 32; i++) {
@@ -2400,8 +2402,14 @@ static void pipe_ci_fill(PipeCI *c, const PipeKey *k) {
             c->cba[i].alphaBlendOp = blend_op(b[6]);
         }
     }
+    if (k->logic_op != 3 && !g_vk.logic_op) {  // the device refused logicOp: the draw keeps its old look
+        static bool told;
+        if (!told) { told = true; LOG("[vk] logic op %u needed but the device has none\n", k->logic_op); }
+    }
     c->cb = (VkPipelineColorBlendStateCreateInfo){.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-                                                  .attachmentCount = k->ncolor, .pAttachments = c->cba};
+                                                  .attachmentCount = k->ncolor, .pAttachments = c->cba,
+                                                  .logicOpEnable = (k->logic_op != 3 && g_vk.logic_op) ? VK_TRUE : VK_FALSE,
+                                                  .logicOp = (VkLogicOp)k->logic_op};
     memcpy(c->dyn, DYN, sizeof DYN);
     if (g_vk.vids) c->dyn[NDYN] = VK_DYNAMIC_STATE_VERTEX_INPUT_EXT;
     c->dy = (VkPipelineDynamicStateCreateInfo){.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
@@ -5219,7 +5227,7 @@ static void prep_pipeline(void *arg) {
         if (asp & VK_IMAGE_ASPECT_DEPTH_BIT) depth = b;
         if (asp & VK_IMAGE_ASPECT_STENCIL_BIT) stencil = b;
     }
-    const PipeIn in = {r->attrib, r->nattrib, r->stream, r->nstream, r->color, r->channel_mask, r->blend_on, r->blend,
+    const PipeIn in = {r->attrib, r->nattrib, r->stream, r->nstream, r->color, r->channel_mask, r->blend_on, r->logic_op, r->blend,
                        r->a2c, r->topo, r->poly_fill};
     pipe_key_fill(&a->pp->k, pr, &in, color, ncolor, depth, stencil, r->samples ? r->samples : 1, NULL);
     uint64_t ph = hash_words(0xcbf29ce484222325ull, &a->pp->k, sizeof a->pp->k);
@@ -5512,6 +5520,7 @@ static void rec_from_state(ShaderRec *r, bool flip_x, uint32_t mode) {
         if (!r->ncolor && st.rt.depth->samples > 1) r->samples = st.rt.depth->samples;
     }
     r->a2c = st.ms[0xC] != 0;
+    r->logic_op = st.color_state[1];
     r->topo = shader_topo_class(mode);
     r->poly_fill = st.poly[2] != 1;
 }
@@ -5553,6 +5562,7 @@ static int pk_diff(const PipeKey *a, const PipeKey *b, char *out, size_t n) {
         PKD(a->write_mask[i] != b->write_mask[i], " write_mask%d %#x/%#x;", i, a->write_mask[i], b->write_mask[i]);
     }
     PKD(a->blend_on != b->blend_on, " blend_on %#x/%#x;", a->blend_on, b->blend_on);
+    PKD(a->logic_op != b->logic_op, " logic_op %u/%u;", a->logic_op, b->logic_op);
     PKD(a->a2c != b->a2c, " a2c %u/%u;", a->a2c, b->a2c);
     PKD(a->topo_class != b->topo_class, " topo %u/%u;", a->topo_class, b->topo_class);
     PKD(a->poly_fill != b->poly_fill, " fill %u/%u;", a->poly_fill, b->poly_fill);
@@ -5690,7 +5700,7 @@ static void draw_(CmdRec *r, bool indexed) {
     uint32_t rt_fmt[8] = {0};
     for (int i = 0; i < st.rt.ncolor && i < 8; i++) rt_fmt[i] = st.rt.color[i] ? st.rt.color[i]->format : 0;
     const PipeIn in = {st.attrib, st.nattrib, (const uint32_t (*)[2])st.stream, st.nstream, rt_fmt, st.channel_mask,
-                       st.color_state[0], (const uint8_t (*)[8])st.blend, st.ms[0xC] != 0, cls, st.poly[2] != 1};
+                       st.color_state[0], st.color_state[1], (const uint8_t (*)[8])st.blend, st.ms[0xC] != 0, cls, st.poly[2] != 1};
     bool memo_on = key_memo_on();
     if (memo_on && !pr->pmemo) pr->pmemo = calloc(1, sizeof *pr->pmemo);
     struct PipeMemo *pm = memo_on ? pr->pmemo : NULL;
@@ -5702,7 +5712,7 @@ static void draw_(CmdRec *r, bool indexed) {
     Pipe *pp;
     if (pm && pm->pp && pm->gen == key_gen && pm->ncolor == pass_ncolor && pm->samples == pass_samples && pm->depth == pass_depth &&
         pm->stencil == pass_stencil && pm->nattrib == st.nattrib && pm->nstream == st.nstream && pm->channel_mask == in.channel_mask &&
-        pm->blend_on == in.blend_on && pm->a2c == in.a2c && pm->cls == in.topo_class && pm->poly_fill == in.poly_fill &&
+        pm->blend_on == in.blend_on && pm->logic_op == in.logic_op && pm->a2c == in.a2c && pm->cls == in.topo_class && pm->poly_fill == in.poly_fill &&
         !memcmp(pm->color, pass_color, npc * sizeof pass_color[0]) && !memcmp(pm->rt_fmt, rt_fmt, sizeof rt_fmt) &&
         !memcmp(pm->attrib, st.attrib, (size_t)nat * 4) && !memcmp(pm->stream, st.stream, (size_t)nst * 8) &&
         !memcmp(pm->blend, st.blend, sizeof pm->blend)) {
@@ -5741,7 +5751,7 @@ static void draw_(CmdRec *r, bool indexed) {
         }
         if (pm) {
             pm->gen = key_gen; pm->ncolor = pass_ncolor; pm->samples = pass_samples; pm->depth = pass_depth; pm->stencil = pass_stencil;
-            pm->nattrib = st.nattrib; pm->nstream = st.nstream; pm->channel_mask = in.channel_mask; pm->blend_on = in.blend_on;
+            pm->nattrib = st.nattrib; pm->nstream = st.nstream; pm->channel_mask = in.channel_mask; pm->blend_on = in.blend_on; pm->logic_op = in.logic_op;
             pm->a2c = in.a2c; pm->cls = in.topo_class; pm->poly_fill = in.poly_fill;
             memcpy(pm->color, pass_color, sizeof pm->color); memcpy(pm->rt_fmt, rt_fmt, sizeof pm->rt_fmt);
             memcpy(pm->attrib, st.attrib, sizeof pm->attrib); memcpy(pm->stream, st.stream, sizeof pm->stream);
@@ -6979,8 +6989,9 @@ static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, float fx, flo
     if (oh > 16384) oh = 16384;
     uint32_t cw = (uint32_t)lroundf(b->width * fx), ch = (uint32_t)lroundf(b->height * fy);  // (the contents' size)
     bool fsr = g_settings.upscaler == UPSCALE_FSR1 && (ow > cw + 1 || oh > ch + 1);  // (an upscale only)
+    bool sharp = g_settings.sharpen && !fsr;  // FSR 1 already sharpened its own output
     *upscaled = fsr;
-    if (!smaa && !fsr) return v;
+    if (!smaa && !fsr && !sharp) return v;
     extern void vk_frame_suspend(void);
     extern void vk_frame_resume(void);
     vk_frame_suspend();
@@ -7015,14 +7026,24 @@ static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, float fx, flo
         post_pass(cb, "rcas.frag", ri_, 1, r, pr, false);
         v = post_view(r);
     }
+    if (sharp) {  // the existing FidelityFX RCAS pass, at the game image's size
+        float iw = (float)cw, ih = (float)ch;
+        TexBackend *r = post_image(4, cw, ch);
+        float pr[8] = {exp2f(-0.2f), 0, 0, 0, iw, ih};
+        VkImageView ri_[3] = {v};
+        post_pass(cb, "rcas.frag", ri_, 1, r, pr, false);
+        v = post_view(r);
+    }
     vk_full_barrier(cb);
     vk_frame_resume();
     {
         static uint32_t piw, pih, pow_, poh;
         static int psm = -1, pfs = -1;
-        if (b->width != piw || b->height != pih || ow != pow_ || oh != poh || smaa != psm || fsr != pfs)
-            LOG("[post] %ux%u%s%s -> %ux%u\n", b->width, b->height, smaa ? " smaa" : "", fsr ? " fsr1" : "", ow, oh);
-        piw = b->width; pih = b->height; pow_ = ow; poh = oh; psm = smaa; pfs = fsr;
+        static int psh = -1;
+        if (b->width != piw || b->height != pih || ow != pow_ || oh != poh || smaa != psm || fsr != pfs || sharp != psh)
+            LOG("[post] %ux%u%s%s%s -> %ux%u\n", b->width, b->height, smaa ? " smaa" : "", fsr ? " fsr1" : "",
+                sharp ? " rcas" : "", ow, oh);
+        piw = b->width; pih = b->height; pow_ = ow; poh = oh; psm = smaa; pfs = fsr; psh = sharp;
     }
     return v;
 }
