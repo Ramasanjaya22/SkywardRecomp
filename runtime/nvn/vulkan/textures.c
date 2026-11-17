@@ -14,6 +14,7 @@
 #include "../../settings.h"
 #include "../tex_hash.h"
 #include "../renderer.h"
+#include "../output_scale.h"
 #include "../texpatch.h"
 #include "../texpack_packs.h"
 #include "../xxh3_128.h"
@@ -221,10 +222,9 @@ static bool tex_scalable(const NvnTexture *t) {
     if (!(a > 1.74f && a < 1.81f)) return false;  // 16:9 (1920x1080 and its fractions, 704x396, 60x33...)
     return !tex_guest_sized_ao(t);
 }
-// The scale a scalable texture is allocated and drawn at: the ambient occlusion's own, else the frame's
-// (the AO: uniform, by the height's)
-static float tex_alloc_x(const TexBackend *b) { if (b->shadow) return output_scale_shadow(); return b->ao ? output_scale_ao(g_al_y) : g_al_x; }
-static float tex_alloc_y(const TexBackend *b) { if (b->shadow) return output_scale_shadow(); return b->ao ? output_scale_ao(g_al_y) : g_al_y; }
+// The scale a scalable texture is allocated and drawn at: the shadow map's own, else the frame's
+static float tex_alloc_x(const TexBackend *b) { return b->shadow ? output_scale_shadow() : g_al_x; }
+static float tex_alloc_y(const TexBackend *b) { return b->shadow ? output_scale_shadow() : g_al_y; }
 
 bool renderer_texture_first_write(NvnTexture *t) {
     TexBackend *b = t ? (TexBackend *)t->backend : NULL;
@@ -348,14 +348,10 @@ VkFormat vk_view_format(TexBackend *b, VkFormat want) {
 
 static void create_image(NvnTexture *t, TexBackend *b) {
     VkFmt mf = fmt_of(t->format);
-    b->ax = b->scalable ? g_al_x : 1;
-    b->ay = b->scalable ? g_al_y : 1;
-    b->sx = b->scalable ? g_rs_x : 1;
-    b->sy = b->scalable ? g_rs_y : 1;
     b->ax = b->scalable ? tex_alloc_x(b) : 1;
     b->ay = b->scalable ? tex_alloc_y(b) : 1;
-    b->sx = b->scalable ? (b->ao || b->shadow ? b->ax : g_rs_x) : 1;
-    b->sy = b->scalable ? (b->ao || b->shadow ? b->ay : g_rs_y) : 1;
+    b->sx = b->scalable ? (b->shadow ? b->ax : g_rs_x) : 1;
+    b->sy = b->scalable ? (b->shadow ? b->ay : g_rs_y) : 1;
     uint32_t tw = t->width ? t->width : 1, th = t->height ? t->height : 1;
     if (b->scalable) {
         tw = (uint32_t)lroundf(tw * b->ax); th = (uint32_t)lroundf(th * b->ay);
@@ -529,7 +525,7 @@ static void live_remove(TexBackend *b) {
 static TexBackend *tex_backend(NvnTexture *t) {
     TexBackend *b = t->backend;
     if (b) {
-        if (b->scalable && (b->ax != g_al_x || b->ay != g_al_y)) {  // output resolution changed: reallocate
+        if (b->scalable && (b->ax != tex_alloc_x(b) || b->ay != tex_alloc_y(b))) {  // output resolution changed: reallocate
             destroy_image(b);
             create_image(t, b);
         }
@@ -539,7 +535,6 @@ static TexBackend *tex_backend(NvnTexture *t) {
     b = calloc(1, sizeof *b);
     b->scalable = tex_scalable(t);
     b->shadow = tex_shadow(t);
-    b->ao = b->scalable && !b->shadow && tex_ao(t);
     create_image(t, b);
     t->backend = b;
     live_add(t, b);
@@ -895,8 +890,7 @@ TexBackend *vk_tex(NvnTexture *t, bool for_render) {
 void renderer_mark_gpu_owned(NvnTexture *t) {
     TexBackend *b = tex_backend(t);
     b->gpu_owned = true;
-    if (b->scalable) { b->sx = g_rs_x; b->sy = g_rs_y; }
-    if (b->scalable && !b->ao && !b->shadow) { b->sx = g_rs_x; b->sy = g_rs_y; }
+    if (b->scalable && !b->shadow) { b->sx = g_rs_x; b->sy = g_rs_y; }
 }
 bool renderer_is_gpu_owned(NvnTexture *t) { return tex_backend(t)->gpu_owned; }
 void backend_pool_written(uint64_t addr, uint64_t size) { (void)addr; (void)size; }

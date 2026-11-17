@@ -20,13 +20,13 @@ int main(int argc, char **argv) {
         settings_save();  // (still "auto")
         return 0;
     }
-    if (argc == 2 && !strcmp(argv[1], "res-auto")) {  // "resolution = auto" / none: Match display on every GPU (Dynamic is no default yet)
+    if (argc == 2 && !strcmp(argv[1], "res-auto")) {  // "resolution = auto" / none: 1x on every GPU (settings.c g_default_res_mode)
         settings_load();
         assert(g_settings.res_auto);
         settings_resolve_defaults(true);
-        assert(g_settings.res_mode == RES_MATCH && g_default_res_mode == RES_MATCH && g_gpu_integrated);
+        assert(g_settings.res_mode == 1 && g_default_res_mode == 1 && g_gpu_integrated);
         settings_resolve_defaults(false);
-        assert(g_settings.res_mode == RES_MATCH && !g_gpu_integrated);
+        assert(g_settings.res_mode == 1 && !g_gpu_integrated);
         settings_save();  // (still "auto")
         return 0;
     }

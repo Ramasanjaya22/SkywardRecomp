@@ -119,12 +119,6 @@ typedef struct {
     bool glsl;               // emit Vulkan GLSL: dialect-specific constructs here, the rest via glsl_rewrite()
     bool uses_gmem_store;    // STG present: the gmem buffer is not readonly
     uint32_t cbuf_need[18];  // highest constant vec4 index + 1 per cbuf (array size of the GLSL block)
-    // GLSL, LARECOMP_VK_STATIC_STACKS: every SYNC / BRK / CONT's target resolved at translation time
-    // (static_stacks_resolve): the pops become plain jumps and the SSY / PBK / PCNT stacks go away
-    bool static_stacks;
-    bool structured;       // LARECOMP_VK_STRUCTURE: branches as nested if / else / do-while (ast_*), no pc state machine
-    int struct_vars;       // its goto flags g0.. (GotoElimination)
-    uint32_t *pop_target;  // per instruction word: the pc a SYNC / BRK / CONT goes to
     bool ao_taps;          // the AO blur's taps follow rscale[65].y (ao_grid_fix)
     bool shadow_tap[2];    // the shadow map's texel size (x, y) is read: shadow_taps
     bool ao_pass;          // the AO pass: white while rscale[65].z > 0 (ao_grid_fix)
@@ -989,26 +983,6 @@ static void shadow_taps(Ctx *c, Str *s) {
         else
             sp(s, "  uint stap%d = cb4[36][%d];\n", k, k);
     }
-}
-
-// A push / pop on stack `n` (ssy, pbk, pcnt). GLSL (maxwell_glsl_stack_vars, shader.h): 16 named variables, the
-// index masked; otherwise (and MSL) an array of 16.
-static void stack_push(Ctx *c, const char *n, uint32_t v) {
-    if (c->static_stacks) return;  // (its pops know their target)
-    if (!c->glsl || !maxwell_glsl_stack_vars) { sp(&c->body, "    %s[%s_n++] = %uu;\n", n, n, v); return; }
-    sp(&c->body, "    { uint i_ = (%s_n++) & 15u;", n);
-    for (int k = 0; k < 16; k++) sp(&c->body, " %sif (i_ == %du) %s%d = %uu;", k ? "else " : "", k, n, k, v);
-    sp(&c->body, " }\n");
-}
-static void stack_pop(Ctx *c, const char *n, bool keep, uint32_t pc) {  // keep: the top stays (CONT)
-    if (c->static_stacks) { sp(&c->body, "    pc = %uu; continue;\n", c->pop_target[pc / 8]); return; }
-    if (!c->glsl || !maxwell_glsl_stack_vars) {
-        sp(&c->body, keep ? "    pc = %s[%s_n - 1]; continue;\n" : "    pc = %s[--%s_n]; continue;\n", n, n);
-        return;
-    }
-    sp(&c->body, keep ? "    { uint i_ = (%s_n - 1u) & 15u; pc = " : "    { uint i_ = (--%s_n) & 15u; pc = ", n);
-    for (int k = 0; k < 15; k++) sp(&c->body, "i_ == %du ? %s%d : ", k, n, k);
-    sp(&c->body, "%s15; } continue;\n", n);
 }
 
 static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {

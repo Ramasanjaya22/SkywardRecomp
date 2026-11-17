@@ -17,6 +17,7 @@
 static uint64_t t_ns = 1000000000ull, cpu_ns, gpu_total_ns;
 __thread uint64_t g_blocked_ns, g_rq_wait_ns, g_rq_lock_ns, g_submit_ns, g_gpu_wait_ns, g_present_ns, g_hooks_ns;
 volatile uint64_t g_vsync_count, g_vsync_ns;
+volatile int g_present_interval = 1;  // (objects.c: the game asks for 60 fps; held mode raises it to 2 in pace.c)
 uint64_t pace_test_game_mgr;
 static uint8_t game_mgr[0x500];
 static uint64_t zone;

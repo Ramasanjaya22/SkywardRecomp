@@ -478,18 +478,8 @@ static void tab_display(void) {
     opt_choice("Anti-aliasing", &g_settings.antialias, aa, 2, AA_OFF,
                "Smooths jagged edges of the game image before it is scaled to the window. SMAA: finds the edges and "
                "blends only along them, so textures stay sharp. Most useful at a lower internal resolution.");
-    static const char *aa[] = {LN("Off"), LN("SMAA")};
-    preview_text(LN("Configure the smoothing of jagged edges. SMAA keeps textures sharp."), NULL);
-    opt_preview("Anti-aliasing", &g_settings.antialias, aa, 2, AA_OFF,
-               "Smooths jagged edges. SMAA keeps textures sharp and helps most at a lower internal resolution.");
-    static const char *ao[] = {LN("Default"), LN("High"), LN("Off")};
-    preview_text(LN("Configure the soft shadows where objects meet the ground and walls."), NULL);
-    opt_preview("Ambient occlusion", &g_settings.ao_quality, ao, 3, AO_SWITCH,
-               "The soft shadows in corners and around objects. High draws them at up to twice the Switch's resolution, "
-               "so their edges are sharper. Off removes them.");
-    static const char *shadows[] = {LN("Default"), LN("High")};
-    preview_text(LN("Configure the shadows that objects and characters cast."), NULL);
-    opt_preview("Shadows", &g_settings.shadow_quality, shadows, 2, SHADOW_DEFAULT,
+    static const char *shadows[] = {"Default", "High"};
+    opt_choice("Shadows", &g_settings.shadow_quality, shadows, 2, SHADOW_DEFAULT,
                "The shadows that objects and characters cast. High draws them at twice the Switch's resolution, so their "
                "edges are sharper.");
 
