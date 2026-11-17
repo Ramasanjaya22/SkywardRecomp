@@ -1,14 +1,12 @@
-# LAS Recomp's checks: the app (build/lasrecomp: everything but the game code, which the start screen builds on the
-# player's machine) builds on Linux, macOS and Windows, and the tests that need no game files or GPU run: the FP/SIMD
-# lowering against a CPU emulator (tools/test_simd.py, x86-64 Linux), the shader translator's GLSL against shaderc +
-# SPIRV-Tools (tools/test_translate.sh, Windows), its instruction semantics on the CPU (tools/test_translate_ops.sh,
-# Linux / macOS) and the same programs' Vulkan GLSL through spirv-val (tools/test_spirv_val.sh, Linux). Nothing is published. Feature tests that need no game files go in as steps here, not as workflows of
-# their own.
+# SkywardRecomp's checks on GitHub-hosted runners: the app (build/lasrecomp: everything but the game code, which the
+# start screen builds on the player's machine from their own game files) builds on Linux, macOS and Windows, and the
+# tests that need no game files or GPU run. Nothing is published. Feature tests that need no game files go in as
+# steps here, not as workflows of their own.
 name: CI
 on:
   pull_request:
   push:
-    branches: ['main', 'beta_*']
+    branches: ['main']
   workflow_dispatch:
 permissions:
   contents: read
@@ -112,6 +110,12 @@ jobs:
         run: python3 tools/test_vulkan_sync_errors.py
       - name: Shader translator instruction semantics
         run: tools/test_translate_ops.sh
+      - name: SkywardRecomp tests (shader records, shadows, ZR tap, texture packs)
+        run: |
+          python3 tools/test_shader_rec.py
+          python3 tools/test_shadow_map.py
+          python3 tools/test_zr_tap.py
+          make test_texpack
       # (the same programs as vertex / fragment / compute GLSL -> glslc -> spirv-val, Vulkan 1.3; the shipped shader
       # list is only hashes of the game's shaders, so these synthetic programs stand in for it)
       - name: Shader translator SPIR-V validation (Vulkan 1.3)
@@ -124,7 +128,7 @@ jobs:
           tools/venv/bin/python tools/test_simd.py --encodings 3000 --cases 4 --jobs "$(nproc)"
 
   macos:
-    runs-on: [self-hosted, macos-vm]  # (a fresh Tart VM per job on the maintainer's Mac, deleted after)
+    runs-on: macos-15  # (GitHub-hosted Apple Silicon; free for public repositories)
     steps:
       - uses: actions/checkout@v4
       - name: Packages
