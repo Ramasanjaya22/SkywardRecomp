@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>  // strcasecmp (glibc)
 #include <zlib.h>
 
 #define MAX_PACKS 4096
