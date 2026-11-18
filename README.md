@@ -10,10 +10,10 @@ Windows app with a Vulkan renderer. Derived from [LAS Recomp](https://github.com
 
 ## Progress
 
-**Overall: ~55%** (estimate as of 2026-11-16)
+**Overall: ~58%** (estimate as of 2026-11-18)
 
 ```
-[███████████░░░░░░░░░] 55%
+[████████████░░░░░░░░] 58%
 ```
 
 | Area | Progress | State |
@@ -21,11 +21,12 @@ Windows app with a Vulkan renderer. Derived from [LAS Recomp](https://github.com
 | Loader, kernel/HLE services, boot to title screen | `██████████` 100% | done |
 | Threading (condvar lost-wakeup fix), 30 fps pacing | `██████████` 100% | done |
 | Audio (audren voices) | `██████████` 100% | done |
+| App builds and tests pass on Windows, Linux and macOS (CI) | `██████████` 100% | done |
 | Vulkan renderer: textures, depth/stencil, dual-source blend (eyes) | `█████████░` 90% | done, eyes fix not yet re-verified in every scene |
 | Character lighting | `███████░░░` 70% | works, needs more verification |
-| Shadow rendering | `███░░░░░░░` 30% | **bug, under investigation** |
+| Shadow rendering | `████░░░░░░` 40% | shadow-map fix ported, not yet verified in game |
 | Save-file names (`□□` glyphs) | `░░░░░░░░░░` 0% | open |
-| LA-specific HLE modules and address tables replaced for SS | `██░░░░░░░░` 20% | open |
+| LA-specific HLE modules and address tables replaced for SS | `███░░░░░░░` 30% | LA leftovers retired (address 0, unused); SS table still partial |
 | 60 fps, ultrawide, resolution options | `░░░░░░░░░░` 0% | not started |
 | Long-session stability / full playthrough | `███░░░░░░░` 30% | 150 s+ runs OK, no full playthrough |
 
