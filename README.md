@@ -8,6 +8,15 @@ Windows app with a Vulkan renderer. Derived from [LAS Recomp](https://github.com
 > You must supply your own legally obtained copy of the game; the build generates C code locally from your files,
 > and that output (`generated/`, `extracted/`, `input/`) is git-ignored and must never be shared.
 
+## Screenshots
+
+Running natively on Windows (Vulkan, 21:9 ultrawide).
+
+| | |
+|---|---|
+| ![Skyloft field](docs/media/screenshot-1.jpg) | ![Bridge in Skyloft](docs/media/screenshot-2.jpg) |
+| ![Cutscene](docs/media/screenshot-3.jpg) | ![Skyloft plaza](docs/media/screenshot-4.jpg) |
+
 ## Progress
 
 **Overall: ~80%** (estimate as of 2026-11-19)
