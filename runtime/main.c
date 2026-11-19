@@ -1,4 +1,4 @@
-// LAS Recomp entry: load modules, set up the kernel, run nn::init::Start on the main thread.
+// SkywardRecomp entry: load modules, set up the kernel, run nn::init::Start on the main thread.
 #include <SDL3/SDL.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -197,7 +197,7 @@ static void log_startup_info(void) {
     char ram[32] = "RAM unknown";
     if (si.ram && tenths % 10) snprintf(ram, sizeof ram, "%llu.%llu GB RAM", tenths / 10, tenths % 10);
     else if (si.ram) snprintf(ram, sizeof ram, "%llu GB RAM", tenths / 10);
-    fprintf(stderr, "[info] LAS Recomp %s, %s, %s%s, %s%s%s\n", larecomp_version(), si.os[0] ? si.os : "unknown OS",
+    fprintf(stderr, "[info] SkywardRecomp %s, %s, %s%s, %s%s%s\n", larecomp_version(), si.os[0] ? si.os : "unknown OS",
             si.cpu[0] ? si.cpu : "unknown CPU", cores, ram, si.package ? ", " : "", si.package ? si.package : "");
 }
 

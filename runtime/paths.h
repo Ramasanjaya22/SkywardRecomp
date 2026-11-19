@@ -1,4 +1,4 @@
-// Where LAS Recomp keeps its files (runtime/paths.c).
+// Where SkywardRecomp keeps its files (runtime/paths.c).
 //
 // Data root: everything the app writes or the user brings - extracted/ (game files), rando/ (seeds), save/,
 // cache/ (shaders / pipelines), fonts/ (imported), larecomp.ini. rt_paths_init() picks it and makes it the
@@ -38,7 +38,7 @@ typedef struct {
                                    // when it holds other things
     unsigned long long bytes;      // the data now (saves, seeds, settings, fonts, caches, game files)
     unsigned long long need, free; // space a move needs there (little on the same drive: hard links), space there
-    bool has_data;                 // LAS Recomp data already there: used as is, not moved into
+    bool has_data;                 // SkywardRecomp data already there: used as is, not moved into
     char refuse[160];              // why it can't be the data folder ("" = it can)
 } RtDataTarget;
 void rt_data_target(const char *picked, RtDataTarget *t);

@@ -197,8 +197,8 @@ def romfs_check(build_id, files, game=None):
 
 made_up = [('region_common/made_up.bin', 12), ('Ä/ü.bin', 3)]
 assert romfs_check('-', made_up) == ([], 0)  # (no version: no check)
-for key, (label, bid) in VERSIONS.items():
-    assert romfs_check(bid, made_up) == (['odd region_common/made_up.bin 12', 'odd Ä/ü.bin 3'], 3836), key
+for key, (label, bid) in VERSIONS.items():  # (romfs_files.h is LA's list: no SS version is checked yet)
+    assert romfs_check(bid, made_up) == ([], 0), key
 
 # copies of the game code's six exefs files at the romfs root (#389: 3842 files) are skipped, only when each is the
 # same file as its exefs one; any other extra there is still odd
@@ -212,8 +212,8 @@ for i, name in enumerate(EXEFS):
     (gc/'romfs'/name).write_bytes(data)
 copies = [(name, (gc/'romfs'/name).stat().st_size) for name in EXEFS]
 bid0 = VERSIONS['v1_0_0'][1]
-assert romfs_check(bid0, copies, gc) == ([f'copy {n}' for n in EXEFS], 3836)
-assert romfs_check(bid0, copies) == ([f'odd {n} {z}' for n, z in copies], 3836)  # (no game folder: not checked)
+assert romfs_check(bid0, copies, gc) == ([f'copy {n}' for n in EXEFS], 0)
+assert romfs_check(bid0, copies) == ([], 0)  # (no game folder: not checked)
 assert romfs_check('-', copies, gc) == ([f'copy {n}' for n in EXEFS], 0)
 (gc/'romfs/sdk').write_bytes(b'\xff' + (gc/'exefs/sdk').read_bytes()[1:])  # same size, other bytes
 (gc/'romfs/rtld').write_bytes((gc/'exefs/rtld').read_bytes() + b'!')  # longer
@@ -223,8 +223,7 @@ assert romfs_check('-', copies, gc) == ([f'copy {n}' for n in EXEFS], 0)
 (gc/'exefs/subsdk0').unlink()  # no exefs file to match
 others = [(n, (gc/'romfs'/n).stat().st_size if (gc/'romfs'/n).exists() else 9)
           for n in ('sdk', 'rtld', 'subsdk1', 'subsdk2', 'region_common/main', 'subsdk0')]
-assert romfs_check(bid0, others + [('main', copies[0][1]), ('main', copies[0][1] + 1)], gc) == (
-    [f'odd {n} {z}' for n, z in others] + ['copy main', f'odd main {copies[0][1] + 1}'], 3836)
+assert romfs_check(bid0, others + [('main', copies[0][1]), ('main', copies[0][1] + 1)], gc) == (['copy main'], 0)
 
 # Same resource location used by tools/lasgen.spec in the frozen helper.
 bundled = tmp/'bundle/runtime/game_addresses'

@@ -348,7 +348,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     }
     Tools t;
     if (!find_tools(&t)) {
-        snprintf(why, why_size, "the game code builder is missing from this copy of LAS Recomp");
+        snprintf(why, why_size, "the game code builder is missing from this copy of SkywardRecomp");
         return false;
     }
     char work[1100], tmp[1100];
@@ -402,7 +402,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
 
     // 1. the generator, both modules at once; their finished files are compiled while it goes on
     Gen gens[2] = {{.name = "main"}, {.name = "sdk"}};
-    static const char *const base[2] = {"0x7000000000", "0x7004000000"};
+    static const char *const base[2] = {"0x7000000000", "0x7040000000"};  // (= MAIN_BASE, SDK_BASE)
     bool ok = true;
     for (int i = 0; i < 2 && ok; i++) {
         Gen *g = &gens[i];

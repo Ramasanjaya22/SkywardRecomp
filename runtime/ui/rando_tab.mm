@@ -124,7 +124,7 @@ struct GenOpts {
     bool shuffle_instruments = false, shuffle_dungeons = false, randomize_enemies = false, randomize_music = false;
     bool open_mabe = false, fast_songs = true, ohko = false, boss_cutscenes = false, spoiler = true;
     int start_rupees = 0;
-    // planned (LAS Recomp additions, not implemented yet)
+    // planned (SkywardRecomp additions, not implemented yet)
     int entrances = 0;        // off / dungeons / + houses, caves & connector caves (3 = old "+ connectors": now 2)
     bool decoupled = false, pots = false, grass = false;
     bool no_buffs = false;    // no-buff-drops: enemies never drop Guardian Acorns / Pieces of Power
@@ -172,7 +172,7 @@ static void tri_mode_from_opts(void) {
 
 
 // ---- Seed IDs: a 30-character code (Crockford base32, XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX) holding the random seed and
-// every generation option, with a checksum in the last 5 bits. Same ID + same LAS Recomp version = the same seed, so
+// every generation option, with a checksum in the last 5 bits. Same ID + same SkywardRecomp version = the same seed, so
 // IDs can be shared. The generator gets the ID itself as its seed string. Bump SEED_ID_VERSION when the bit layout
 // changes. v2: 36-bit random part; v3: + dungeon room shuffle; v4: 25 characters, + shopsanity, pets, Trendy Game
 // prizes (v2 / v3 IDs had 20: they still load, the options they don't hold are off); v5: 30 characters, + Triforce hunt
@@ -265,7 +265,7 @@ static std::string seed_id_decode(const char *text, GenOpts &o) {
     x.n = 0;
     int ver = (int)x.get(4);
     if (bits == SEED_ID_BITS ? ver != SEED_ID_VERSION : bits == SEED_ID_BITS_V4 ? ver != 4 : ver != 2 && ver != 3)
-        return "made by another LAS Recomp version (ID format " + std::to_string(ver) + ")";
+        return "made by another SkywardRecomp version (ID format " + std::to_string(ver) + ")";
     GenOpts t = o;
     t.rng = x.get(36);
     t.logic = (int)x.get(3); t.dungeon_items = (int)x.get(2); t.keysanity = (int)x.get(2); t.traps = (int)x.get(3);
@@ -740,7 +740,7 @@ extern "C" void rando_tab_draw(float scale) {
         static std::string id_msg;
         if (!g_opts.rng) g_opts.rng = new_rng();
         if (!opt_text_editing("Seed ID")) seed_id_encode(g_opts, idbuf, sizeof idbuf);
-        std::string d = "A seed ID holds the random seed and every option below: the same ID on the same LAS Recomp "
+        std::string d = "A seed ID holds the random seed and every option below: the same ID on the same SkywardRecomp "
                         "version makes the same seed. Enter a shared ID here to load its options.";
         if (!id_msg.empty()) d += "\n\n" + id_msg;
         if (opt_text("Seed ID", idbuf, sizeof idbuf, "", d.c_str())) {

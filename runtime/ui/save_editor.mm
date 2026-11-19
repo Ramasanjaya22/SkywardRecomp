@@ -36,7 +36,9 @@ enum : uint32_t {
 
 static void got_item(int id) { if (id >= 0 && id < 32) F<uint32_t>(GOT) |= 1u << id; }
 
-static bool loaded(void) { return F<uint32_t>(0) == 0xE && F<uint16_t>(NAME) != 0; }
+// (LIVE_SAVE is still 0 for SS: this editor, the cheats and difficulty read LA's save layout, so they stay off until
+// SS's live save and layout are in the address table.)
+static bool loaded(void) { return S() && F<uint32_t>(0) == 0xE && F<uint16_t>(NAME) != 0; }
 
 static int max_hp(void) {  // quarter-hearts, as GetMaxHealth() computes it
     return 12 + 4 * (__builtin_popcount(F<uint16_t>(CONTAINERS) & 0x1FF) + __builtin_popcountll(F<uint64_t>(PIECES)) / 4);
@@ -319,6 +321,7 @@ extern "C" void save_editor_file_read(const char *path, uint64_t addr, int64_t o
 extern "C" void cheats_frame(void);      // cheats.mm
 extern "C" void difficulty_frame(void);  // difficulty.mm
 extern "C" void save_editor_frame(uint64_t frame) {
+    if (!S()) return;  // no live save address for this game yet (see loaded)
     cheats_frame();
     difficulty_frame();
     static int watch = -1;  // LARECOMP_WATCH_SAVE=<lo>,<hi> (save offsets): log code touching that range

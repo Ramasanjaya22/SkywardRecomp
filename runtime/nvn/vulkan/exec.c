@@ -5617,10 +5617,15 @@ static void draw_(CmdRec *r, bool indexed) {
         // stretching. The window image is left alone (its UI / composite boxing below); shadow maps aren't scalable.
         NvnTexture *t = st.rt.ncolor && st.rt.color[0] ? st.rt.color[0] : st.rt.depth;
         float tsx = 1, tsy = 1;
-        if (t && !renderer_texture_presented(t)) renderer_texture_scale(t, &tsx, &tsy);
+        // (a presented image is the window, except for depth-tested draws: SS draws its scene into the reshaped image
+        // it then presents, and the world drawn after its mid-frame copy marked it presented must widen like the rest)
+        if (t && (!renderer_texture_presented(t) || (st.ds[0] && st.rt.depth))) renderer_texture_scale(t, &tsx, &tsy);
         // (depth-tested draws only: SS's full-screen post passes - colour grade, blur - have no depth test and must
         // cover the whole wide image; scaled, they left the sides ungraded, a seam at the 16:9 edges)
-        if (tsx > tsy * 1.005f && st.ds[0] && st.rt.depth && !getenv("LARECOMP_NO_WIDE_PROJ"))
+        // (full-width viewport only: SS draws its shadow casters into a square sub-viewport of the scaled RT and
+        // copies it to the shadow map; squeezed, the map no longer matched its receivers - big dark triangles)
+        if (tsx > tsy * 1.005f && st.ds[0] && st.rt.depth && st.viewport[0][0] == 0 && st.viewport[0][2] >= t->width &&
+            !getenv("LARECOMP_NO_WIDE_PROJ"))
             vkey.wide_k = (uint16_t)(1000.0f * tsy / tsx + 0.5f);
     }
     for (int i = 0; i < st.nattrib; i++) vkey.attr_kind[i] = (uint8_t)attr_kind(st.attrib[i] & 0xFF);
@@ -5956,7 +5961,10 @@ static void draw_(CmdRec *r, bool indexed) {
             bool black = c[0] < 0.01f && c[1] < 0.01f && c[2] < 0.01f, white = c[0] > 0.99f && c[1] > 0.99f && c[2] > 0.99f;
             fade_fill = black || white;
         }
-        bool composite = reads_scene || fade_fill || (fullscreen_fill && wide_frame == renderer_exec_frame());
+        // Depth-tested draws are the world, not UI (SS draws its scene into the image it presents): boxed, NPCs and
+        // effects drawn after the opaque pass were cut off at the 16:9 edges.
+        bool world = st.ds[0] && st.rt.depth;
+        bool composite = reads_scene || fade_fill || world || (fullscreen_fill && wide_frame == renderer_exec_frame());
         if (!composite) wide_frame = ~0ull;
         if (!composite) {
             int pw, ph;
@@ -5972,7 +5980,15 @@ static void draw_(CmdRec *r, bool indexed) {
         float k = widescreen_effect_stretch(g_cur_fs_hash);
         float vx = vp[0] * vp_sx + vp_ox, vw = vp[2] * vp_sx;
         if (k > 1.0f) { vx -= vw * (k - 1) / 2; vw *= k; }
-        set_viewport(vx, vp[1] * vp_sy + vp_oy, vw, vp[3] * vp_sy, zn, zf);
+        float vy = vp[1] * vp_sy + vp_oy, vh = vp[3] * vp_sy;
+        if (vp_sx != 1 || vp_sy != 1) {
+            // A scaled guest viewport ends mid-pixel (605 * 1.34375 = 812.97); drivers that round the viewport to whole
+            // pixels left the last column unrendered, and the shadow map copied from it got a sky-coloured edge that
+            // every clamped shadow lookup outside the map then returned. Cover whole destination pixels instead.
+            float x1 = ceilf(vx + vw), y1 = ceilf(vy + vh);
+            vx = floorf(vx); vy = floorf(vy); vw = x1 - vx; vh = y1 - vy;
+        }
+        set_viewport(vx, vy, vw, vh, zn, zf);
         if (g_debug_frame) {
             VkRect2D sr = scissor_rect();
             LOG("[draw]   vp %.2f %.2f %.2f %.2f (stretch %.3f, fs hash %016llx) scissor %d %d %u %u | guest sc %d %d %d %d | pass %ux%u s %.4f %.4f\n",

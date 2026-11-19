@@ -14,7 +14,6 @@ NVN(nvnCommandBufferInitialize) {
     NvnCmdBuf *cb = calloc(1, sizeof *cb);
     cb->guest = A(0);
     SET_HOST(A(0), cb);
-    LOG("[nvn] cmd buffer %llx\n", (unsigned long long)A(0));  // (SkywardRecomp probe)
     RET(1);  // from LASRecomp: Initialize returns bool success
 }
 NVN(nvnCommandBufferFinalize) { free(cb_of(A(0))); SET_HOST(A(0), 0); }
@@ -58,11 +57,7 @@ NVN(nvnCommandBufferSetCommandMemoryCallbackEnabled) { (void)c; }
 
 // Reserve a record. May call back into the guest for more memory, so callers snapshot their
 // arguments first.
-static uint64_t last_cmd[2];  // (SkywardRecomp probe) op + lr of the latest recorded command
-static uint64_t last_buf;     // and the guest command buffer it went into
 static CmdRec *rec(Cpu *c, NvnCmdBuf *cb, uint32_t op, uint32_t extra) {
-    last_cmd[0] = op | (uint64_t)c->x[30] << 8;
-    last_buf = cb->guest;
     uint32_t size = (uint32_t)((sizeof(CmdRec) + extra + 7) & ~7u);
     for (int tries = 0; !cb->mem || cb->used + size + JUMP_RESERVE > cb->size; tries++) {
         if (!cb->callback || tries == 2) FATAL("nvn: out of command memory (need %u)\n", size);
@@ -79,10 +74,6 @@ static CmdRec *rec(Cpu *c, NvnCmdBuf *cb, uint32_t op, uint32_t extra) {
     cb->used += size;
     return r;
 }
-
-uint64_t nvn_cmd_last_op(void) { return last_cmd[0] & 0xff; }  // (SkywardRecomp probe)
-uint64_t nvn_cmd_last_lr(void) { return last_cmd[0] >> 8; }
-uint64_t nvn_cmd_last_buf(void) { return last_buf; }  // (SkywardRecomp probe)
 
 NVN(nvnCommandBufferBeginRecording) {
     NvnCmdBuf *cb = cb_of(A(0));
@@ -307,11 +298,8 @@ NVN(nvnCommandBufferGetCopyRowStride) { RET(copy_row_stride); }
 NVN(nvnCommandBufferGetCopyImageStride) { RET(copy_image_stride); }
 
 // ---- clears
-uint64_t g_draw_count, g_clear_count;  // (SkywardRecomp probe) totals, read in the hang dump
-uint64_t nvn_draw_count(void) { return g_draw_count; }
-uint64_t nvn_clear_count(void) { return g_clear_count; }
 
-NVN(nvnCommandBufferClearColor) { __atomic_add_fetch(&g_clear_count, 1, __ATOMIC_RELAXED); record_copy(c, CMD_CLEAR_COLOR, 2, 16); }
+NVN(nvnCommandBufferClearColor) { record_copy(c, CMD_CLEAR_COLOR, 2, 16); }
 NVN(nvnCommandBufferClearColori) { CmdRec *r = record_copy(c, CMD_CLEAR_COLOR, 2, 16); r->x[5] = 1; }
 NVN(nvnCommandBufferClearColorui) { CmdRec *r = record_copy(c, CMD_CLEAR_COLOR, 2, 16); r->x[5] = 2; }
 PLAIN(nvnCommandBufferClearDepthStencil, CMD_CLEAR_DEPTH_STENCIL)
@@ -349,7 +337,7 @@ NVN(nvnCommandBufferDiscardColor) {
 NVN(nvnCommandBufferDiscardDepthStencil) { (void)c; }
 
 // ---- draws (all integer arguments fit in x1..x7)
-NVN(nvnCommandBufferDrawArrays) { __atomic_add_fetch(&g_draw_count, 1, __ATOMIC_RELAXED); Snap s = snap(c); CmdRec *r = record(c, CMD_DRAW_ARRAYS, 0, &s); r->x[3] = 0; r->x[4] = 1; }
+NVN(nvnCommandBufferDrawArrays) { Snap s = snap(c); CmdRec *r = record(c, CMD_DRAW_ARRAYS, 0, &s); r->x[3] = 0; r->x[4] = 1; }
 NVN(nvnCommandBufferDrawArraysInstanced) { Snap s = snap(c); record(c, CMD_DRAW_ARRAYS, 0, &s); }
 // Debug: LARECOMP_TRACE_COUNT=<n> logs the guest call chain of indexed draws with n indices.
 static void trace_draw(Cpu *c, uint64_t count) {
@@ -370,20 +358,18 @@ static void trace_draw(Cpu *c, uint64_t count) {
 }
 
 NVN(nvnCommandBufferDrawElements) {
-    __atomic_add_fetch(&g_draw_count, 1, __ATOMIC_RELAXED);
     trace_draw(c, c->x[3]);
     Snap s = snap(c);
     CmdRec *r = record(c, CMD_DRAW_ELEMENTS, 0, &s);
     r->x[4] = 0; r->x[5] = 0; r->x[6] = 1;  // base vertex, base instance, instances
 }
 NVN(nvnCommandBufferDrawElementsBaseVertex) {
-    __atomic_add_fetch(&g_draw_count, 1, __ATOMIC_RELAXED);
     trace_draw(c, c->x[3]);
     Snap s = snap(c);
     CmdRec *r = record(c, CMD_DRAW_ELEMENTS, 0, &s);
     r->x[5] = 0; r->x[6] = 1;
 }
-NVN(nvnCommandBufferDrawElementsInstanced) { __atomic_add_fetch(&g_draw_count, 1, __ATOMIC_RELAXED); trace_draw(c, c->x[3]); Snap s = snap(c); record(c, CMD_DRAW_ELEMENTS, 0, &s); }
+NVN(nvnCommandBufferDrawElementsInstanced) { trace_draw(c, c->x[3]); Snap s = snap(c); record(c, CMD_DRAW_ELEMENTS, 0, &s); }
 PLAIN(nvnCommandBufferDrawArraysIndirect, CMD_DRAW_ARRAYS_INDIRECT)
 PLAIN(nvnCommandBufferDrawElementsIndirect, CMD_DRAW_ELEMENTS_INDIRECT)
 NVN(nvnCommandBufferMultiDrawArraysIndirectCount) { (void)c; }

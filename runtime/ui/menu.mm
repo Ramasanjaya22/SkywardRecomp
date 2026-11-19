@@ -409,8 +409,8 @@ static void tab_display(void) {
     opt_section("Display");
     const char *aspects[] = {"Unlocked", "Original 16:9"};
     opt_choice("Aspect ratio", &g_settings.aspect, aspects, 2, ASPECT_UNLOCKED,
-               "Unlocked: the view fills the window, so wider (or taller) windows show more of the island - up to "
-               "ultrawide; houses and dungeons keep their framing. Original 16:9: the game's own framing, with bars.");
+               "Unlocked: the view fills the window, so wider windows show more - up to ultrawide. Original 16:9: "
+               "the game's own framing, with bars.");
     bool fs = g_settings.fullscreen;
     if (opt_toggle("Fullscreen", &fs, false, "Fills the screen. Also: F11, Alt+Enter or Cmd+Ctrl+F.")) {
         g_settings.fullscreen = fs;
@@ -483,68 +483,7 @@ static void tab_display(void) {
                "The shadows that objects and characters cast. High draws them at twice the Switch's resolution, so their "
                "edges are sharper.");
 
-    opt_section("Game");
-    opt_toggle("Remove blur", &g_settings.blur_removal, false,
-               "Turns off the tilt-shift blur at the top and bottom of the screen.");
-    opt_toggle("Hide Hero Mode icon", &g_settings.hide_hero_icon, false,
-               "Hides the Hero Mode emblem in the corner of the screen while playing a Hero Mode file.");
-    opt_end();
-}
-
-extern "C" bool cosmetics_seed_on(void);  // runtime/cosmetics_seed.c
-
-// Cosmetics: tunic / heart colours, live (runtime/nvn/texpatch.c), and recolours by draw (runtime/nvn/recolour*.c);
-// a seed made with "Random cosmetics" fills the rows left on Default (shown as "Seed: <colour>")
-static void tab_cosmetics(void) {
-    opt_begin("##cosmetics", ImGui::GetFontSize() / 34);
-    CosColour *rows[] = {&g_settings.tunic, &g_settings.hearts, &g_settings.hair, &g_settings.skin, &g_settings.shield,
-                         &g_settings.leaves, &g_settings.grass, &g_settings.sand};
-    if (opt_button("Randomize all", "Every color below gets a random color."))
-        for (CosColour *c : rows) c->pick = 1 + rand() % (COL_RANDOM - 1);  // (a named colour: shown as what it is)
-    if (opt_button("Default all", "Everything on this page back to the game's own look.")) {
-        for (CosColour *c : rows) c->pick = COL_DEFAULT;
-        g_settings.enemy_colours = 0;
-        g_settings.screen_filter = 0;
-    }
-    opt_section("Colors");
-    opt_colour("Tunic color", &g_settings.tunic, COL_SLOT_TUNIC,
-               "Link's tunic color. Default: the game's own (or the randomizer seed's).");
-    opt_colour("Heart color", &g_settings.hearts, COL_SLOT_HEARTS, "The color of the hearts on the HUD.");
-    opt_colour("Hair color", &g_settings.hair, COL_SLOT_HAIR, "Link's hair color.");
-    opt_colour("Body color", &g_settings.skin, COL_SLOT_SKIN, "Link's body color.");  // (larecomp.ini: skin)
-    opt_colour("Shield color", &g_settings.shield, COL_SLOT_SHIELD, "The color of Link's shield.");
-    opt_section("Overworld");
-    {   // Season: fills Leaves, Grass and Sand at once (palette: Orange 2, Gold 3, Pink 9, White 10); "Mixed" when
-        // they match none
-        static const char *const names[] = {"Spring", "Autumn", "Winter", "Cherry blossom", "Mixed"};
-        static const int preset[4][3] = {{COL_DEFAULT, COL_DEFAULT, COL_DEFAULT}, {2, 3, 3}, {10, 10, 10},
-                                         {9, COL_DEFAULT, COL_DEFAULT}};
-        int cur = 4;  // (as shown: a row on Default shows the seed's colour, if it has its own)
-        for (int i = 0; i < 4; i++)
-            if (col_pick(&g_settings.leaves, COL_SLOT_LEAVES) == preset[i][0] &&
-                col_pick(&g_settings.grass, COL_SLOT_GRASS) == preset[i][1] &&
-                col_pick(&g_settings.sand, COL_SLOT_SAND) == preset[i][2])
-                cur = i;
-        int v = cur;
-        if (opt_choice("Season", &v, names, 5, 0, "Sets the leaves, grass and sand colors below.") && v != cur) {
-            if (v == 4) v = cur == 0 ? 3 : 0;  // (Mixed is never chosen: past the ends, back round)
-            g_settings.leaves.pick = preset[v][0];
-            g_settings.grass.pick = preset[v][1];
-            g_settings.sand.pick = preset[v][2];
-        }
-    }
-    opt_colour("Leaves color", &g_settings.leaves, COL_SLOT_LEAVES, "The overworld's tree leaves and bushes.");
-    opt_colour("Grass color", &g_settings.grass, COL_SLOT_GRASS, "The overworld's grass.");
-    opt_colour("Sand color", &g_settings.sand, COL_SLOT_SAND, "The beaches, the desert and the sandy south.");
-    opt_section("Enemies");
-    {   // (Off in a seed with its own cosmetics: "Seed", its enemies are per seed)
-        const char *modes[N_ENEMY_COLOUR_MODES];
-        for (int i = 0; i < N_ENEMY_COLOUR_MODES; i++) modes[i] = g_enemy_colour_modes[i];
-        if (cosmetics_seed_on()) modes[0] = "Seed";
-        opt_choice("Enemy colors", &g_settings.enemy_colours, modes, N_ENEMY_COLOUR_MODES, 0,
-                   "Each kind of enemy in another color. Enemies whose color shows their strength or type keep theirs.");
-    }
-    opt_section("Screen");
+    // (LA's "Remove blur" / "Hide Hero Mode icon" and the Cosmetics tab are gone: they patched LA's art)
     opt_choice("Screen filter", &g_settings.screen_filter, g_screen_filters, N_SCREEN_FILTERS, 0,
                "A filter over the whole picture, the HUD included.");
     opt_end();
@@ -573,8 +512,8 @@ static void tab_quit(float scale, bool in_game) {
         ask = 0;
     const char *lost = in_game ? "\n\nProgress since your last save is lost." : "";
     char d1[200], d2[200];
-    snprintf(d1, sizeof d1, "Leaves the game and goes back to the LAS Recomp start screen.%s", lost);
-    snprintf(d2, sizeof d2, "Closes LAS Recomp.%s", lost);
+    snprintf(d1, sizeof d1, "Leaves the game and goes back to the SkywardRecomp start screen.%s", lost);
+    snprintf(d2, sizeof d2, "Closes SkywardRecomp.%s", lost);
     opt_begin("##quit", scale);
     opt_section("Quit");
     if (!ask) {
@@ -754,8 +693,8 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     if (prelaunch) tabs[ntabs++] = {"Prelaunch", -1, true};
     static const char *names[] = {"Video", "Audio", "Save Editor", "Randomizer", "Warp", "Cheats", "Gameplay",
                                   "Cosmetics", "Controls", "Quit"};
-    static const int order[] = {8, 0, 1, 6, 7, 9};  // Controls, Video, Audio, Gameplay, Cosmetics, Quit (ids stay: test hooks;
-                                                     // LA tabs 2-5 hidden: they read LA state)
+    static const int order[] = {8, 0, 1, 6, 9};  // Controls, Video, Audio, Gameplay, Quit (ids stay: test hooks;
+                                                  // LA tabs 2-5 and 7 Cosmetics hidden: they read LA state)
     for (int i : order)  // (Quit: in game only - the start screen has its own QUIT, and an eleventh tab cut names short)
         if (i != 9 || !prelaunch) tabs[ntabs++] = {names[i], i, true};
     int cur = 0;  // g_tab / g_tab_request hold ids
@@ -861,7 +800,6 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 case 0: tab_display(); break;
                 case 1: tab_audio(); break;
                 case 6: difficulty_draw(scale); break;
-                case 7: tab_cosmetics(); break;
                 case 8: controls_tab_draw(scale); break;
                 case 9: tab_quit(scale, in_game); break;
                 }

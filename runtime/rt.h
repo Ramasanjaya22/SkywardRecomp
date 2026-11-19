@@ -31,7 +31,7 @@ static inline void __attribute__((format(printf, 1, 2))) rt_log(const char *fmt,
 #define GUEST_LO     0x7000000000ull
 #define GUEST_HI     0x7320000000ull
 #define MAIN_BASE    0x7000000000ull
-#define SDK_BASE     0x7004000000ull
+#define SDK_BASE     0x7040000000ull   // (SS HD: main + bss reaches 0x702d034000, so the sdk sits above it; matches gen.py's base)
 #define HLE_BASE     0x7080000000ull   // fake addresses for host-implemented functions
 #define HLE_SIZE     0x0000100000ull
 #define TLS_BASE     0x7090000000ull

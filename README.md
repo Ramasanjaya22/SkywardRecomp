@@ -10,10 +10,10 @@ Windows app with a Vulkan renderer. Derived from [LAS Recomp](https://github.com
 
 ## Progress
 
-**Overall: ~58%** (estimate as of 2026-11-18)
+**Overall: ~80%** (estimate as of 2026-11-19)
 
 ```
-[████████████░░░░░░░░] 58%
+[████████████████░░░░] 80%
 ```
 
 | Area | Progress | State |
@@ -22,12 +22,13 @@ Windows app with a Vulkan renderer. Derived from [LAS Recomp](https://github.com
 | Threading (condvar lost-wakeup fix), 30 fps pacing | `██████████` 100% | done |
 | Audio (audren voices) | `██████████` 100% | done |
 | App builds and tests pass on Windows, Linux and macOS (CI) | `██████████` 100% | done |
-| Vulkan renderer: textures, depth/stencil, dual-source blend (eyes) | `█████████░` 90% | done, eyes fix not yet re-verified in every scene |
-| Character lighting | `███████░░░` 70% | works, needs more verification |
-| Shadow rendering | `████░░░░░░` 40% | shadow-map fix ported, not yet verified in game |
-| Save-file names (`□□` glyphs) | `░░░░░░░░░░` 0% | open |
+| Vulkan renderer: textures, depth/stencil, dual-source blend (eyes) | `██████████` 100% | done, eyes confirmed in game 2026-11-18 |
+| Character lighting | `██████████` 100% | confirmed in game 2026-11-18 |
+| Shadow rendering | `██████████` 100% | confirmed in game 2026-11-18, no shadow bug |
+| Save-file names (`□□` glyphs) | `██████████` 100% | fixed (swkbd UTF-16), confirmed in game 2026-11-19 |
 | LA-specific HLE modules and address tables replaced for SS | `███░░░░░░░` 30% | LA leftovers retired (address 0, unused); SS table still partial |
-| 60 fps, ultrawide, resolution options | `░░░░░░░░░░` 0% | not started |
+| Ultrawide, resolution options | `██████████` 100% | 21:9 textures, shadows and characters confirmed in game 2026-11-19 |
+| 60 fps | `░░░░░░░░░░` 0% | not started |
 | Long-session stability / full playthrough | `███░░░░░░░` 30% | 150 s+ runs OK, no full playthrough |
 
 The percentage is a rough milestone estimate, not a measured figure.

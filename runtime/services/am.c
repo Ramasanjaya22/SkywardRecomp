@@ -37,6 +37,15 @@ static uint32_t new_event(void) {
     return r;
 }
 
+static uint32_t new_signaled_event(void) {
+    uint32_t w, r;
+    KEvent *ev = kernel_create_event_pair(&w, &r);
+    pthread_mutex_lock(&g_klock);
+    kernel_signal(ev);
+    pthread_mutex_unlock(&g_klock);
+    return r;
+}
+
 #define UNHANDLED(iface) LOG("[am] %s cmd %u (unhandled, ok)\n", iface, req->cmd)
 
 static void common_state_getter(Service *s, IpcReq *req, IpcResp *resp) {
@@ -73,7 +82,9 @@ static void self_controller(Service *s, IpcReq *req, IpcResp *resp) {
     (void)s;
     switch (req->cmd) {
     case 0: LOG("[am] application requested exit\n"); exit(0);
-    case 9: resp->copy_handles[resp->ncopy++] = new_event(); break;
+    // GetLibraryAppletLaunchableEvent: signaled while in the foreground (always here). nn::applet::CreateLibraryApplet
+    // waits on it first; unsignaled, SS's controller strap guide at boot hung the game thread for good.
+    case 9: resp->copy_handles[resp->ncopy++] = new_signaled_event(); break;
     case 40: OUT(uint64_t, 0) = 1; resp_size(resp, 8); break;  // CreateManagedDisplayLayer
     case 69: OUT(uint8_t, 0) = 0; resp_size(resp, 1); break;
     default: UNHANDLED("ISelfController");
@@ -133,6 +144,46 @@ static Service *new_am_storage(const void *data, uint64_t size) {
     return service_new("IStorage", am_storage, st);
 }
 
+// ------------------------------------------------------------------ library applets
+// No applet runs: each one finishes at once (state-changed event signaled, result OK). The controller applet (SS's
+// strap guide at boot, ShowControllerSupport) pops one ControllerSupportResultInfo: 1 player on Npad No1.
+typedef struct { uint32_t id; bool popped; } AmApplet;
+
+static void applet_accessor(Service *s, IpcReq *req, IpcResp *resp) {
+    AmApplet *a = s->state;
+    switch (req->cmd) {
+    case 0: case 105: resp->copy_handles[resp->ncopy++] = new_signaled_event(); break;  // State changed / PopOutData
+    case 106: resp->copy_handles[resp->ncopy++] = new_event(); break;  // GetPopInteractiveOutDataEvent
+    case 1: OUT(uint8_t, 0) = 1; resp_size(resp, 1); break;            // IsCompleted
+    case 10: LOG("[am] library applet %#x started (finishes at once)\n", a->id); break;
+    case 101:  // PopOutData
+        if (a->id == 0x0A && !a->popped) {  // controller
+            uint8_t info[0xC] = {1};        // PlayerCount 1, SelectedId 0 (No1), Result 0
+            a->popped = true;
+            ipc_return_object(resp, new_am_storage(info, sizeof info));
+        } else {
+            resp->result = AM_NO_DATA;
+        }
+        break;
+    case 102: resp->result = AM_NO_DATA; break;  // PopInteractiveOutData
+    default: LOG("[am] ILibraryAppletAccessor cmd %u (ok)\n", req->cmd);  // 20 RequestExit, 30 GetResult, 100 PushInData
+    }
+}
+
+static void library_applet_creator(Service *s, IpcReq *req, IpcResp *resp) {
+    (void)s;
+    switch (req->cmd) {
+    case 0: {  // CreateLibraryApplet(AppletId, LibraryAppletMode)
+        AmApplet *a = calloc(1, sizeof *a);
+        a->id = IN(uint32_t, 0);
+        ipc_return_object(resp, service_new("ILibraryAppletAccessor", applet_accessor, a));
+        break;
+    }
+    case 10: ipc_return_object(resp, new_am_storage(NULL, (uint64_t)IN(int64_t, 0))); break;  // CreateStorage(size)
+    default: LOG("[am] ILibraryAppletCreator cmd %u (ok)\n", req->cmd);
+    }
+}
+
 extern const uint8_t g_user_id[16];
 
 static void application_functions(Service *s, IpcReq *req, IpcResp *resp) {
@@ -174,7 +225,7 @@ static void application_proxy(Service *s, IpcReq *req, IpcResp *resp) {
         {3, "IAudioController", generic_ok},
         {4, "IDisplayController", generic_ok},
         {10, "IProcessWindingController", generic_ok},
-        {11, "ILibraryAppletCreator", generic_ok},
+        {11, "ILibraryAppletCreator", library_applet_creator},
         {20, "IApplicationFunctions", application_functions},
         {1000, "IDebugFunctions", generic_ok},
     };

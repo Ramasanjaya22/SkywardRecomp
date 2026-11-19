@@ -815,6 +815,7 @@ static void update_voice(Renderer *r, Voice *v, const uint8_t *p, uint8_t *out) 
 static void update_mix(Renderer *r, const uint8_t *p, int id) {
     if (id < 0 || (uint32_t)id >= r->nmix) return;
     Mix *m = &r->mix[id];
+    Mix old = *m;
     memcpy(&m->volume, p, 4);
     memcpy(&m->bufs, p + 8, 4);
     if (m->bufs > MIXBUF_MAX) m->bufs = MIXBUF_MAX;
@@ -823,6 +824,8 @@ static void update_mix(Renderer *r, const uint8_t *p, int id) {
     memcpy(&m->dest_splitter, p + 0x928, 4);
     memcpy(m->vol, p + 0x24, sizeof m->vol);
     if (!m->buf) m->buf = calloc(MIXBUF_MAX * r->sample_count, sizeof(float));
+    // Log changes only: the game sends every mix on every update (~200/s), which buried the rest of the log.
+    if (old.buf && !memcmp(&old, m, offsetof(Mix, buf))) return;
     LOG("[audren] mix %d used %u vol %.3f bufs %u dest %d:", id, m->used, m->volume, m->bufs, m->dest);
     for (int i = 0; i < MIXBUF_MAX * MIXBUF_MAX; i++)
         if (m->vol[i] != 0) LOG(" %d>%d=%.3f", i / MIXBUF_MAX, i % MIXBUF_MAX, m->vol[i]);
@@ -1062,7 +1065,10 @@ SERVICE("audren:u", audren_u) {
         ipc_return_object(resp, service_new("IAudioRenderer", audio_renderer, r));
         break;
     }
-    case 1: OUT(uint64_t, 0) = 0x1000000; resp_size(resp, 8); break;  // GetWorkBufferSize: 16 MB
+    // GetWorkBufferSize: the host never reads the work buffer, so any size the game can allocate works. SS gives it a
+    // 16 MB StandardAllocator, which can't hand out all 16 MB (its own header), so ask for 4 MB.
+    // shortcut: fixed size, not the hardware formula over the parameters; compute it if a game sizes memory from it.
+    case 1: OUT(uint64_t, 0) = 0x400000; resp_size(resp, 8); break;
     case 2: case 4: ipc_return_object(resp, service_new("IAudioDevice", audio_device, NULL)); break;
     default: LOG("[audren] cmd %u (ok)\n", req->cmd);
     }

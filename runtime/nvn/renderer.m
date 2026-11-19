@@ -3418,7 +3418,9 @@ static void draw(CmdRec *r, bool indexed) {
             bool black = c[0] < 0.01f && c[1] < 0.01f && c[2] < 0.01f, white = c[0] > 0.99f && c[1] > 0.99f && c[2] > 0.99f;
             fade_fill = black || white;
         }
-        bool composite = reads_scene || fade_fill || (fullscreen_fill && wide_frame == renderer_exec_frame());
+        // Depth-tested draws are the world, not UI (SS draws its scene into the image it presents; as exec.c)
+        bool world = st.ds[0] && st.rt.depth;
+        bool composite = reads_scene || fade_fill || world || (fullscreen_fill && wide_frame == renderer_exec_frame());
         if (!composite) wide_frame = ~0ull;
         static int log_fills = -1;  // LARECOMP_LOG_FILLS: every full-screen untextured fill (fs hash, colour cbuf, decision)
         if (log_fills < 0) log_fills = getenv("LARECOMP_LOG_FILLS") != NULL;
@@ -3455,7 +3457,12 @@ static void draw(CmdRec *r, bool indexed) {
         float k = widescreen_effect_stretch(g_cur_fs_hash);
         double vx = vp[0] * vp_sx + vp_ox, vw = vp[2] * vp_sx;
         if (k > 1.0f) { vx -= vw * (k - 1) / 2; vw *= k; }
-        [enc setViewport:(MTLViewport){vx, vp[1] * vp_sy + vp_oy, vw, vp[3] * vp_sy, zn, zf}];
+        double vy = vp[1] * vp_sy + vp_oy, vh = vp[3] * vp_sy;
+        if (vp_sx != 1 || vp_sy != 1) {  // cover whole destination pixels (see the Vulkan exec.c draw path)
+            double x1 = ceil(vx + vw), y1 = ceil(vy + vh);
+            vx = floor(vx); vy = floor(vy); vw = x1 - vx; vh = y1 - vy;
+        }
+        [enc setViewport:(MTLViewport){vx, vy, vw, vh, zn, zf}];
     }
     apply_scissor();
     if (pr->fi->uses_rscale) {  // [0] = render target scale, [1 + i] = scale of texture i

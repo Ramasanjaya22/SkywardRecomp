@@ -1,6 +1,6 @@
 // Start screen, shown before the game boots (user 2026-10-08, styled after Dusklight's launcher): PLAY (with
 // ‹ Vanilla / seed › picker), SETTINGS, QUIT, game-files status at the lower left. Nothing of the game ships with
-// LAS Recomp: on first launch the user picks the folder with their own game files (1.0.0, 1.0.1 or 1.1.0), we check
+// SkywardRecomp: on first launch the user picks the folder with their own game files (1.0.0), we check
 // the main module's build id (runtime/game_addresses/versions.h), copy the files and build the game's data image; PLAY stays disabled until that worked. The background is a frame of the game's own title movie (from the user's files) once extracted.
 //
 // Skipped with --play, LARECOMP_NO_LAUNCHER=1, or any scripted test run (LARECOMP_INPUT): tests boot straight in
@@ -106,8 +106,8 @@ extern "C" const char *larecomp_version(void) { return LARECOMP_VERSION; }  // (
 // v0.<n>.<m> the same as beta_<n>.<m>; other tags (the alpha_* ones) are ignored. (Beta 5 and earlier only know
 // beta_<n>: they never offer a hotfix; builds before Beta 5.3 don't know v0.<n>.<m> either.) Offline / no curl /
 // anything unexpected: nothing is shown.
-#define RELEASES_URL "https://api.github.com/repos/peiikai/LASRecomp/releases?per_page=100"
-#define RELEASE_PAGE "https://github.com/peiikai/LASRecomp/releases/tag/"
+#define RELEASES_URL "https://api.github.com/repos/Ramasanjaya22/SkywardRecomp/releases?per_page=100"
+#define RELEASE_PAGE "https://github.com/Ramasanjaya22/SkywardRecomp/releases/tag/"
 
 #include "update_tags.h"  // tag_rank, tag_label
 
@@ -132,7 +132,7 @@ static void *update_thread(void *) {
         std::string out = std::string(rt_data_root()) + "/cache/releases.json";
         mkdir((std::string(rt_data_root()) + "/cache").c_str(), 0755);
         const char *av[] = {curl.c_str(), "-fsSL", "--max-time", "15", "-H", "Accept: application/vnd.github+json",
-                            "-A", "LASRecomp/" LARECOMP_VERSION, RELEASES_URL, NULL};
+                            "-A", "SkywardRecomp/" LARECOMP_VERSION, RELEASES_URL, NULL};
         PlatProc p = plat_spawn(av, out.c_str(), false);
         if (!p || plat_proc_wait(p, true) != 0) { remove(out.c_str()); return NULL; }
         if (FILE *f = fopen(out.c_str(), "rb")) {
@@ -168,14 +168,14 @@ static bool file_exists(const std::string &p) {
     return stat(p.c_str(), &st) == 0;
 }
 
-// The game's RomFS (the same in every supported version) has exactly ROMFS_FILES files: a copy with fewer is incomplete (a copy or unzip that
+// The game's RomFS has exactly game_romfs_files() files (per version, 0: unknown): a copy with fewer is incomplete (a copy or unzip that
 // stopped partway) and the game crashes on the first one it misses (issues #24, #35). Only the number ships.
 // Their sizes add up to game_romfs_bytes() (per version): every file there with another total is a damaged or
 // changed file (issue #391). The game still plays then; the start screen says so.
 // With check (base: where the path inside romfs starts), the files that aren't the game's are named in the log, the
 // first ROMFS_ODD_LOGGED of them (check->odd counts them all), and copies of the game code at the romfs root
 // (game_romfs_exefs_copy, game: the game folder) are left out of the count and the bytes (check->copies).
-enum { ROMFS_FILES = 3836, ROMFS_ODD_LOGGED = 20 };
+enum { ROMFS_ODD_LOGGED = 20 };
 struct RomfsCheckWalk { GameRomfsCheck *check; size_t base; int odd; const char *game; int copies; };
 static int count_files(const std::string &dir, int depth = 0, uint64_t *bytes = NULL, RomfsCheckWalk *check = NULL) {
     DIR *d = depth < 12 ? opendir(dir.c_str()) : NULL;
@@ -221,9 +221,11 @@ static void read_build_cache(void) {
 static bool resumable_build(void) { read_build_cache(); return g_resumable; }
 static bool has_build_cache(void) { read_build_cache(); return g_has_build_cache; }
 
-static std::string incomplete(int have) {
+static int romfs_want(const std::string &root) { return game_romfs_files(game_version_of(root.c_str())); }
+static std::string incomplete(int have, int want) {
     char b[96];
-    snprintf(b, sizeof b, "Game files incomplete (%d of %d files)", have, (int)ROMFS_FILES);
+    if (want) snprintf(b, sizeof b, "Game files incomplete (%d of %d files)", have, want);
+    else snprintf(b, sizeof b, "Game files incomplete (no game data)");
     return b;
 }
 
@@ -235,12 +237,12 @@ static std::string check_copied_files(const std::string &root) {
         if (file_exists(root + "/romfs.bin")) {  // the extracted image (a .nsp setup): served whole (fs.c)
             struct stat st;
             if (stat((root + "/romfs.bin").c_str(), &st) == 0) {
-                g_romfs_count = ROMFS_FILES, g_romfs_missing = 0, g_romfs_bytes = (uint64_t)st.st_size;
+                g_romfs_count = romfs_want(root), g_romfs_missing = 0, g_romfs_bytes = (uint64_t)st.st_size;
                 g_romfs_want = 0;  // (no per-file bytes to compare against)
                 return "";
             }
         }
-        return incomplete(0);
+        return incomplete(0, romfs_want(root));
     }
     if (g_romfs_count < 0) {
         g_romfs_bytes = 0;
@@ -256,11 +258,11 @@ static std::string check_copied_files(const std::string &root) {
             fprintf(stderr, "[launcher] romfs: %d more files that aren't the game's\n", check.odd - ROMFS_ODD_LOGGED);
         if (missing) fprintf(stderr, "[launcher] romfs: %d of the game's files missing or changed\n", missing);
         g_romfs_want = game_romfs_bytes(v);
-        if (g_romfs_count >= ROMFS_FILES && g_romfs_want && g_romfs_bytes != g_romfs_want)
+        if (g_romfs_count >= romfs_want(root) && g_romfs_want && g_romfs_bytes != g_romfs_want)
             fprintf(stderr, "[launcher] romfs: %llu bytes in %d files, this version's are %llu: damaged or changed "
                     "game files\n", (unsigned long long)g_romfs_bytes, g_romfs_count, (unsigned long long)g_romfs_want);
     }
-    if (g_romfs_count < ROMFS_FILES) return incomplete(g_romfs_count);
+    if (int want = romfs_want(root); want && g_romfs_count < want) return incomplete(g_romfs_count, want);
     return "";
 }
 
@@ -285,7 +287,7 @@ static const char *status_hint(const std::string &why) {
     if (why.rfind("Game files incomplete", 0) == 0)
         return "Some of the game's files are missing, usually from a copy or unzip that stopped partway. Copy your game "
                "files again, then choose that folder and set them up again.";
-    if (why == "Wrong version of the game") return "LAS Recomp needs version 1.0.0, 1.0.1 or 1.1.0 of the game.";
+    if (why == "Wrong version of the game") return "SkywardRecomp needs version 1.0.0 of the game.";
     if (why == "Game code not built yet") return "Set up the game files to build it (a few minutes, only once).";
     return "Set up the game files to play.";
 }
@@ -313,25 +315,25 @@ static const char *const PICK_FOLDER_HINT = "Choose the folder that has the game
 
 // Setup failures: a short headline and what to do next (also LARECOMP_LAUNCHER_SHOT=<f>:fail<1-6>, screenshots)
 enum { FAIL_NOT_FOUND = 1, FAIL_UNUSABLE, FAIL_COPY, FAIL_VERSION, FAIL_MISSING, FAIL_BUILD };
-static void set_failure(int k, int have = -1, const char *reason = NULL) {
+static void set_failure(int k, int have = -1, const char *reason = NULL, int want = 0) {
     static const char *const head[] = {"", "No game files found in that folder", "Those are game packages, not game files",
                                        "Setup didn't finish", "Wrong version of the game", "Your game files are incomplete",
                                        "The game code didn't build"};
     static const char *const hint[] = {
         "",
         PICK_FOLDER_HINT,
-        "LAS Recomp needs the game's own files (the exefs and romfs folders), not .xci / .nsp / .nca files.",
+        "SkywardRecomp needs the game's own files (the exefs and romfs folders), not .xci / .nsp / .nca files.",
         "Make sure there's about 12 GB free and try again.",
-        "LAS Recomp needs version 1.0.0, 1.0.1 or 1.1.0 of the game.",
+        "SkywardRecomp needs version 1.0.0 of the game.",
         "Some of the game's files are missing - usually a copy or unzip that stopped partway. Copy the game files "
         "again so none are missing, then choose the folder again.",
         "Make sure there's about 2 GB free and try again. If it keeps happening, report it on GitHub."};
     if (k < 1 || k > 6) return;
-    if (k == FAIL_MISSING && have >= 0) {
+    if (k == FAIL_MISSING && have >= 0 && want) {
         char b[320];
         snprintf(b, sizeof b, "The romfs folder has %d of the game's %d files - some are missing, usually from a copy or "
                  "unzip that stopped partway. Copy the game files again so none are missing, then choose the folder "
-                 "again.", have, (int)ROMFS_FILES);
+                 "again.", have, want);
         set_job(head[k], true, b);
         return;
     }
@@ -487,7 +489,7 @@ static bool extract_nsp(const std::string &nsp) {
         if (file_exists(k)) { keys = k; break; }
     if (keys.empty()) {
         set_job("No prod.keys found", true,
-                "LAS Recomp needs the console's prod.keys to open a .nsp - put prod.keys next to the game package "
+                "SkywardRecomp needs the console's prod.keys to open a .nsp - put prod.keys next to the game package "
                 "and choose the folder again.");
         return false;
     }
@@ -563,13 +565,15 @@ static void *extract_thread(void *) {
         goto check;
     }
     if (!build_id_ok(exefs)) { set_failure(FAIL_VERSION); goto done; }
-    if (int have = count_files(romfs); have < ROMFS_FILES) {  // (an incomplete copy: refused before copying it)
-        fprintf(stderr, "[launcher] %s: %d of %d romfs files\n", romfs.c_str(), have, (int)ROMFS_FILES);
-        set_failure(FAIL_MISSING, have);
-        goto done;
+    if (int want = game_romfs_files(game_version_of_main((exefs + "/main").c_str()))) {
+        if (int have = count_files(romfs); have < want) {  // (an incomplete copy: refused before copying it)
+            fprintf(stderr, "[launcher] %s: %d of %d romfs files\n", romfs.c_str(), have, want);
+            set_failure(FAIL_MISSING, have, NULL, want);
+            goto done;
+        }
     }
     {
-        // (the picked folder can't be LAS Recomp's own copy: setting up again deletes that first)
+        // (the picked folder can't be SkywardRecomp's own copy: setting up again deletes that first)
         char a[4096], b[4096];
         mkdir(g_root.c_str(), 0755);
         if (realpath(exefs.c_str(), a) && realpath(g_root.c_str(), b) && !strncmp(a, b, strlen(b)) &&
@@ -603,7 +607,7 @@ check:
         if (why.empty() && files_changed(g_root)) set_job(CHANGED_HEAD, true, CHANGED_HINT);  // (playable all the same)
         else if (why.empty()) set_job("Game files ready.");
         else if (why.find("version") != std::string::npos) set_failure(FAIL_VERSION);
-        else set_failure(FAIL_MISSING, g_romfs_count);
+        else set_failure(FAIL_MISSING, g_romfs_count, NULL, romfs_want(g_root));
     }
 done:
     pthread_mutex_lock(&g_lock);
@@ -620,7 +624,7 @@ static std::string picker_hint(const char *what) {
     std::string err = SDL_GetError();
     fprintf(stderr, "[launcher] %s window: %s\n", what, err.c_str());
 #ifdef __linux__
-    return std::string("LAS Recomp opens the ") + what + " window through your desktop's file chooser "
+    return std::string("SkywardRecomp opens the ") + what + " window through your desktop's file chooser "
            "(xdg-desktop-portal) or zenity. Install either one, then try again.";
 #else
     return err;
@@ -884,7 +888,7 @@ extern "C" void launcher_play_seed(const char *seed) {
 }
 static float g_menu_gap = 0.35f;  // space under each item, in line heights
 
-// The first PLAY ever (settings.menu_tip_seen): a note on opening the LAS Recomp menu in game (it isn't obvious),
+// The first PLAY ever (settings.menu_tip_seen): a note on opening the SkywardRecomp menu in game (it isn't obvious),
 // OK starts the game. Returns true once OK is pressed.
 static bool g_tip_test;  // (LARECOMP_LAUNCHER_SHOT=<frame>:tip)
 // First PLAY ever, before the menu note: authentic 16:9 or the unlocked (fill the window) aspect ratio.
@@ -945,7 +949,7 @@ static bool menu_tip(float s) {
         static const char *const home[] = {"Home button", "Xbox button", "PlayStation button"};  // (bind_label_family)
         static const char *const pad[] = {"Minus + Plus", "View + Menu", "Create + Options"};
         ImGui::PushTextWrapPos(0);
-        ImGui::TextUnformatted("LAS Recomp has its own menu for settings, the randomizer, cosmetics and more.");
+        ImGui::TextUnformatted("SkywardRecomp has its own menu for settings, controls and more.");
         ImGui::Spacing();
         int fam = bind_label_family() % 3;
         ImGui::Text("Open it in game with F1 or Esc, or on a controller with the %s (or %s together).", home[fam], pad[fam]);
@@ -1330,7 +1334,7 @@ static void *df_move_thread(void *) {
 static void df_restart(void) {
     unsetenv("LARECOMP_LAUNCHER_DATA_PICK");
     rt_paths_restart();
-    snprintf(g_df_err, sizeof g_df_err, "Couldn't restart LAS Recomp. Start it again to use the new folder.");
+    snprintf(g_df_err, sizeof g_df_err, "Couldn't restart SkywardRecomp. Start it again to use the new folder.");
     g_df = DF_FAILED;
 }
 
@@ -1374,7 +1378,7 @@ static void data_folder_popup(float s) {
             ImGui::Spacing();
             close = ImGui::Button("OK", bw) || esc;
         } else if (t.has_data) {
-            ImGui::Text("This folder already has LAS Recomp data. Use it?");
+            ImGui::Text("This folder already has SkywardRecomp data. Use it?");
             ImGui::Spacing();
             if (ImGui::Button("Use it", bw) || g_df_auto_fresh) g_df_auto_fresh = false, use_it();
             ImGui::SameLine();
@@ -1448,7 +1452,7 @@ static void prelaunch_tab(float sc) {
         ImGui::PushFont(g_font_menu);
         ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "Are you sure?");
         ImGui::PopFont();
-        ImGui::Text("This deletes LAS Recomp's copy of the game files (%.1f GB).", gb);
+        ImGui::Text("This deletes SkywardRecomp's copy of the game files (%.1f GB).", gb);
         ImGui::TextDisabled("Saves, seeds and settings are kept. Your own game files aren't touched.");
         if (rt_dev_mode()) {  // (a source checkout: the files are the project's own extracted/)
             bool abs = !g_root.empty() && (g_root[0] == '/' || (g_root.size() > 1 && g_root[1] == ':'));
@@ -1460,7 +1464,7 @@ static void prelaunch_tab(float sc) {
             stop_background_prep();
             bool ok = rt_remove_game_files(g_root.c_str());  // (runtime/paths.c: only what the extraction made)
             game_files_changed();
-            set_job(ok ? "Game files deleted." : "Could not delete the game files (not in LAS Recomp's data folder?).", !ok);
+            set_job(ok ? "Game files deleted." : "Could not delete the game files (not in SkywardRecomp's data folder?).", !ok);
             g_files_deleted = true, gb = -1;
             ImGui::CloseCurrentPopup();
         }
@@ -1821,7 +1825,7 @@ extern "C" void launcher_run(const char *root) {
             ImGui::SetCursorPos(ImVec2(x0, 120 * s));
             ImGui::PushFont(g_font_title);
             if (page == MAIN) {  // gold to orange, shadowed (not behind the Settings / Game Files windows)
-                const char *t = "LAS Recompiled";
+                const char *t = "SkywardRecomp";
                 ImVec2 p = ImGui::GetCursorScreenPos();
                 text_fx(ImGui::GetWindowDrawList(), ImGui::GetFont(), ImGui::GetFontSize(), p, IM_COL32(255, 232, 120, 255),
                         IM_COL32(255, 138, 48, 255), t, 3 * s);
@@ -2047,12 +2051,12 @@ extern "C" void launcher_run(const char *root) {
                     dl->AddLine(ImVec2(x, cy), ImVec2(x + u * 0.35f, cy + u * 0.35f), g, fs * 0.11f);
                     dl->AddLine(ImVec2(x + u * 0.35f, cy + u * 0.35f), ImVec2(x + u, cy - u * 0.4f), g, fs * 0.11f);
                 };
-                std::string src_d = "The folder with your own extracted game files (exefs/romfs) of The Legend of Zelda: Link's "
-                                    "Awakening for Nintendo Switch. The game isn't included with LAS Recomp.";
+                std::string src_d = "The folder with your own extracted game files (exefs/romfs) of The Legend of Zelda: Skyward "
+                                    "Sword HD for Nintendo Switch. The game isn't included with SkywardRecomp.";
                 if (!src.empty()) src_d += "\n\nChosen: " + src;
                 // the step that's running / its result, under the rows and in the Set up row's explanation
                 const std::string &job_line = job;
-                std::string ex_d = "Copies the game files LAS Recomp needs and recompiles the game from them. This only "
+                std::string ex_d = "Copies the game files SkywardRecomp needs and recompiles the game from them. This only "
                                    "needs to be done once and may take a while. Your own files aren't changed.";
                 if (!job.empty()) ex_d += "\n\n" + job + (job_hint.empty() ? "" : ".\n" + job_hint);
 
@@ -2084,14 +2088,14 @@ extern "C" void launcher_run(const char *root) {
                     }
                     files_gb = -1;  // (re-measured after a setup)
                 } else {
-                    // DELETE: frees LAS Recomp's copy (runtime/paths.c removes only what the setup made, only inside
+                    // DELETE: frees SkywardRecomp's copy (runtime/paths.c removes only what the setup made, only inside
                     // the data root). Saves, seeds, settings and the user's own files stay.
                     if (files_gb < 0) files_gb = rt_game_files_size(g_root.c_str()) / 1e9;
                     char gb[32];
                     snprintf(gb, sizeof gb, "%.1f GB", files_gb);
                     opt_section("Game files");
                     if (!g_confirm_delete) {
-                        if (opt_action("Delete game files", gb, "Frees the space LAS Recomp's copy of the game files takes. "
+                        if (opt_action("Delete game files", gb, "Frees the space SkywardRecomp's copy of the game files takes. "
                                        "Saves, seeds and settings are kept, and your own game files aren't touched: you can "
                                        "set the game files up again from them.", true))
                             g_confirm_delete = true;
@@ -2103,7 +2107,7 @@ extern "C" void launcher_run(const char *root) {
                             game_files_changed();
                             status = check_game_files(g_root);
                             if (ok) set_job("Game files deleted.");
-                            else set_job("Couldn't delete the game files", true, "They aren't in LAS Recomp's data folder, "
+                            else set_job("Couldn't delete the game files", true, "They aren't in SkywardRecomp's data folder, "
                                          "so they were left alone.");
                             if (!status.empty()) g_bg = 0;
                             g_confirm_delete = false, files_gb = -1;
@@ -2113,7 +2117,7 @@ extern "C" void launcher_run(const char *root) {
                 }
                 {  // where all of it is kept: another folder (a bigger drive)
                     const char *fixed = rt_data_root_fixed();
-                    std::string d = std::string("Where LAS Recomp keeps game files, saves, seeds and settings.\n\n") +
+                    std::string d = std::string("Where SkywardRecomp keeps game files, saves, seeds and settings.\n\n") +
                                     rt_data_root() + (fixed ? std::string("\n\n") + fixed : "");
                     opt_section("Storage");
                     if (busy || fixed) opt_disable_next();

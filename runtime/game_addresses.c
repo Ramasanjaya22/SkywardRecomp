@@ -71,7 +71,7 @@ bool game_version_select(const char *game_dir, char *why, size_t why_size) {
     const GameVersion *v = game_version_by_build_id(id);
     if (!v) {
         snprintf(why, why_size, "these game files are an unsupported version of the game (main build ID "
-                 "%02X%02X%02X%02X%02X%02X%02X%02X): LAS Recomp needs version 1.0.0, 1.0.1 or 1.1.0",
+                 "%02X%02X%02X%02X%02X%02X%02X%02X): SkywardRecomp needs version 1.0.0",
                  id[0], id[1], id[2], id[3], id[4], id[5], id[6], id[7]);
         return false;
     }
@@ -85,12 +85,10 @@ bool game_version_select(const char *game_dir, char *why, size_t why_size) {
 
 const GameVersion *game_version(void) { return g_version; }
 
-uint64_t game_romfs_bytes(const GameVersion *v) {
-    if (!v) return 0;
-    if (!strcmp(v->key, "v1_0_0")) return 6232003695ull;
-    if (!strcmp(v->key, "v1_0_1")) return 6232003903ull;  // (1.0.1 and 1.1.0 have the same RomFS)
-    return 0;
-}
+// shortcut: no SS RomFS list, count or total yet (romfs_files.h and the numbers that were here are LA's, which made
+// every SS copy look incomplete); make SS's with tools/romfs_files.py from a verified copy, then return them here.
+int game_romfs_files(const GameVersion *v) { (void)v; return 0; }
+uint64_t game_romfs_bytes(const GameVersion *v) { (void)v; return 0; }
 
 static const struct { uint64_t hash; uint8_t versions; } romfs_files[] = {
 #include "game_addresses/romfs_files.h"
@@ -102,11 +100,8 @@ struct GameRomfsCheck {
 };
 
 GameRomfsCheck *game_romfs_check_begin(const GameVersion *v) {
-    uint8_t bit = !v ? 0 : !strcmp(v->key, "v1_0_0") ? 1 : !strcmp(v->key, "v1_0_1") ? 2 : 0;
-    if (!bit) return NULL;
-    GameRomfsCheck *c = calloc(1, sizeof *c);
-    if (c) c->version = bit;
-    return c;
+    (void)v;
+    return NULL;  // (romfs_files.h has no SS files: see game_romfs_files)
 }
 
 uint64_t game_romfs_hash(const char *rel, uint64_t size) {
