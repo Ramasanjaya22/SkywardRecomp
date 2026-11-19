@@ -8,6 +8,12 @@ Windows app with a Vulkan renderer. Derived from [LAS Recomp](https://github.com
 > You must supply your own legally obtained copy of the game; the build generates C code locally from your files,
 > and that output (`generated/`, `extracted/`, `input/`) is git-ignored and must never be shared.
 
+## Demo
+
+[![Watch the demo on YouTube](docs/media/screenshot-1.jpg)](https://youtu.be/3KJOw7pbSQ0)
+
+▶ [Watch the 2-minute demo on YouTube](https://youtu.be/3KJOw7pbSQ0)
+
 ## Screenshots
 
 Running natively on Windows (Vulkan, 21:9 ultrawide).
