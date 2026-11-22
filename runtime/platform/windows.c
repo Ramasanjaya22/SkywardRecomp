@@ -313,10 +313,12 @@ static int newest_log(const void *a, const void *b) {
     return time ? time : strcmp(y->name, x->name);
 }
 static bool session_log_name(const char *name) {  // skywardrecomp-backup-<filetime hex>-<pid>.log
-    if (strncmp(name, "skywardrecomp-backup-", 17)) return false;
-    const char *p = name + 17;
+    static const char prefix[] = "skywardrecomp-backup-";
+    const size_t n = sizeof prefix - 1;
+    if (strncmp(name, prefix, n)) return false;
+    const char *p = name + n;
     while ((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f') || *p == '-') p++;
-    return p > name + 17 && !strcmp(p, ".log");
+    return p > name + n && !strcmp(p, ".log");
 }
 static void keep_legacy_log(const char *dir) {
     WIN32_FILE_ATTRIBUTE_DATA old;

@@ -50,7 +50,8 @@ static void session_log_prune(const char *dir) {
     char path[1400];
     for (struct dirent *e; (e = readdir(d));) {
         size_t len = strlen(e->d_name);
-        if (strncmp(e->d_name, "skywardrecomp-backup-", 17) || len < 22 || len >= sizeof logs->name ||
+        static const char prefix[] = "skywardrecomp-backup-";  // (+ at least one character + ".log")
+        if (strncmp(e->d_name, prefix, sizeof prefix - 1) || len < sizeof prefix + 4 || len >= sizeof logs->name ||
             strcmp(e->d_name + len - 4, ".log")) continue;
         struct stat st;
         snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
