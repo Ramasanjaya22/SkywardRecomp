@@ -3,10 +3,25 @@
 Work-in-progress static recompilation of *The Legend of Zelda: Skyward Sword HD* (Switch, v1.0.0) into a native
 Windows app with a Vulkan renderer. Derived from [LAS Recomp](https://github.com/peiikai/LASRecomp).
 
+<a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+
 > **Unofficial fan project, not affiliated with or endorsed by Nintendo.** "The Legend of Zelda" and "Skyward Sword"
 > are trademarks of Nintendo. This repository contains **no** game code, assets, fonts, keys or game files.
 > You must supply your own legally obtained copy of the game; the build generates C code locally from your files,
 > and that output (`generated/`, `extracted/`, `input/`) is git-ignored and must never be shared.
+
+## How to play
+
+You need your own *Skyward Sword HD* **1.0.0 base game** (`01002DA013484000`, `v0`, no update): its `.nsp` with your
+Switch's `prod.keys`, or a folder with its `exefs` and `romfs`.
+
+- **RecompLauncher:** install SkywardRecomp there and pick your copy (and `prod.keys` for an `.nsp`). It builds the
+  game code once and keeps it up to date; its setup is in [`recomplauncher.json`](recomplauncher.json).
+- **By hand:** download the Windows zip from [Releases](https://github.com/Ramasanjaya22/SkywardRecomp/releases),
+  unzip it somewhere you can write to, run `skywardrecomp.exe` and choose your copy on the start screen (put
+  `prod.keys` next to the `.nsp`).
+- **Scripts:** `skywardrecomp --prepare --game=<folder or .nsp> --keys=<prod.keys>` sets it up without a window
+  (`progress <0..1> <step>` lines on stdout), then `skywardrecomp --play` starts the game.
 
 ## Demo
 

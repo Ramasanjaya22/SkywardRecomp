@@ -289,6 +289,10 @@ dist:
 	cp third_party/fonts/DejaVu/DejaVuSans.ttf third_party/fonts/DejaVu/DejaVuSans-Bold.ttf "$(DIST)/"  # (last-resort fonts, free license)
 	cp third_party/fonts/DejaVu/LICENSE "$(DIST)/DejaVu-LICENSE.txt"
 	cp README.md LICENSE "$(DIST)/"  # (licenses and source links of the bundled components: README "License")
+	# RecompLauncher's setup (recomplauncher.json): its setup step builds this release's game code, so prepare.version
+	# is this release's
+	sed 's/"version": "v[^"]*"/"version": "$(VERSION)"/' recomplauncher.json > "$(DIST)/recomplauncher.json"
+	grep -q '"version": "$(VERSION)"' "$(DIST)/recomplauncher.json"
 	[ -d build/helper/rando-gen ] && cp -R build/helper/rando-gen "$(DIST)/" || :  # (Link's Awakening seeds: optional)
 	PATH="$(CURDIR)/build/deps-win/bin:$$PATH" ldd $(WIN_B)/skywardrecomp.exe | awk '(/ucrt64/ || /deps-win/) && !/vulkan-1/ {print $$3}' | sort -u | \
 	    xargs -I{} cp -u {} "$(DIST)/"
