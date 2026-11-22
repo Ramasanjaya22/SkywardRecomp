@@ -1,7 +1,7 @@
 // movie:: (nnMedia) implemented with FFmpeg: an Android MediaExtractor/MediaCodec-style API.
 // The game owns the objects (vtable at +0); we keep host state at +8.
 //
-// Extractor slots: 4 GetTrackCount(int*), 5 GetTrackConfiguration(int, MediaData*), 6 SelectTrack(int),
+// Extractor slots: 2 SetDataSource(const char*), 4 GetTrackCount(int*), 5 GetTrackConfiguration(int, MediaData*), 6 SelectTrack(int),
 //   9 GetSampleTrackIndex(size_t*), 10 Read(Buffer*), 11 Advance(), 12 GetSampleTime(int64*),
 //   15 SetDataSource(DataSource*, const char* path).
 // Decoder slots: 2 Configure(MediaData*), 3 RegisterClientEvents(EventType*[4]), 4 GetOutputFormat(MediaData*),
@@ -115,6 +115,7 @@ HLE_FUNC("_ZN5movie6BufferC1ERKS0_", buf_copy) { *BUF(c->x[0]) = *BUF(c->x[1]); 
 HLE_FUNC("_ZN5movie6BufferaSERKS0_", buf_assign) { *BUF(c->x[0]) = *BUF(c->x[1]); }
 HLE_FUNC("_ZN5movie6BufferD1Ev", buf_dtor) { (void)c; }
 HLE_FUNC("_ZNK5movie6Buffer4BaseEv", buf_base) { c->x[0] = BUF(c->x[0])->base; }
+HLE_FUNC("_ZNK5movie6Buffer4DataEv", buf_data) { MBuffer *b = BUF(c->x[0]); c->x[0] = b->base + (uint64_t)(int64_t)b->offset; }
 HLE_FUNC("_ZNK5movie6Buffer4SizeEv", buf_size) { c->x[0] = (uint32_t)BUF(c->x[0])->size; }
 HLE_FUNC("_ZNK5movie6Buffer6OffsetEv", buf_offset) { c->x[0] = (uint32_t)BUF(c->x[0])->offset; }
 HLE_FUNC("_ZNK5movie6Buffer8CapacityEv", buf_capacity) { c->x[0] = BUF(c->x[0])->capacity; }
@@ -132,6 +133,7 @@ HLE_FUNC("_ZN5movie6Buffer12SetInt32DataEi", buf_set_i32) { BUF(c->x[0])->i32 = 
 
 HLE_FUNC("_ZN5movie12SetAllocatorEPFPvmmS0_EPFvS0_S0_EPFS0_S0_mS0_ES0_", movie_set_allocator) { (void)c; }
 HLE_FUNC("_ZN5movie17SetThreadPriorityEi", movie_set_thread_priority) { (void)c; }
+HLE_FUNC("_ZN5movie11SetCoreMaskEm", movie_set_core_mask) { (void)c; }
 HLE_FUNC("_ZN5movie17GetThreadPriorityEv", movie_get_thread_priority) { c->x[0] = 16; }
 
 // ------------------------------------------------------------------ helpers
@@ -169,7 +171,50 @@ typedef struct {
     AVPacket *pkt;
     bool have_pkt, eof;
     bool skippable;  // the launch opening (forced on the first launch, no save yet): A / B / + ends it
+    AVIOContext *io;  // custom IO over a file in the flat RomFS image
+    uint8_t *io_buf;
+    uint64_t rom_off, rom_size, rom_pos;
 } Extractor;
+
+extern bool romfs_file_info(const char *path, uint64_t *off, uint64_t *size);
+extern ssize_t romfs_pread(void *dst, uint64_t n, uint64_t off);
+
+static int ex_rom_read(void *opaque, uint8_t *buf, int size) {
+    Extractor *e = opaque;
+    if (size <= 0 || e->rom_pos >= e->rom_size) return AVERROR_EOF;
+    uint64_t n = (uint64_t)size;
+    if (n > e->rom_size - e->rom_pos) n = e->rom_size - e->rom_pos;
+    ssize_t r = romfs_pread(buf, n, e->rom_off + e->rom_pos);
+    if (r <= 0) return AVERROR_EOF;
+    e->rom_pos += (uint64_t)r;
+    return (int)r;
+}
+
+static int64_t ex_rom_seek(void *opaque, int64_t off, int whence) {
+    Extractor *e = opaque;
+    if (whence & AVSEEK_SIZE) return (int64_t)e->rom_size;
+    whence &= ~AVSEEK_FORCE;
+    uint64_t base;
+    if (whence == SEEK_SET) base = 0;
+    else if (whence == SEEK_CUR) base = e->rom_pos;
+    else if (whence == SEEK_END) base = e->rom_size;
+    else return -1;
+    if (off < 0 && (off == INT64_MIN || (uint64_t)-off > base)) return -1;
+    uint64_t pos = base + (uint64_t)off;
+    if (pos > e->rom_size) return -1;
+    e->rom_pos = pos;
+    return (int64_t)pos;
+}
+
+static void ex_io_close(Extractor *e) {
+    if (e->io) {
+        av_freep(&e->io->buffer);
+        av_freep(&e->io);
+    } else if (e->io_buf) {
+        av_freep(&e->io_buf);
+    }
+    e->io_buf = NULL;
+}
 
 static bool g_skip_held;           // ex_fill: A / B held at the last look
 static double g_skip_pressed_at;    // when they were pressed (0 = not yet)
@@ -217,25 +262,44 @@ static void ex_set_data_source(Cpu *c) {
     // Replacing a source also drops its last packet and track selection, including after a failed open.
     if (e->pkt) av_packet_free(&e->pkt);
     if (e->fmt) avformat_close_input(&e->fmt);
+    ex_io_close(e);
     e->selected = 0;
     e->ntracks = 0;
     e->have_pkt = e->eof = e->skippable = false;
     if (!path || !*path) { c->x[0] = 1; return; }
-    // "rom:/region_common/movie/title.webm" -> extracted/romfs/region_common/movie/title.webm
+    // Flat extracted/romfs.bin is indexed by services/fs.c; prefer those bytes over a romfs/ directory.
     const char *rel = path && strstr(path, ":/") ? strstr(path, ":/") + 2 : path;
-    char host[1024];
-    snprintf(host, sizeof host, "%s/%s", g_romfs_dir, rel ? rel : "");
-    LOG("[movie] open %s -> %s\n", path ? path : "(null)", host);
+    char host[1024] = "";
+    uint64_t rom_off = 0, rom_size = 0;
+    bool from_rom = romfs_file_info(rel, &rom_off, &rom_size);
+    int opened;
+    if (from_rom) {
+        LOG("[movie] open %s -> romfs:%s (%llu bytes)\n", path, rel, (unsigned long long)rom_size);
+        e->rom_off = rom_off, e->rom_size = rom_size, e->rom_pos = 0;
+        e->io_buf = av_malloc(64 * 1024);
+        e->io = e->io_buf ? avio_alloc_context(e->io_buf, 64 * 1024, 0, e, ex_rom_read, NULL, ex_rom_seek) : NULL;
+        e->fmt = e->io ? avformat_alloc_context() : NULL;
+        if (e->fmt) {
+            e->fmt->pb = e->io;
+            e->fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
+        }
+        opened = e->fmt ? avformat_open_input(&e->fmt, rel, NULL, NULL) : -1;
+    } else {
+        snprintf(host, sizeof host, "%s/%s", g_romfs_dir, rel ? rel : "");
+        LOG("[movie] open %s -> %s\n", path ? path : "(null)", host);
+        opened = avformat_open_input(&e->fmt, host, NULL, NULL);
+    }
     { extern void pace_hitch(const char *why);  // nvn/pace.c
       pace_hitch("a movie"); }
-    if (avformat_open_input(&e->fmt, host, NULL, NULL) < 0 || avformat_find_stream_info(e->fmt, NULL) < 0) {
-        LOG("[movie] cannot open %s\n", host);
+    if (opened < 0 || avformat_find_stream_info(e->fmt, NULL) < 0) {
+        LOG("[movie] cannot open %s\n", from_rom ? rel : host);
         if (e->fmt) avformat_close_input(&e->fmt);
+        ex_io_close(e);
         c->x[0] = 1;
         return;
     }
     e->pkt = av_packet_alloc();
-    if (!e->pkt) { avformat_close_input(&e->fmt); c->x[0] = 1; return; }
+    if (!e->pkt) { avformat_close_input(&e->fmt); ex_io_close(e); c->x[0] = 1; return; }
     // the opening at launch can always be skipped, vanilla and randomizer (with no save yet the game forces it)
     e->skippable = rel && strstr(rel, "movie/opening.webm");
     if (e->skippable) g_skip_pressed_at = 0;  // (a press that ended the title's attract replay isn't for this one)
@@ -360,6 +424,7 @@ static void ex_dtor(Cpu *c) {
     Extractor *e = self_state(c);
     if (e && e->pkt) av_packet_free(&e->pkt);
     if (e && e->fmt) avformat_close_input(&e->fmt);
+    if (e) ex_io_close(e);
     if (e) movie_track(0, e, false);
     c->x[0] = 0;
 }
@@ -384,10 +449,15 @@ EX_LOCKED(ex_get_sample_time)
 EX_LOCKED(ex_cached_duration)
 EX_LOCKED(ex_set_data_source)
 
+static void ex_set_data_source_path_l(Cpu *c) {  // slot 2: path in x1, the locked helper reads it from x2
+    c->x[2] = c->x[1];
+    ex_set_data_source_l(c);
+}
+
 HLE_FUNC("_ZN5movie9ExtractorC1ENS_13ContainerTypeE", movie_extractor_ctor) {
     uint64_t vt = g_ex_vt;
     if (!vt) {
-        HostFn f[16] = {ex_dtor_l, ex_dtor_l, movie_log_slot, movie_log_slot, ex_get_track_count_l,
+        HostFn f[16] = {ex_dtor_l, ex_dtor_l, ex_set_data_source_path_l, movie_log_slot, ex_get_track_count_l,
                         ex_get_track_config_l, ex_select_track_l, movie_log_slot, ex_seek_l, ex_get_sample_track_l,
                         ex_read_l, ex_advance_l, ex_get_sample_time_l, movie_log_slot, ex_cached_duration_l,
                         ex_set_data_source_l};
@@ -793,6 +863,7 @@ RT_ON_RESET(movie_reset) {
         Extractor *e = g_movie_objs[0][i];
         if (e && e->pkt) av_packet_free(&e->pkt);
         if (e && e->fmt) avformat_close_input(&e->fmt);
+        if (e) ex_io_close(e);
         Decoder *d = g_movie_objs[1][i];
         if (d) dec_free(d);
         g_movie_objs[0][i] = g_movie_objs[1][i] = NULL;

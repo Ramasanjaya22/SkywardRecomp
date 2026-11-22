@@ -16,6 +16,10 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 RANDO = os.path.join(HERE, 'rando')
 LAS = os.path.normpath(os.path.join(HERE, '..', 'third_party', 'LAS-Randomizer'))
+if not os.path.isfile(os.path.join(RANDO, 'field_regions.py')) or not os.path.isdir(os.path.join(LAS, 'RandomizerCore', 'Data')):
+    print('SKIP: randomizer field-region checks need tools/rando/ and third_party/LAS-Randomizer/RandomizerCore/Data/;'
+          ' neither is part of the Skyward Sword build')
+    sys.exit(0)
 sys.path.insert(0, RANDO)
 import field_regions as fr  # noqa: E402
 

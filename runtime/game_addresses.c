@@ -85,15 +85,17 @@ bool game_version_select(const char *game_dir, char *why, size_t why_size) {
 
 const GameVersion *game_version(void) { return g_version; }
 
-// shortcut: no SS RomFS list, count or total yet (romfs_files.h and the numbers that were here are LA's, which made
-// every SS copy look incomplete); make SS's with tools/romfs_files.py from a verified copy, then return them here.
-int game_romfs_files(const GameVersion *v) { (void)v; return 0; }
-uint64_t game_romfs_bytes(const GameVersion *v) { (void)v; return 0; }
-
 static const struct { uint64_t hash; uint8_t versions; } romfs_files[] = {
 #include "game_addresses/romfs_files.h"
+#if !defined(ROMFS_SS_FILES) || !defined(ROMFS_SS_BYTES)
+#error "stale romfs_files.h: run python3 tools/romfs_files.py"
+#endif
 };
 enum { ROMFS_ENTRIES = sizeof romfs_files / sizeof *romfs_files };
+
+int game_romfs_files(const GameVersion *v) { return v ? ROMFS_SS_FILES : 0; }
+uint64_t game_romfs_bytes(const GameVersion *v) { return v ? ROMFS_SS_BYTES : 0; }
+
 struct GameRomfsCheck {
     uint8_t version;              // romfs_files' bit for the version
     uint8_t seen[ROMFS_ENTRIES];  // (a file can be passed once: a folder has one file of a name)
@@ -101,7 +103,7 @@ struct GameRomfsCheck {
 
 GameRomfsCheck *game_romfs_check_begin(const GameVersion *v) {
     (void)v;
-    return NULL;  // (romfs_files.h has no SS files: see game_romfs_files)
+    return NULL;  // SS detection uses the file count and byte total above; hash checking stays off
 }
 
 uint64_t game_romfs_hash(const char *rel, uint64_t size) {
