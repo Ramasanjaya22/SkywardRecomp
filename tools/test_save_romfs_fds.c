@@ -85,7 +85,7 @@ int main(int argc, char **argv) {
 
     // A file that can't be opened: zeros straight away, logged once.
     free(ov[7].path);
-    ov[7].path = strdup("/nonexistent/las-recomp-test.bin");
+    ov[7].path = strdup("/nonexistent/skywardrecomp-test.bin");
     uint8_t buf[100];
     memset(buf, 0xEE, sizeof buf);
     assert(romfs_read(buf, sizeof buf, ov[7].start) == (ssize_t)sizeof buf);

@@ -1,7 +1,7 @@
 // Chaos dungeon room shuffle: matching letters on the dungeon map (user 2026-10-08). Every doorway pair that leads
 // somewhere else (rando/<seed>/door_jumps.tsv rows with a target, runtime/hle/doorjump.c) gets a letter, A-A, B-B...
 // drawn at both doorways. A pair shows once Link has walked through either end, or all of them with the dungeon's
-// Map (Randomizer tab: off / as explored / as explored + all with the Map; larecomp.ini chaos_letters).
+// Map (Randomizer tab: off / as explored / as explored + all with the Map; skywardrecomp.ini chaos_letters).
 //
 // Placement: the dungeon map page (main+0xe78740 runs once per frame while it's shown; tools/patches.py
 // DGN_MAP_SITE) holds its layout panes at page+0x8 -> +0x10: N_Map_00 (+0x70: zoom / scroll), N_MapPosition_00

@@ -33,7 +33,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 ROOT = Path(__file__).resolve().parent.parent
-if getattr(sys, '_MEIPASS', None):  # (the lasextract bundle: the expected-hashes tables ship inside it)
+if getattr(sys, '_MEIPASS', None):  # (the skywardextract bundle: the expected-hashes tables ship inside it)
     DATA = Path(sys._MEIPASS) / 'tools' / 'data'
 else:
     DATA = ROOT / 'tools' / 'data'

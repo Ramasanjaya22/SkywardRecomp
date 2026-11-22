@@ -1301,7 +1301,7 @@ VkSampler vk_sampler(NvnSamplerDesc *d) {
     if (si.maxLod < si.minLod) si.maxLod = si.minLod;
     si.mipLodBias = d->lod_bias;
     if (d->max_aniso > 1) { si.anisotropyEnable = VK_TRUE; si.maxAnisotropy = fminf(d->max_aniso, 16); }
-    // larecomp.ini anisotropy / lod_bias: mipmapped textures only (screen-sized targets and shadow maps stay as the game set them)
+    // skywardrecomp.ini anisotropy / lod_bias: mipmapped textures only (screen-sized targets and shadow maps stay as the game set them)
     if (g_settings.anisotropy > 1 && mf > 1) { si.anisotropyEnable = VK_TRUE; si.maxAnisotropy = fmaxf(si.maxAnisotropy, (float)g_settings.anisotropy); }
     if (mf > 1) si.mipLodBias += g_settings.lod_bias;
     static float lodmin = -1;

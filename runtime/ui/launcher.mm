@@ -478,7 +478,7 @@ static void last_log_line(const char *path, char *out, size_t n) {
 }
 
 // A picked .nsp (the game package): extracted in place by the extractor (tools/extract.py, shipped as the
-// lasextract helper, or the source checkout's python) straight into extracted/ -- exefs/ + romfs.bin, the
+// skywardextract helper, or the source checkout's python) straight into extracted/ -- exefs/ + romfs.bin, the
 // layout runtime/services/fs.c serves. Base game only: an update package needs hactool's BKTR merge. Needs
 // the console's prod.keys: next to the package, in its parent folder, or already in the data root.
 static bool extract_nsp(const std::string &nsp) {
@@ -496,7 +496,7 @@ static bool extract_nsp(const std::string &nsp) {
     char helper[1100], py[1100], script[1100];
     const char *argv[10];
     int n = 0;
-    if (rt_resource("lasextract/lasextract" PLAT_EXE_SUFFIX, NULL, helper, sizeof helper)) {
+    if (rt_resource("skywardextract/skywardextract" PLAT_EXE_SUFFIX, NULL, helper, sizeof helper)) {
         argv[n++] = helper;
     } else if (rt_resource(NULL, "tools/" PLAT_VENV_PYTHON, py, sizeof py) &&
                rt_resource(NULL, "tools/extract.py", script, sizeof script)) {

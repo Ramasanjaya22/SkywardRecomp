@@ -1,6 +1,6 @@
 # Debug and test hooks
 
-LAS Recomp reads a set of `LARECOMP_*` environment variables. They are for development and testing, not for players:
+SkywardRecomp reads a set of `LARECOMP_*` environment variables. They are for development and testing, not for players:
 scripted test runs, screenshots, warps, logging, and A/B switches for renderer and timing code. Most are read once, at
 startup or at first use, so set them before launching. Hooks that take a frame number act at that presented frame
 (the count starts at 0 when the app starts and goes on across in-game reboots).
@@ -20,7 +20,7 @@ LARECOMP_WARP_AT="2700:Field:Field_11C" tools/shot.sh 3200
 ```
 
 Put a copy of a save in `build/testsave/save_0/` first (`savedata0.bin`), so the run never touches real saves.
-`tools/shot.sh <frame> [max seconds]` runs `./build/lasrecomp extracted` with your `LARECOMP_*` variables, saves the
+`tools/shot.sh <frame> [max seconds]` runs `./build/skywardrecomp extracted` with your `LARECOMP_*` variables, saves the
 window at that frame to `build/window.png` and exits.
 
 ## Running and test runs
@@ -39,7 +39,7 @@ window at that frame to `build/window.png` and exits.
 | `LARECOMP_KBD_AUTO` | text | Answer the game's keyboard dialog (name entry) with this text at once. |
 | `LARECOMP_PAD_TYPE` | `xbox`, `playstation` (or `ps`), other = Nintendo | Pretend the controller is of this family (button labels and confirm/back layout). |
 | `LARECOMP_SAVE_DIR` | folder | Use this folder for save slots (`save_0/savedata0.bin` ...) instead of the normal save folder. Test runs should always set it to a scratch copy. |
-| `LARECOMP_SETTINGS` | file path | Use this settings file instead of `larecomp.ini`, so test runs never change the player's settings. |
+| `LARECOMP_SETTINGS` | file path | Use this settings file instead of `skywardrecomp.ini`, so test runs never change the player's settings. |
 | `LARECOMP_DATA_ROOT` | folder | Use this folder as the data folder (game files copy, settings, saves, caches). |
 | `LARECOMP_NO_AUDIO` | 1 / 0 | No audio output at all (game and menu sounds). `0` keeps sound. |
 | `LARECOMP_NO_MOVIE_AUDIO` | 1 | Play movies without their audio track. |
@@ -83,7 +83,7 @@ LARECOMP_INPUT="400:A:6,520:A:6,900:ZL:8,900:ZR:8,1300:A:6,1600:A:6,1900:A:6,220
 Comma-separated entries, each starting with a frame:
 
 - `frame:key:<SDL key name>:frames`, `frame:pad:<button>:frames`: hold a key or controller button (names as in the
-  `bind_*` lines of `larecomp.ini`, e.g. `Z`, `Keypad 0`, `south`, `ltrigger`).
+  `bind_*` lines of `skywardrecomp.ini`, e.g. `Z`, `Keypad 0`, `south`, `ltrigger`).
 - `frame:lstick:<x>/<y>:frames`: hold the left stick at raw SDL units.
 - `frame:sdlkey:<key>:frames`, `frame:sdlpad:<button>:frames`, `frame:sdlaxis:<axis>=<value>:frames`: send real SDL
   events, which reach menus and the on-screen keyboard first.
@@ -148,7 +148,7 @@ Use it with `LARECOMP_INPUT` (to get into a save) and `LARECOMP_SAVE_DIR` (so th
 
 ## Logging and diagnostics
 
-All of these write to the log (`lasrecomp.log` in the data folder, or the run's redirected output).
+All of these write to the log (`skywardrecomp.log` in the data folder, or the run's redirected output).
 
 | Variable | Values | What it does |
 |---|---|---|
@@ -276,7 +276,7 @@ the start screen's setup otherwise).
 | Variable | Values | What it does |
 |---|---|---|
 | `LARECOMP_GAME_LIB` | file path | Load the game code library from this path first. |
-| `LARECOMP_GEN` | file path | Code generator to use instead of the bundled `lasgen`. |
+| `LARECOMP_GEN` | file path | Code generator to use instead of the bundled `skywardgen`. |
 | `LARECOMP_CC` | file path | Compiler to use instead of the bundled zig. |
 
 ## Tool scripts

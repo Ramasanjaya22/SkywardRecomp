@@ -2,7 +2,7 @@
 // debugging (textures, shaders, uniforms of one draw). Off unless asked for:
 //   LARECOMP_RENDERDOC=1        load RenderDoc from its default install folder before the Vulkan instance exists
 //   LARECOMP_RENDERDOC=<dll>    ... from that renderdoc.dll
-//   (or start lasrecomp.exe from RenderDoc's own "Launch Application": it is then already loaded)
+//   (or start skywardrecomp.exe from RenderDoc's own "Launch Application": it is then already loaded)
 // F9 (the debug frame key, hle/input.c) then also captures the next frame, into build/rdoc/skywardrecomp_*.rdc.
 #include <stdlib.h>
 #include <string.h>

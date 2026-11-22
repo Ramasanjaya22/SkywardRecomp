@@ -17,7 +17,7 @@ S=$P/src
 mkdir -p "$S" "$P/bin" "$P/lib"
 export MACOSX_DEPLOYMENT_TARGET=$MIN
 JOBS=$(sysctl -n hw.ncpu)
-NEUTRAL=/opt/las-recomp-deps  # (FFmpeg's --prefix: never used at run time, the dylibs load by @rpath)
+NEUTRAL=/opt/skywardrecomp-deps  # (FFmpeg's --prefix: never used at run time, the dylibs load by @rpath)
 MAPFLAGS="-ffile-prefix-map=$S=deps-src"
 
 fetch() {  # url sha256 file

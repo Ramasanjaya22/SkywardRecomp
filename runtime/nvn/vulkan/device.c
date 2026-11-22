@@ -276,7 +276,7 @@ void vk_device_fault_report(void) {
 }
 
 // Each memory heap: its size, the driver's budget for this process (smaller when other programs hold that memory),
-// this process's use and the part LAS Recomp allocated through VMA. Logged at start and when an allocation fails
+// this process's use and the part SkywardRecomp allocated through VMA. Logged at start and when an allocation fails
 // (issue #45: out of device memory on a 6 GB GTX 1060 - our own use, or other programs'?).
 void vk_log_memory(const char *why) {
     if (!g_vk.vma) return;
@@ -1290,7 +1290,7 @@ void ui_window_init(void) {
                                             getenv("LARECOMP_HOST_INPUT") || getenv("LARECOMP_BIND_TEST"));
         if (scripted) SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
     }
-    window = SDL_CreateWindow("LAS Recomp", win_w, win_h, wflags);
+    window = SDL_CreateWindow("SkywardRecomp", win_w, win_h, wflags);
     if (!window) FATAL("SDL_CreateWindow: %s\n", SDL_GetError());
     rt_window_icon(window);
     // the Fullscreen setting applies from the start screen on (not only once the game runs); test windows stay windows

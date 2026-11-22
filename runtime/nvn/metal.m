@@ -1432,7 +1432,7 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
                 [bl endEncoding];
                 uint64_t fno = frame;
                 static dispatch_queue_t bg;
-                if (!bg) bg = dispatch_queue_create("larecomp.aframes", DISPATCH_QUEUE_SERIAL);
+                if (!bg) bg = dispatch_queue_create("skywardrecomp.aframes", DISPATCH_QUEUE_SERIAL);
                 [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {
                     (void)done;
                     dispatch_async(bg, ^{

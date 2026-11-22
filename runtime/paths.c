@@ -105,11 +105,11 @@ bool rt_dev_mode(void) { return g_dev; }
 
 // ---- where the data folder is: the platform's folder, or another one a pointer file there names
 #define POINTER_FILE "data_root.txt"            // in the platform's folder: the data folder's path (one line)
-#define NOTE_TO ".lasrecomp_move_to"            // in a move's source until it switched: where the copy went
-#define NOTE_FROM ".lasrecomp_move_from"        // in a move's destination: the old folder, still to be emptied
-#define MARK_PARTIAL ".lasrecomp_incomplete"    // in a move's destination until its copy was checked
+#define NOTE_TO ".skywardrecomp_move_to"            // in a move's source until it switched: where the copy went
+#define NOTE_FROM ".skywardrecomp_move_from"        // in a move's destination: the old folder, still to be emptied
+#define MARK_PARTIAL ".skywardrecomp_incomplete"    // in a move's destination until its copy was checked
 // What a data folder holds (and a move takes along). Logs stay where they are.
-static const char *const DATA_ENTRIES[] = {"save", "rando", "larecomp.ini", "fonts", "gamecontrollerdb.txt", "cache",
+static const char *const DATA_ENTRIES[] = {"save", "rando", "skywardrecomp.ini", "fonts", "gamecontrollerdb.txt", "cache",
                                            "extracted"};
 #define N_ENTRIES (sizeof DATA_ENTRIES / sizeof *DATA_ENTRIES)
 static char g_home[1024];  // the platform's folder (where POINTER_FILE lives)
@@ -129,10 +129,10 @@ static void default_home(char *root, size_t n) {
 #ifdef _WIN32
     exe_dir(root, n);
 #elif defined(__linux__)
-    // (the AppImage is read-only): $XDG_DATA_HOME/lasrecomp, ~/.local/share/lasrecomp by default
+    // (the AppImage is read-only): $XDG_DATA_HOME/skywardrecomp, ~/.local/share/skywardrecomp by default
     const char *xdg = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
-    if (xdg && *xdg == '/') snprintf(root, n, "%s/lasrecomp", xdg);
-    else snprintf(root, n, "%s/.local/share/lasrecomp", home && *home ? home : "/tmp");
+    if (xdg && *xdg == '/') snprintf(root, n, "%s/skywardrecomp", xdg);
+    else snprintf(root, n, "%s/.local/share/skywardrecomp", home && *home ? home : "/tmp");
 #else
     const char *home = getenv("HOME");
     snprintf(root, n, "%s/Library/Application Support/" RT_BUNDLE_ID, home && *home ? home : "/tmp");
@@ -344,7 +344,7 @@ bool rt_resource(const char *name, const char *dev_rel, char *out, size_t n) {
     }
     if (dev_rel) {
         snprintf(c[2], sizeof c[2], "%s" SEP "%s", g_start, dev_rel);
-        snprintf(c[3], sizeof c[3], "%s" SEP ".." SEP "%s", g_exe_dir, dev_rel);  // build/lasrecomp -> repo root
+        snprintf(c[3], sizeof c[3], "%s" SEP ".." SEP "%s", g_exe_dir, dev_rel);  // build/skywardrecomp -> repo root
     }
     for (int i = 0; i < 4; i++)
         if (c[i][0] && exists(c[i])) return (size_t)snprintf(out, n, "%s", c[i]) < n;  // (as is: a venv python must stay a link)
@@ -527,10 +527,10 @@ void rt_data_target(const char *picked, RtDataTarget *t) {
         snprintf(t->refuse, sizeof t->refuse, "That folder can't be opened.");
         return;
     }
-    // the folder itself when it's empty, LAS Recomp's data, or the platform's folder; otherwise a "LAS Recomp"
+    // the folder itself when it's empty, SkywardRecomp's data, or the platform's folder; otherwise a "SkywardRecomp"
     // folder in it
     if (same_dir(r, g_home) || usable_dir(r)) snprintf(t->path, sizeof t->path, "%s", r);
-    else join(t->path, sizeof t->path, r, "LAS Recomp");
+    else join(t->path, sizeof t->path, r, "SkywardRecomp");
     join(p, sizeof p, t->path, MARK_PARTIAL);
     t->has_data = has_entries(t->path) && !exists(p);
     t->bytes = entries_size(g_root);

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=SkywardRecomp
+Comment=The Legend of Zelda: Skyward Sword HD, recompiled (bring your own game files)
+Exec=skywardrecomp
+Icon=skywardrecomp
+Categories=Game;
+Terminal=false

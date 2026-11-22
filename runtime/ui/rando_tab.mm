@@ -295,7 +295,7 @@ static std::string seed_id_decode(const char *text, GenOpts &o) {
     return "";
 }
 
-// The New seed options are kept across restarts (larecomp.ini rando_options): their seed ID without the random part,
+// The New seed options are kept across restarts (skywardrecomp.ini rando_options): their seed ID without the random part,
 // which re-rolls for every seed. Not the seed name either. Saved once a change is done (no row being dragged / typed in).
 static void opts_key(const GenOpts &o, char *out, size_t cap) {
     GenOpts t = o;
@@ -581,7 +581,7 @@ extern "C" void rando_tab_draw(float scale) {
         if (!spoiler_view_draw(g_spoiler_seed, scale)) g_spoiler_seed.clear();
         return;
     }
-    static bool opts_once;  // the options the player last set (larecomp.ini)
+    static bool opts_once;  // the options the player last set (skywardrecomp.ini)
     if (!opts_once) { opts_once = true; opts_load(); }
     static bool id_once;  // LARECOMP_RANDO_ID=<seed ID>: the tab starts with that ID's options (test hook)
     if (const char *t = getenv("LARECOMP_RANDO_ID"); !id_once && t) {

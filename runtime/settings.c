@@ -11,14 +11,14 @@
 
 #define SETTINGS_FILE settings_file()
 
-// LARECOMP_SETTINGS=<path>: another settings file (test runs never touch the player's larecomp.ini)
+// LARECOMP_SETTINGS=<path>: another settings file (test runs never touch the player's skywardrecomp.ini)
 static const char *settings_file(void) {
     const char *e = getenv("LARECOMP_SETTINGS");
-    return e && *e ? e : "larecomp.ini";
+    return e && *e ? e : "skywardrecomp.ini";
 }
 
 const char *const g_enemy_colour_modes[N_ENEMY_COLOUR_MODES] = {"Off", "Random per seed", "Random every load"};
-static const char *const k_enemy_colour_keys[N_ENEMY_COLOUR_MODES] = {"off", "seed", "load"};  // (larecomp.ini)
+static const char *const k_enemy_colour_keys[N_ENEMY_COLOUR_MODES] = {"off", "seed", "load"};  // (skywardrecomp.ini)
 const char *const g_screen_filters[N_SCREEN_FILTERS] = {"Off", "Game Boy", "Game Boy Color", "Grayscale"};
 static const char *const k_screen_filter_keys[N_SCREEN_FILTERS] = {"off", "gameboy", "gameboy_color", "grayscale"};  // (else: off)
 

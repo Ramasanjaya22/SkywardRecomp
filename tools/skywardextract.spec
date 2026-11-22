@@ -1,6 +1,6 @@
 # PyInstaller spec: the game package extractor (tools/extract.py) as a standalone onedir helper, so the start
 # screen's setup can extract a base .nsp on the player's machine without Python (runtime/ui/launcher.mm,
-# extract_nsp). `make extract-helper` -> build/helper/lasextract/ (lasextract[.exe] + _internal/). The same
+# extract_nsp). `make extract-helper` -> build/helper/skywardextract/ (skywardextract[.exe] + _internal/). The same
 # command line as extract.py (--base, --keys, --work, --flat). cryptography's OpenSSL bindings come in through
 # its wheel; tomllib is stdlib (3.11+).
 import glob
@@ -24,9 +24,9 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='lasextract',
+    name='skywardextract',
     console=True,  # stderr = the progress lines the runtime reads (no window: CREATE_NO_WINDOW)
     strip=sys.platform == 'darwin',
     upx=False,
 )
-coll = COLLECT(exe, a.binaries, a.datas, strip=sys.platform == 'darwin', upx=False, name='lasextract')
+coll = COLLECT(exe, a.binaries, a.datas, strip=sys.platform == 'darwin', upx=False, name='skywardextract')

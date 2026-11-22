@@ -113,7 +113,7 @@ static bool keyboard_pressed(void) {
            ImGui::IsKeyPressed(ImGuiKey_Space, false) || ImGui::IsKeyPressed(ImGuiKey_RightArrow, false);
 }
 
-// A finished capture keeps larecomp.ini current; a swap is said under the list (another row changed too)
+// A finished capture keeps skywardrecomp.ini current; a swap is said under the list (another row changed too)
 static void watch_results(int fam, char *msg, size_t cap) {
     static int seen = -1;
     int rdev, rslot, rother, serial, kind = bind_last_result(&rdev, &rslot, &rother, &serial);
@@ -196,7 +196,7 @@ static void configure_inputs(float scale) {
             char val[64];
             if (waiting) snprintf(val, sizeof val, "%s...  %d", g_dev_pad ? "Press a button" : "Press a key", (ms + 999) / 1000);
             else snprintf(val, sizeof val, "%s", g_dev_pad ? bind_pad_label(g_bind_pad[b.slot], fam) : bind_key_label(g_bind_key[b.slot]));
-            // the same button / key on two inputs (a hand-edited larecomp.ini): red
+            // the same button / key on two inputs (a hand-edited skywardrecomp.ini): red
             const int16_t *t = g_dev_pad ? g_bind_pad : g_bind_key;
             bool dup = false;
             for (int j = 0, m = g_dev_pad ? BIND_PAD_COUNT : BIND_KEY_COUNT; j < m; j++)

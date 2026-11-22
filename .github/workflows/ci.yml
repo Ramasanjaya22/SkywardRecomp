@@ -1,4 +1,4 @@
-# SkywardRecomp's checks on GitHub-hosted runners: the app (build/lasrecomp: everything but the game code, which the
+# SkywardRecomp's checks on GitHub-hosted runners: the app (build/skywardrecomp: everything but the game code, which the
 # start screen builds on the player's machine from their own game files) builds on Linux, macOS and Windows, and the
 # tests that need no game files or GPU run. Nothing is published. Feature tests that need no game files go in as
 # steps here, not as workflows of their own.
@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: App builds
-        run: make -j"$(nproc)" build/lasrecomp DEPS="/opt/sdl3"
+        run: make -j"$(nproc)" build/skywardrecomp DEPS="/opt/sdl3"
       - name: Build cache and resume tests
         run: |
           python3 tools/test_build_cache.py
@@ -111,7 +111,7 @@ jobs:
       - name: Packages
         run: brew install sdl3 ffmpeg
       - name: App builds
-        run: make -j"$(sysctl -n hw.ncpu)" build/lasrecomp
+        run: make -j"$(sysctl -n hw.ncpu)" build/skywardrecomp
       - name: SIMD rounding and host-state regression
         run: |
           clang -std=gnu11 -O1 -pthread tools/test_simd_rounding.c -o build/test-simd-rounding
@@ -184,7 +184,7 @@ jobs:
           pacboy: clang:p lld:p binutils:p python:p sdl3:p ffmpeg:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
             vulkan-memory-allocator:p
       - name: App builds
-        run: make -j"$(nproc)" build/lasrecomp.exe
+        run: make -j"$(nproc)" build/skywardrecomp.exe
       - name: Build cache and resume tests
         run: |
           python3 tools/test_build_cache.py

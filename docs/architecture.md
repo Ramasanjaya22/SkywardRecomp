@@ -1,4 +1,4 @@
-# How LAS Recomp works
+# How SkywardRecomp works
 
 A one-page map of the code. CONTRIBUTING.md lists the files and how to build and test; this explains how the parts
 fit together. File names are on the current development branch.
@@ -60,7 +60,7 @@ Per-GPU defaults in the Vulkan backend are listed in [vulkan-gpu-defaults.md](vu
 ## Menus and settings
 
 The overlay menu and the start screen use Dear ImGui (`runtime/ui/`, `third_party/imgui`). Settings live in
-`runtime/settings.c` and are saved in `larecomp.ini` in the data folder. Menu text is English in the code, with
+`runtime/settings.c` and are saved in `skywardrecomp.ini` in the data folder. Menu text is English in the code, with
 translation tables per language.
 
 ## The randomizer
@@ -72,5 +72,5 @@ seed and handles what can't be done with data alone.
 ## Debugging
 
 Most debug and test switches are environment variables: see [debug-hooks.md](debug-hooks.md). The log is
-`lasrecomp.log` in the data folder. A crash names the guest address (`main+0x...`), which `tools/sym.py` maps to
+`skywardrecomp.log` in the data folder. A crash names the guest address (`main+0x...`), which `tools/sym.py` maps to
 the game's code.

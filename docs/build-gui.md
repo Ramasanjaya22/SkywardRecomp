@@ -38,7 +38,7 @@ So the machinery for a build is complete and resumable. What is missing is *obse
 4. **The module list is hardcoded.** `gamebuild.c:404` builds `{"main", "sdk"}` only. Skyward
    Sword HD also has `subsdk0` and `subsdk1` (`Makefile` `GEN_SRC`, `STATE.md`), so the GUI's
    module parameter has nothing behind it yet.
-5. **No record of a finished build.** `lasgame.dll.id` says *what* it was built from; nothing says
+5. **No record of a finished build.** `skywardgame.dll.id` says *what* it was built from; nothing says
    *when*, with *which flags*, in *how long*, or whether it was resumed.
 
 ## 3. The page
@@ -70,7 +70,7 @@ The rows:
 | SIMD | `c` (fixed on x86-64) | shown, not editable: `asm` cannot work here (`STATE.md`) |
 | Jobs | slider 1..cores | default from `gamebuild_defaults` |
 | Chunk size | `--chunk-bytes`, `--big-fn` | generator only; another value re-generates every chunk |
-| Generator | bundled `lasgen/` or `tools/venv` script | tells the player which path the build will take |
+| Generator | bundled `skywardgen/` or `tools/venv` script | tells the player which path the build will take |
 | Compiler | bundled `zig/` or system `clang` | the same |
 | Library id | read-only text | `GAMELIB_ID-BUILD_ID`, the exact key the cache and `lasmlib_full_id` use |
 

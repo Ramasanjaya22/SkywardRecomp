@@ -20,10 +20,10 @@ enum { COL_SLOT_TUNIC, COL_SLOT_HEARTS, COL_SLOT_HAIR, COL_SLOT_SKIN, COL_SLOT_S
 extern const char *const g_col_names[N_COL];
 extern const uint32_t g_col_rgb[N_COL];  // the named colours' targets (0 for Default / Random / Custom)
 
-// larecomp.ini value -> c: a palette name, #RRGGBB (Custom), or an older version's name (Yellow, Sky, Lime, Blond,
+// skywardrecomp.ini value -> c: a palette name, #RRGGBB (Custom), or an older version's name (Yellow, Sky, Lime, Blond,
 // ...: the nearest palette colour); anything else: Default.
 void col_parse(CosColour *c, const char *val);
-// c -> its larecomp.ini value (name, or #RRGGBB for Custom)
+// c -> its skywardrecomp.ini value (name, or #RRGGBB for Custom)
 void col_format(const CosColour *c, char *out, size_t n);
 // The randomizer seed's own cosmetics (seed option "Random cosmetics", runtime/cosmetics_seed.c): the palette colour
 // row `slot` takes while it is on Default (0: none - vanilla, or a seed without the option). NULL until set.

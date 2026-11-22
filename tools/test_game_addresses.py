@@ -225,7 +225,7 @@ others = [(n, (gc/'romfs'/n).stat().st_size if (gc/'romfs'/n).exists() else 9)
           for n in ('sdk', 'rtld', 'subsdk1', 'subsdk2', 'region_common/main', 'subsdk0')]
 assert romfs_check(bid0, others + [('main', copies[0][1]), ('main', copies[0][1] + 1)], gc) == (['copy main'], 0)
 
-# Same resource location used by tools/lasgen.spec in the frozen helper.
+# Same resource location used by tools/skywardgen.spec in the frozen helper.
 bundled = tmp/'bundle/runtime/game_addresses'
 bundled.mkdir(parents=True)
 shutil.copyfile(TABLE_DIR/'versions.h', bundled/'versions.h')

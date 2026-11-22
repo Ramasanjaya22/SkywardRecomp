@@ -1,16 +1,16 @@
 // Where SkywardRecomp keeps its files (runtime/paths.c).
 //
 // Data root: everything the app writes or the user brings - extracted/ (game files), rando/ (seeds), save/,
-// cache/ (shaders / pipelines), fonts/ (imported), larecomp.ini. rt_paths_init() picks it and makes it the
+// cache/ (shaders / pipelines), fonts/ (imported), skywardrecomp.ini. rt_paths_init() picks it and makes it the
 // working directory, so the rest of the runtime opens those by their relative names. In order:
 //   1. LARECOMP_DATA_ROOT (tests, scratch installs)
-//   2. dev / portable mode: the starting directory already has extracted/ (a source checkout: `./build/lasrecomp
+//   2. dev / portable mode: the starting directory already has extracted/ (a source checkout: `./build/skywardrecomp
 //      extracted`, the test scripts) - used as is
 //   3. the folder named in data_root.txt in the platform's folder (4), chosen on the start screen (never inside the
 //      app); asks to try again / use the default when it's missing (a drive not connected)
-//   4. macOS: ~/Library/Application Support/com.peiikai.lasrecomp (the .app bundle itself is never written to)
+//   4. macOS: ~/Library/Application Support/io.github.ramasanjaya22.skywardrecomp (the .app bundle itself is never written to)
 //      Windows: the folder of the .exe (portable, no installer); refuses to start, with a message, if not writable
-//      Linux: $XDG_DATA_HOME/lasrecomp (~/.local/share/lasrecomp)
+//      Linux: $XDG_DATA_HOME/skywardrecomp (~/.local/share/skywardrecomp)
 //      LARECOMP_DATA_HOME (tests) stands in for it.
 //
 // Resources: files that ship with the app (helper programs, the window icon) - next to the executable (the
@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define RT_BUNDLE_ID "com.peiikai.lasrecomp"
+#define RT_BUNDLE_ID "io.github.ramasanjaya22.skywardrecomp"
 
 void rt_paths_init(void);         // first thing in main(), after plat_init
 const char *rt_data_root(void);   // absolute
@@ -34,7 +34,7 @@ bool rt_data_root_early(char *out, size_t n);
 // Choosing another data folder (the start screen). NULL = it can be changed; else why not (rules 1 / 2).
 const char *rt_data_root_fixed(void);
 typedef struct {
-    char path[1100];               // where the data would go: the folder picked, or a "LAS Recomp" folder in it
+    char path[1100];               // where the data would go: the folder picked, or a "SkywardRecomp" folder in it
                                    // when it holds other things
     unsigned long long bytes;      // the data now (saves, seeds, settings, fonts, caches, game files)
     unsigned long long need, free; // space a move needs there (little on the same drive: hard links), space there

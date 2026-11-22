@@ -2,7 +2,7 @@
 //
 // A seed lives in rando/<name>/: romfs/ (replacement game files), exefs/1.0.0.pchtxt (code/data patches),
 // settings.json, spoiler log, and save/ (this seed's own save slots). The active seed is chosen in the menu
-// (larecomp.ini `rando_seed`); switching reboots the game in place (runtime/main.c), which calls rando_boot.
+// (skywardrecomp.ini `rando_seed`); switching reboots the game in place (runtime/main.c), which calls rando_boot.
 //
 // Code patches: gen.py compiled every variant of every patched instruction in (tools/rando/patch_variants.json);
 // rando_word() tells the generated code which one the seed uses (0 = the original instruction).
@@ -147,7 +147,7 @@ void rando_boot(void) {
     pthread_mutex_unlock(&g_init_lock);
 }
 
-// Pick the seed for the next boot ("" = vanilla) and remember it (larecomp.ini); a choice made in the game wins over
+// Pick the seed for the next boot ("" = vanilla) and remember it (skywardrecomp.ini); a choice made in the game wins over
 // LARECOMP_RANDO_SEED (test runs).
 void rando_select(const char *seed) {
     strlcpy(g_settings.rando_seed, seed ? seed : "", sizeof g_settings.rando_seed);

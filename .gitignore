@@ -11,7 +11,7 @@ generated-*/
 build/
 /cache/
 save/
-/larecomp.ini
+/skywardrecomp.ini
 /gamecontrollerdb.txt
 # tools and Python environments (machine-specific)
 tools/venv/

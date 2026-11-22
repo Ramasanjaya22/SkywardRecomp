@@ -1,5 +1,5 @@
 // Cheats tab: toggles applied to the live save every frame while a save is loaded (layout: notes/save_format.md),
-// plus one-shot buttons. Settings persist in larecomp.ini (g_settings.cheat_*).
+// plus one-shot buttons. Settings persist in skywardrecomp.ini (g_settings.cheat_*).
 #include "../game_addresses.h"
 #include <stdint.h>
 #include <stdlib.h>

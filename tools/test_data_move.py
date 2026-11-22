@@ -26,8 +26,8 @@ elif sys.platform == 'darwin':
 extra = {'macos': ['-framework', 'CoreFoundation'], 'linux': ['-pthread', '-ldl'],
          'windows': ['-D_FILE_OFFSET_BITS=64', '-D_POSIX_THREAD_SAFE_FUNCTIONS', '-D_CRT_RAND_S',
                      '-DWIN32_LEAN_AND_MEAN', '-DNOMINMAX', '-lwinmm', '-lole32', '-lshell32', '-lcomdlg32', '-luuid', '-ladvapi32']}[plat]
-NOTES = ('.lasrecomp_move_to', '.lasrecomp_move_from', '.lasrecomp_incomplete')
-ENTRIES = ('save', 'rando', 'larecomp.ini', 'fonts', 'cache', 'extracted')
+NOTES = ('.skywardrecomp_move_to', '.skywardrecomp_move_from', '.skywardrecomp_incomplete')
+ENTRIES = ('save', 'rando', 'skywardrecomp.ini', 'fonts', 'cache', 'extracted')
 
 
 def populate(d: Path):
@@ -39,7 +39,7 @@ def populate(d: Path):
     put('save/slot0/zelda.sav', 300_000)
     put('rando/My Seed/settings.json', 2_000)
     put('rando/My Seed/save/slot0/zelda.sav', 300_000)
-    put('larecomp.ini', 1_500)
+    put('skywardrecomp.ini', 1_500)
     put('fonts/nintendo_udsg-r_std_003.bfttf', 50_000)
     put('cache/shaders.bin', 3_000_000)
     for i in range(24):
@@ -121,10 +121,10 @@ with tempfile.TemporaryDirectory() as directory:
     t = run('target', home / 'save')
     assert t['REFUSE'] == 'That folder is inside the data folder.', t
     t = run('target', S / 'misc')
-    assert Path(t['PATH']) == S / 'misc' / 'LAS Recomp' and not t['REFUSE'] and t['HAS_DATA'] == '0', t
+    assert Path(t['PATH']) == S / 'misc' / 'SkywardRecomp' and not t['REFUSE'] and t['HAS_DATA'] == '0', t
     t = run('target', S / 'empty')
     assert Path(t['PATH']) == S / 'empty' and not t['REFUSE'] and int(t['BYTES']) > 10_000_000, t
-    print('target: the folder itself when empty, a "LAS Recomp" folder in a full one; the data folder and folders '
+    print('target: the folder itself when empty, a "SkywardRecomp" folder in a full one; the data folder and folders '
           'in it refused')
 
     for links in (True, False):  # (same drive: hard links; LARECOMP_MOVE_NO_LINKS: copied as to another drive)
@@ -152,7 +152,7 @@ with tempfile.TemporaryDirectory() as directory:
 
     other = os.environ.get('LARECOMP_TEST_OTHER_FS')
     if other:
-        dst = Path(other) / f'lasrecomp-move-test-{os.getpid()}'
+        dst = Path(other) / f'skywardrecomp-move-test-{os.getpid()}'
         run('move', dst, 0, stall=True)
         check_in(home, 'other drive: cut off while copying')
         assert ours_left(dst) == []

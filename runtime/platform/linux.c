@@ -286,7 +286,7 @@ void plat_thread_realtime(uint64_t period_ns) {
 int plat_thread_realtime_check(uint64_t period_ns) { (void)period_ns; return -1; }
 
 // ---- process
-// Started from a desktop (the AppImage) there is no terminal: stdout / stderr go to lasrecomp.log in the data folder
+// Started from a desktop (the AppImage) there is no terminal: stdout / stderr go to skywardrecomp.log in the data folder
 // (runtime/paths.h; rt_paths_init runs later, so the same rule is applied here), with five backups (posix_log.h).
 static char g_log_path[1024];
 
@@ -413,7 +413,7 @@ void plat_exec(char *const argv[]) {
 // ---- diagnostics
 // Exported symbols only (the Makefile links with -rdynamic); frames in the generated code are left to the caller,
 // which maps them to guest functions (runtime/dispatch.c). Static runtime functions come out as the nearest guest
-// function, so backtrace lines also give the offset in the executable (addr2line -fe lasrecomp <offset>).
+// function, so backtrace lines also give the offset in the executable (addr2line -fe skywardrecomp <offset>).
 const char *plat_symbol(uint64_t pc, uint64_t *offset) {
     Dl_info di = {0};
     if (!dladdr((void *)(uintptr_t)pc, &di) || !di.dli_sname) return NULL;
@@ -467,7 +467,7 @@ void plat_print_backtrace(void) {
         if (!s && ours) s = rt_host_fn_name(pc, &off);
         const char *mod = di.dli_fname ? (strrchr(di.dli_fname, '/') ? strrchr(di.dli_fname, '/') + 1 : di.dli_fname) : "?";
         uint64_t moff = pc - (uint64_t)(uintptr_t)di.dli_fbase;
-        if (s && ours) fprintf(stderr, "  #%-2d %016llx %s+%llx (lasrecomp+%llx)\n", i, (unsigned long long)pc, s,
+        if (s && ours) fprintf(stderr, "  #%-2d %016llx %s+%llx (skywardrecomp+%llx)\n", i, (unsigned long long)pc, s,
                                (unsigned long long)off, (unsigned long long)moff);
         else if (s) fprintf(stderr, "  #%-2d %016llx %s+%llx (%s)\n", i, (unsigned long long)pc, s, (unsigned long long)off, mod);
         else fprintf(stderr, "  #%-2d %016llx %s+%llx\n", i, (unsigned long long)pc, mod, (unsigned long long)moff);

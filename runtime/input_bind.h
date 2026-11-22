@@ -1,5 +1,5 @@
 // Control remapping (runtime/hle/bindings.c): which controller button / key drives each Switch input. Edited from
-// the in-game menu's Controls tab and the start screen (runtime/ui/controls_ui.mm), saved in larecomp.ini.
+// the in-game menu's Controls tab and the start screen (runtime/ui/controls_ui.mm), saved in skywardrecomp.ini.
 // Menus (the overlay, the start screen) never use these, so no binding can lock the player out: they follow the
 // game's layout, or the controller's own (Confirm button; runtime/ui/pad_nav.h).
 #pragma once
@@ -51,11 +51,11 @@ bool bind_capture_event(const SDL_Event *e);
 // Last change for the UI: 0 none, 1 set, 2 swapped (with *other), 3 cancelled, 4 timed out, 5 reset; *serial bumps
 int bind_last_result(int *dev, int *slot, int *other, int *serial);
 
-// larecomp.ini: bind_pad_<input> / bind_key_<input> (only the ones that differ from the defaults are written)
+// skywardrecomp.ini: bind_pad_<input> / bind_key_<input> (only the ones that differ from the defaults are written)
 bool bind_settings_load(const char *key, const char *val);
 void bind_settings_save(FILE *f);
 
-// bind_* names (larecomp.ini): Switch input "a", "zl", "ls_up"... -> slot; controller button "south"... -> PADB value
+// bind_* names (skywardrecomp.ini): Switch input "a", "zl", "ls_up"... -> slot; controller button "south"... -> PADB value
 int bind_slot_from_name(const char *name);
 int bind_pad_from_name(const char *name);
 

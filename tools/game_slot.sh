@@ -1,4 +1,4 @@
-# Sourced by the test scripts before they start ./build/lasrecomp: a new test copy of the game starts only while the
+# Sourced by the test scripts before they start ./build/skywardrecomp: a new test copy of the game starts only while the
 # Mac has at least 10 GB free (each copy takes ~2 GB; too many at once ran it out of memory). Launches are taken one
 # at a time and the next waits ~20 s, so the copy just started has grown before memory is measured again.
 # LARECOMP_MIN_FREE_GB (default 10), LARECOMP_SLOT_DIR.
@@ -24,10 +24,10 @@ GAME_SLOT=  # (nothing to release at exit)
 # is a link to the main checkout's): where it would come up the app exits instead (runtime/main.c). Only a start
 # screen test with its own scratch LARECOMP_DATA_ROOT may pass LARECOMP_NO_LAUNCHER=0.
 export LARECOMP_NO_LAUNCHER=${LARECOMP_NO_LAUNCHER:-1}
-# test runs never write the player's larecomp.ini: a scratch copy unless the caller gave LARECOMP_SETTINGS
+# test runs never write the player's skywardrecomp.ini: a scratch copy unless the caller gave LARECOMP_SETTINGS
 if [ -z "$LARECOMP_SETTINGS" ]; then
     mkdir -p build/test_ini
     LARECOMP_SETTINGS="build/test_ini/settings_$$.ini"
-    cp larecomp.ini "$LARECOMP_SETTINGS" 2>/dev/null || : > "$LARECOMP_SETTINGS"
+    cp skywardrecomp.ini "$LARECOMP_SETTINGS" 2>/dev/null || : > "$LARECOMP_SETTINGS"
     export LARECOMP_SETTINGS
 fi

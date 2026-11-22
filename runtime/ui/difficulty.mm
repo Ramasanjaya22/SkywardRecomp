@@ -1,6 +1,6 @@
 // Gameplay tab (was Difficulty): walk speed (runtime/hle/qol.c rt_walk_speed), damage taken multiplier / one-hit KO
 // (applied where the game computes Link's damage, see tools/patches.py DAMAGE_*_SITES); rt_hero_mode() reads the game's own Hero Mode flag (PlayerStatus+0x120 = save
-// 0x55E0). Settings persist in larecomp.ini (g_settings.diff_*).
+// 0x55E0). Settings persist in skywardrecomp.ini (g_settings.diff_*).
 #include "../game_addresses.h"
 #include <math.h>
 #include <stdint.h>
