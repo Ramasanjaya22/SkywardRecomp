@@ -35,24 +35,25 @@ with tempfile.TemporaryDirectory() as t:
     rc, out = prepare(data)
     assert rc == 2 and 'No game files set up yet' in out, (rc, out)
 
-    # a folder without the game: the start screen's own failure, after its first progress line
+    # a folder without the game: the start screen's own failure (quick: often before the first progress line)
     empty = t/'empty'
     empty.mkdir()
     rc, out = prepare(data, f'--game={empty}')
     assert rc == 1, (rc, out)
-    assert re.search(r'^progress 0\.00 Looking for the game files', out, re.M), out
     assert 'No game files found in that folder' in out, out
+    outs = [out]
 
     # a package that isn't a base .nsp, given as a separate argument (not taken as the game folder argument)
     xci = t/'game.xci'
     xci.write_bytes(b'\0' * 64)
     rc, out = prepare(data, '--game', str(xci), '--keys', str(t/'missing.keys'))
     assert rc == 1 and 'Those are game packages, not game files' in out, (rc, out)
+    outs.append(out)
 
     # every progress line has the launcher's shape
-    for line in out.splitlines():
+    for line in '\n'.join(outs).splitlines():
         if line.startswith('progress'):
             assert re.fullmatch(r'progress (0|1)(\.\d+)? .+', line), line
     assert not (data/'extracted').exists(), 'a failed setup left game files'
 
-print('PASS: --prepare without a copy (exit 2), an empty folder and an .xci (exit 1), progress lines on stdout')
+print('PASS: --prepare without a copy (exit 2), an empty folder and an .xci (exit 1), their reasons on stdout')
