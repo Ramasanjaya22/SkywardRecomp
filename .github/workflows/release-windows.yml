@@ -120,10 +120,12 @@ jobs:
             build/deps-win
             !build/deps-win/src
           key: ${{ steps.deps.outputs.cache-primary-key }}
+      # the game code generator and the .nsp extractor (the start screen's setup); the inherited Link's Awakening
+      # seed generator (make rando-helper) isn't built: its randomizer sources aren't in this repository
       - name: Generator helpers
         run: |
           PY=$(cygpath -u '${{ steps.py.outputs.python-path }}')
-          make rando-helper RANDO_PY="$PY" && make gen-helper RANDO_PY="$PY"
+          make gen-helper RANDO_PY="$PY" && make extract-helper RANDO_PY="$PY"
       - name: Compiler for the player's machine
         run: tools/fetch_zig.sh
       # (make dist: the exe holds no game code, no GPL codec libraries)

@@ -254,8 +254,9 @@ app:
 dmg: app
 	tools/make_dmg.sh
 
-# Windows: build/dist/SkywardRecomp-<version>-windows.zip, top folder "SkywardRecomp/": the exe, the seed generator
-# helper (make rando-helper), what the start screen builds the game code with on the player's machine (make gen-helper,
+# Windows: build/dist/SkywardRecomp-<version>-windows.zip, top folder "SkywardRecomp/": the exe, the game package
+# extractor (make extract-helper) and, when built, the inherited seed generator (make rando-helper), what the start
+# screen builds the game code with on the player's machine (make gen-helper,
 # tools/fetch_zig.sh slimmed by tools/zig_slim.sh: its runtime built ahead of time, gamelib-src/, the exe's import library)
 # and the DLLs they load (runs without MSYS2). No game code. The exe is a release build in $(WIN_B):
 # linked against the LGPL FFmpeg from `make deps-windows` (MSYS2's is a GPLv3 build) and without a console window
@@ -270,7 +271,6 @@ deps-windows:
 	tools/build_deps_windows.sh
 dist:
 	@[ -f build/deps-win/lib/libavcodec.dll.a ] || { echo "make deps-windows first (LGPL FFmpeg)"; exit 1; }
-	@[ -d build/helper/rando-gen ] || { echo "make rando-helper first (the seed generator)"; exit 1; }
 	@[ -d build/helper/skywardgen ] || { echo "make gen-helper first (the game code generator)"; exit 1; }
 	@[ -x build/zig/zig.exe ] || { echo "tools/fetch_zig.sh first (the compiler)"; exit 1; }
 	$(MAKE) B=$(WIN_B) DEPS=$(CURDIR)/build/deps-win RELEASE=1 $(WIN_B)/skywardrecomp.exe
@@ -289,7 +289,7 @@ dist:
 	cp third_party/fonts/DejaVu/DejaVuSans.ttf third_party/fonts/DejaVu/DejaVuSans-Bold.ttf "$(DIST)/"  # (last-resort fonts, free license)
 	cp third_party/fonts/DejaVu/LICENSE "$(DIST)/DejaVu-LICENSE.txt"
 	cp README.md LICENSE "$(DIST)/"  # (licenses and source links of the bundled components: README "License")
-	cp -R build/helper/rando-gen "$(DIST)/"
+	[ -d build/helper/rando-gen ] && cp -R build/helper/rando-gen "$(DIST)/" || :  # (Link's Awakening seeds: optional)
 	PATH="$(CURDIR)/build/deps-win/bin:$$PATH" ldd $(WIN_B)/skywardrecomp.exe | awk '(/ucrt64/ || /deps-win/) && !/vulkan-1/ {print $$3}' | sort -u | \
 	    xargs -I{} cp -u {} "$(DIST)/"
 	! ls "$(DIST)" | grep -iE 'x264|x265|xvid|postproc'  # (no GPL codec libraries in the release)
