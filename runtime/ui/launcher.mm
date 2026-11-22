@@ -296,7 +296,9 @@ static const char *status_hint(const std::string &why) {
 // The player brings their own game files: a folder holding exefs/ and romfs/. They're copied into the data root (APFS
 // clones / hard links where the file system allows); the game reads romfs/ in place (runtime/services/fs.c).
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
-static std::string g_src;           // the picked folder
+static std::string g_src;           // the picked folder (launcher_prepare: or a base .nsp)
+static std::string g_keys_arg;      // launcher_prepare's --keys: the player's prod.keys, looked for first
+static bool g_headless;             // launcher_prepare: no window, so no shader preparation (the game does it later)
 static std::string g_job;           // current setup step / result for the status line
 static std::string g_job_hint;      // a failure: what to do about it (shown under it)
 static bool g_busy, g_job_failed;
@@ -485,8 +487,8 @@ static bool extract_nsp(const std::string &nsp) {
     size_t slash = nsp.find_last_of("/\\");
     std::string dir = slash == std::string::npos ? std::string(".") : nsp.substr(0, slash);
     std::string keys;
-    for (const std::string k : {dir + "/prod.keys", dir + "/../prod.keys", g_root + "/prod.keys"})
-        if (file_exists(k)) { keys = k; break; }
+    for (const std::string k : {g_keys_arg, dir + "/prod.keys", dir + "/../prod.keys", g_root + "/prod.keys"})
+        if (!k.empty() && file_exists(k)) { keys = k; break; }
     if (keys.empty()) {
         set_job("No prod.keys found", true,
                 "SkywardRecomp needs the console's prod.keys to open a .nsp - put prod.keys next to the game package "
@@ -552,7 +554,12 @@ static void *extract_thread(void *) {
         goto check;
     }
     set_job("Looking for the game files...");
-    find_game(src, 0, exefs, romfs, nsp, unusable);
+    if (struct stat st; stat(src.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {  // (a package itself: --game <file>)
+        std::string ext = src.size() > 4 ? src.substr(src.size() - 4) : "";
+        for (auto &ch : ext) ch = (char)tolower((unsigned char)ch);
+        if (ext == ".nsp") nsp = src;
+        else unusable = true;
+    } else find_game(src, 0, exefs, romfs, nsp, unusable);
     if ((exefs.empty() || romfs.empty()) && nsp.empty()) { set_failure(unusable ? FAIL_UNUSABLE : FAIL_NOT_FOUND); goto done; }
     if (!nsp.empty() && (exefs.empty() || romfs.empty())) {  // a game package: extract it in place
         if (!extract_nsp(nsp)) goto done;
@@ -603,7 +610,7 @@ check:
     {
         game_files_changed();
         std::string why = check_game_files(g_root);
-        if (why.empty()) prepare_shaders();  // (the GPU device is up: the start screen draws with it)
+        if (why.empty() && !g_headless) prepare_shaders();  // (the GPU device is up: the start screen draws with it)
         if (why.empty() && files_changed(g_root)) set_job(CHANGED_HEAD, true, CHANGED_HINT);  // (playable all the same)
         else if (why.empty()) set_job("Game files ready.");
         else if (why.find("version") != std::string::npos) set_failure(FAIL_VERSION);
@@ -614,6 +621,55 @@ done:
     g_busy = false;
     pthread_mutex_unlock(&g_lock);
     return NULL;
+}
+
+// RecompLauncher's setup step (main.c --prepare): the start screen's setup without a window. game: the player's copy
+// (a folder with the game files, or a base .nsp; NULL: the game files already set up, only the game code built again,
+// e.g. after an update); keys: their prod.keys (NULL: next to the package, as on the start screen). Progress as
+// "progress <0..1> <step>" lines on out. 0: ready to play; 1: it failed (why on out, details in the log); 2: no copy
+// given and none set up.
+extern "C" int launcher_prepare(const char *root, const char *game, const char *keys, FILE *out) {
+    g_root = root;
+    g_src = game ? game : "";
+    g_keys_arg = keys ? keys : "";
+    g_headless = true;
+    if (g_src.empty() && !check_copied_files(g_root).empty()) {
+        fprintf(out, "No game files set up yet: pass your copy with --game <folder or .nsp>\n");
+        fflush(out);
+        return 2;
+    }
+    fprintf(stderr, "[launcher] prepare: %s (keys: %s)\n", g_src.empty() ? "the game files already set up" : g_src.c_str(),
+            g_keys_arg.empty() ? "next to the package" : g_keys_arg.c_str());
+    g_busy = true;
+    pthread_t th;
+    pthread_create(&th, NULL, extract_thread, NULL);
+    std::string shown;
+    int shown_pct = -1;
+    for (bool busy = true; busy;) {
+        SDL_Delay(250);
+        pthread_mutex_lock(&g_lock);
+        busy = g_busy;
+        std::string job = g_job;
+        bool failed = g_job_failed;
+        pthread_mutex_unlock(&g_lock);
+        int pct = (int)(extract_progress() * 100);
+        if (!failed && !job.empty() && (job != shown || pct != shown_pct)) {
+            fprintf(out, "progress %.2f %s\n", pct / 100.0, job.c_str());
+            fflush(out);
+            shown = job, shown_pct = pct;
+        }
+    }
+    pthread_join(th, NULL);
+    bool changed = g_job == CHANGED_HEAD;  // (playable all the same, as on the start screen)
+    if (g_job_failed && !changed) {
+        fprintf(out, "%s. %s\n", g_job.c_str(), g_job_hint.c_str());
+        fflush(out);
+        fprintf(stderr, "[launcher] prepare failed: %s. %s\n", g_job.c_str(), g_job_hint.c_str());
+        return 1;
+    }
+    fprintf(out, "progress 1 %s\n", changed ? CHANGED_HEAD : "Game files ready");
+    fflush(out);
+    return 0;
 }
 
 // ------------------------------------------------------------------ folder dialog (SDL calls back on any thread)
