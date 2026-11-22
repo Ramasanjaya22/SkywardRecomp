@@ -179,10 +179,14 @@ assert native('select', tmp/'missing')[0] == '0'
 
 # ---- the RomFS file check (runtime/game_addresses/romfs_files.h, from tools/romfs_files.py): hashes only
 import romfs_files  # noqa: E402
-entries = re.findall(r'^\{0x([0-9a-f]{16})ull, ([123])\},$', (TABLE_DIR/'romfs_files.h').read_text(), re.M)
+romfs_header = (TABLE_DIR/'romfs_files.h').read_text()
+entries = re.findall(r'^\{0x([0-9a-f]{16})ull, ([123])\},$', romfs_header, re.M)
 hashes = [int(h, 16) for h, _ in entries]
 assert hashes == sorted(set(hashes)), 'romfs_files.h: not sorted, or a hash twice'
-assert sum(int(m) & 1 for _, m in entries) == sum(int(m) >> 1 for _, m in entries) == 3836, 'romfs_files.h: file count'
+want_files = int(re.search(r'^#define ROMFS_SS_FILES (\d+)$', romfs_header, re.M).group(1))
+assert len(entries) == want_files, 'romfs_files.h: entries'
+assert sum(int(m) & 1 for _, m in entries) == want_files, 'romfs_files.h: file count'
+assert not sum(int(m) >> 1 for _, m in entries), 'romfs_files.h: bit-1 entries'
 for rel, size in (('region_common/event/x.bfevfl', 2712), ('a', 0), ('b c/d.bin', 6232003695)):
     assert int(native('hash', rel, size)[0], 16) == romfs_files.entry_hash(rel, size), rel
 
