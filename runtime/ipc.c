@@ -16,6 +16,8 @@ __attribute__((section(".svc$a"), used)) static const ServiceDef __start_service
 __attribute__((section(".svc$z"), used)) static const ServiceDef __stop_services[1];
 #endif
 
+// Known logging-only fallbacks: prepo:u (telemetry) and ectx:aw (error context) have no HLE implementation.
+// They only log here and are not on the gameplay path, so the generic ok/empty reply is intentional.
 static void stub_handler(Service *s, IpcReq *req, IpcResp *resp) {
     LOG("[ipc] STUB %s cmd %u (in %u bytes, x%d a%d b%d c%d) -> ok\n", s->name, req->cmd, req->data_size, req->nx,
         req->na, req->nb, req->nc);

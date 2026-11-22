@@ -512,6 +512,24 @@ static void rom_index(void) {
     LOG("[fs] romfs index: %d files\n", rom_nfiles);
 }
 
+// HLE users (movie.c) that need one game file from the base image, without parsing RomFS themselves.
+bool romfs_file_info(const char *path, uint64_t *off, uint64_t *size) {
+    if (!g_base_open) base_open();
+    if (!rom_files) rom_index();
+    for (int i = 0; i < rom_nfiles; i++) {
+        if (!strcmp(rom_files[i].path, path)) {
+            if (off) *off = rom_files[i].off;
+            if (size) *size = rom_files[i].size;
+            return true;
+        }
+    }
+    return false;
+}
+
+ssize_t romfs_pread(void *dst, uint64_t n, uint64_t off) {
+    return base_pread(dst, n, off);
+}
+
 // Virtual RomFS image read: original bytes, with the patched file table and appended replacement files.
 static ssize_t romfs_read(uint8_t *dst, uint64_t size, uint64_t off) {
     if (!ov_n) return base_pread(dst, size, off);

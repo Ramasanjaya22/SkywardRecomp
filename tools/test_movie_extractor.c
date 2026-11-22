@@ -31,6 +31,15 @@ static void host_free(void *p) { if (p && p == tracked_rgba) { rgba_buffers--; t
 #define HLE_FUNC(sym, fn) static void fn(Cpu *c)
 #undef RT_ON_RESET
 #define RT_ON_RESET(fn) static void fn(void)
+// movie.c's flat-RomFS helpers live in services/fs.c; this fixture only exercises the directory fallback.
+bool romfs_file_info(const char *path, uint64_t *off, uint64_t *size) {
+    (void)path, (void)off, (void)size;
+    return false;
+}
+ssize_t romfs_pread(void *dst, uint64_t n, uint64_t off) {
+    (void)dst, (void)n, (void)off;
+    return -1;
+}
 #include "../runtime/hle/movie.c"
 
 const char *g_romfs_dir;
