@@ -335,6 +335,17 @@ static void create_device(void) {
     g_fault_ext = fault;
     bool budget = has_ext(ep, ne, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);  // (real per-heap budgets: vk_log_memory)
     if (budget) ext[n_ext++] = VK_EXT_MEMORY_BUDGET_EXTENSION_NAME;
+    bool has_antilag = false;
+#ifdef VK_AMD_anti_lag
+    // Anti-Lag 2: AMD only, on by default (LARECOMP_VK_ANTILAG=0 off). Cuts the render queue just before present.
+    const char *antilag_e = getenv("LARECOMP_VK_ANTILAG");
+    has_antilag = g_vk.props.vendorID == 0x1002 && has_ext(ep, ne, VK_AMD_ANTI_LAG_EXTENSION_NAME) &&
+                  !(antilag_e && *antilag_e && !atoi(antilag_e));
+    if (has_antilag) ext[n_ext++] = VK_AMD_ANTI_LAG_EXTENSION_NAME;
+    g_vk.antilag = has_antilag;
+#else
+    if (getenv("LARECOMP_VK_ANTILAG")) LOG("[vk] anti-lag 2: this build's headers have no VK_AMD_anti_lag\n");
+#endif
     // pipeline-building features: logged below (issue #92); dynamic vertex input used, the library one only measured
     bool vids_ext = has_ext(ep, ne, VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME);
 #ifdef VK_EXT_graphics_pipeline_library
@@ -487,6 +498,11 @@ static void create_device(void) {
     VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT en_vids = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT, .vertexInputDynamicState = VK_TRUE};
     if (g_vk.vids) en_vids.pNext = f.pNext, f.pNext = &en_vids;
+#ifdef VK_AMD_anti_lag
+    VkPhysicalDeviceAntiLagFeaturesAMD en_antilag = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ANTI_LAG_FEATURES_AMD, .antiLag = VK_TRUE};
+    if (has_antilag) en_antilag.pNext = f.pNext, f.pNext = &en_antilag;
+#endif
 #ifdef VK_EXT_graphics_pipeline_library
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT en_gpl = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT, .graphicsPipelineLibrary = VK_TRUE};
@@ -520,6 +536,13 @@ static void create_device(void) {
                              .pQueueCreateInfos = &qi, .enabledExtensionCount = n_ext, .ppEnabledExtensionNames = ext};
     VK_CHECK(vkCreateDevice(g_vk.phys, &di, NULL, &g_vk.dev));
     vkGetDeviceQueue(g_vk.dev, g_vk.qfam, 0, &g_vk.queue);
+#ifdef VK_AMD_anti_lag
+    if (g_vk.antilag) {
+        g_vk.antilag_update = (PFN_vkAntiLagUpdateAMD)vkGetDeviceProcAddr(g_vk.dev, "vkAntiLagUpdateAMD");
+        if (g_vk.antilag_update) LOG("[vk] anti-lag 2: on (AMD, VK_AMD_anti_lag)\n");
+        else LOG("[vk] anti-lag 2: extension present but vkAntiLagUpdateAMD missing; off\n"), g_vk.antilag = false;
+    }
+#endif
     if (g_vk.vids) {
         g_vk.set_vertex_input = (PFN_vkCmdSetVertexInputEXT)vkGetDeviceProcAddr(g_vk.dev, "vkCmdSetVertexInputEXT");
         if (!g_vk.set_vertex_input) g_vk.vids = false;
@@ -891,6 +914,15 @@ void vk_frame_end(const char *shot_path) {
     if (!done_sem[img]) done_sem[img] = binary_semaphore();
     uint64_t seq = vk_pending_seq();
     vk_submit_extra(cur_frame.acquired, done_sem[img], VK_NULL_HANDLE);
+#ifdef VK_AMD_anti_lag
+    if (g_vk.antilag && g_vk.antilag_update) {
+        VkAntiLagPresentationInfoAMD pi = {.sType = VK_STRUCTURE_TYPE_ANTI_LAG_PRESENTATION_INFO_AMD,
+                                            .stage = VK_ANTI_LAG_STAGE_PRESENT_AMD, .frameIndex = cur_frame.id};
+        VkAntiLagDataAMD ad = {.sType = VK_STRUCTURE_TYPE_ANTI_LAG_DATA_AMD, .mode = VK_ANTI_LAG_MODE_ON_AMD,
+                               .maxFPS = 0, .pPresentationInfo = &pi};
+        g_vk.antilag_update(g_vk.dev, &ad);
+    }
+#endif
     // the present follows the submission in the recorder's order (its wait for the display is the recorder's, counted in
     // g_vk_frame_waits[2]; an out-of-date result makes the next vk_frame_begin recreate the swapchain)
     rec_QueuePresentKHR(done_sem[img], g_vk.swapchain, img);

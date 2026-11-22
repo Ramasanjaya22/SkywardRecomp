@@ -40,3 +40,7 @@ STATE.md
 PLAN-*.md
 PROMPT-*.md
 research/
+.scratch/
+docs/agents/
+CONTEXT.md
+docs/adr/

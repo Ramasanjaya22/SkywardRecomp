@@ -36,6 +36,10 @@ typedef struct {
     VkSemaphore timeline;      // value = last completed submission number
     VkCommandPool pool;        // render thread only
     bool custom_border, divisor, host_import, dmabuf;
+    bool antilag;  // Anti-Lag 2 on AMD by default (LARECOMP_VK_ANTILAG=0 off)
+#ifdef VK_AMD_anti_lag
+    PFN_vkAntiLagUpdateAMD antilag_update;
+#endif
     // VK_EXT_vertex_input_dynamic_state (exec.c): the vertex layout is set per draw (vkCmdSetVertexInputEXT), not
     // baked into each pipeline - fewer pipelines. Off: no extension / feature, or LARECOMP_VK_DYN_VERTEX=0.
     bool vids;

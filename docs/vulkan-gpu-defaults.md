@@ -19,6 +19,7 @@ Vendor IDs: 0x13B5 Arm (Mali), 0x5143 Qualcomm (Adreno), 0x8086 Intel, 0x1002 AM
 | Placeholder colour attachment for depth-only passes | Intel | UHD 630 on Windows (a driver crash without it, #8, #46) | | `LARECOMP_VK_PLACEHOLDER_COLOR` |
 | Guest heap as driver memory | RADV, PanVK | PanVK (Mali-G610), RADV | #564, #483 | `LARECOMP_VK_HEAP_DMABUF` |
 | Shader memory through copies (no heap import) | drivers without `VK_EXT_external_memory_host` | PanVK | #556 | none (automatic) |
+| Anti-Lag 2 (cut the render queue before present) | AMD (0x1002), with `VK_AMD_anti_lag` | AMD Vulkan driver | roadmap §4 | `LARECOMP_VK_ANTILAG` |
 
 Notes:
 
