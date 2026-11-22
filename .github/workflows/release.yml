@@ -15,8 +15,8 @@
 # release that already has files (a draft this workflow made, then published) is left alone.
 name: Release
 on:
-  release:
-    types: [published]
+  # (a release published on GitHub is handled by release-windows.yml: the macOS job needs a self-hosted VM, so this
+  # four-platform build only runs by hand)
   workflow_dispatch:
     inputs:
       tag:

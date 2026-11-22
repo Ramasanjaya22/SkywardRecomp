@@ -137,6 +137,13 @@ void settings_load(void) {
     static bool loaded;
     if (loaded) return;
     loaded = true;
+    // (the LAS Recomp era's name: carried over once, so an existing data folder keeps its settings)
+    const char *e = getenv("LARECOMP_SETTINGS");
+    if (!(e && *e)) {
+        FILE *have = fopen("skywardrecomp.ini", "r");
+        if (have) fclose(have);
+        else if (rename("larecomp.ini", "skywardrecomp.ini") == 0) LOG("[settings] larecomp.ini -> skywardrecomp.ini\n");
+    }
     FILE *f = fopen(SETTINGS_FILE, "r");
     if (!f) return;
     char line[256];
