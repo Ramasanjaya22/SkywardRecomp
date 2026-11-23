@@ -300,8 +300,8 @@ static void ex_set_data_source(Cpu *c) {
     }
     e->pkt = av_packet_alloc();
     if (!e->pkt) { avformat_close_input(&e->fmt); ex_io_close(e); c->x[0] = 1; return; }
-    // the opening at launch can always be skipped, vanilla and randomizer (with no save yet the game forces it)
-    e->skippable = rel && strstr(rel, "movie/opening.webm");
+    // the opening at launch (SS: THP/Demo01_01.webm) can always be skipped, vanilla and randomizer
+    e->skippable = rel && strstr(rel, "THP/Demo01_01.webm");
     if (e->skippable) g_skip_pressed_at = 0;  // (a press that ended the title's attract replay isn't for this one)
     if (rel && strstr(rel, "movie/ending.webm")) { extern void run_timer_ending_movie(void); run_timer_ending_movie(); }  // (the run's end)
     if (rel && strstr(rel, "movie/title.webm")) { extern void run_timer_title(void); run_timer_title(); }  // (a new attempt next)
@@ -335,7 +335,8 @@ static void ex_get_track_config(Cpu *c) {
         int fps = s->avg_frame_rate.den ? s->avg_frame_rate.num / s->avg_frame_rate.den : 30;
         md_set_int(m, "frame-rate", fps ? fps : 30);
     } else {
-        md_set_str(m, "mime", p->codec_id == AV_CODEC_ID_VORBIS ? "audio/vorbis" : "audio/mp4a-latm");
+        md_set_str(m, "mime", p->codec_id == AV_CODEC_ID_VORBIS ? "audio/vorbis" :
+                              p->codec_id == AV_CODEC_ID_OPUS ? "audio/opus" : "audio/mp4a-latm");
         md_set_int(m, "sample-rate", p->sample_rate);
         md_set_int(m, "channel-count", p->ch_layout.nb_channels);
     }
@@ -667,6 +668,32 @@ static void dec_get_input_buffer(Cpu *c) {
     c->x[0] = 0;
 }
 
+// Any FFmpeg sample format (planar or packed float, double, s16, s32, u8) -> interleaved s16, at most cap_samples
+// values; returns the samples per channel written. vorbis51: FFmpeg reorders Vorbis 5.1 to FL FR FC LFE BL BR, the
+// game expects Vorbis order (FL FC FR BL BR LFE) and reorders itself.
+static int movie_audio_to_s16(const AVFrame *f, int16_t *out, int cap_samples, bool vorbis51) {
+    static const int vorbis_order[6] = {0, 2, 1, 4, 5, 3};
+    int ch = f->ch_layout.nb_channels, n = f->nb_samples;
+    if (ch <= 0) return 0;
+    if (n * ch > cap_samples) n = cap_samples / ch;
+    bool planar = av_sample_fmt_is_planar(f->format);
+    enum AVSampleFormat packed = av_get_packed_sample_fmt(f->format);
+    for (int i = 0; i < n; i++)
+        for (int k = 0; k < ch; k++) {
+            int src = vorbis51 ? vorbis_order[k] : k, at = planar ? i : i * ch + src;
+            const uint8_t *data = f->extended_data[planar ? src : 0];
+            float s = packed == AV_SAMPLE_FMT_FLT ? ((const float *)data)[at]
+                    : packed == AV_SAMPLE_FMT_DBL ? (float)((const double *)data)[at]
+                    : packed == AV_SAMPLE_FMT_S16 ? ((const int16_t *)data)[at] / 32768.0f
+                    : packed == AV_SAMPLE_FMT_S32 ? ((const int32_t *)data)[at] / 2147483648.0f
+                    : packed == AV_SAMPLE_FMT_U8 ? (data[at] - 128) / 128.0f : 0.0f;  // (unknown: silence, timing kept)
+            if (s > 1.0f) s = 1.0f;
+            if (s < -1.0f) s = -1.0f;
+            out[i * ch + k] = (int16_t)(s * 32767.0f);
+        }
+    return n;
+}
+
 // Copy a decoded frame into an output slot; caller holds the lock.
 static bool emit_frame(Decoder *d, AVFrame *f, int64_t time, uint32_t flags) {
     int slot = -1;
@@ -686,22 +713,8 @@ static bool emit_frame(Decoder *d, AVFrame *f, int64_t time, uint32_t flags) {
         }
         size = (uint32_t)(uv_off + d->stride * (h / 2));
     } else {
-        // planar float -> interleaved s16
-        int ch = f->ch_layout.nb_channels, n = f->nb_samples;
-        int16_t *out = (int16_t *)o;
-        if ((uint32_t)(n * ch * 2) > d->out_cap) n = (int)(d->out_cap / (ch * 2));
-        // FFmpeg reorders Vorbis 5.1 to FL FR FC LFE BL BR; the game expects Vorbis order (FL FC FR BL BR LFE)
-        // and reorders itself.
-        static const int vorbis51[6] = {0, 2, 1, 4, 5, 3};
-        bool native = ch == 6 && d->ctx->codec_id == AV_CODEC_ID_VORBIS;
-        for (int i = 0; i < n; i++)
-            for (int k = 0; k < ch; k++) {
-                int src = native ? vorbis51[k] : k;
-                float s = f->format == AV_SAMPLE_FMT_FLTP ? ((const float *)f->data[src])[i] : 0.0f;
-                if (s > 1.0f) s = 1.0f;
-                if (s < -1.0f) s = -1.0f;
-                out[i * ch + k] = (int16_t)(s * 32767.0f);
-            }
+        int ch = f->ch_layout.nb_channels;
+        int n = movie_audio_to_s16(f, (int16_t *)o, (int)(d->out_cap / 2), ch == 6 && d->ctx->codec_id == AV_CODEC_ID_VORBIS);
         size = (uint32_t)(n * ch * 2);
     }
     d->out_busy[slot] = true;
