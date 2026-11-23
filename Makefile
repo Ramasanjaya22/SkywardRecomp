@@ -39,7 +39,9 @@ IMGUI    := third_party/imgui
 # SkywardRecomp: generated files reach 3.8 MB each and LLVM blows up on the biggest ones at -O1
 # (main_465.c: >45 min and still running). -O0 does the same file in 9 s. The runtime keeps its
 # own -O2 (RTFLAGS); only this generated code is built unoptimized.
-GENFLAGS := -O0 -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -Iruntime
+# -fno-sanitize=undefined: zig cc turns UBSan on at -O0, and the slim zig's link (tools/zig_slim.sh) has no ubsan_rt, so
+# the link failed with undefined __ubsan_handle_* symbols (players' logs).
+GENFLAGS := -O0 -fno-sanitize=undefined -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -Iruntime
 
 # The game code (made by `make gen` from your own game files) is its own library next to the app (runtime/gamelib.h);
 # the app itself holds none of it
@@ -146,7 +148,7 @@ $(B)/obj/%.o: $(GEN)/%.c runtime/cpu.h runtime/simd.h runtime/simd_fp.h
 $(B)/obj/tools/gamelib_entry.o: tools/gamelib_entry.c $(GAMELIB_SRCS) $(wildcard $(GEN)/main/main_build_id.txt)
 	@mkdir -p $(dir $@)
 	$(CC) $(GENFLAGS) -DGAMELIB_ID='"$(GAMELIB_FULL_ID)"' -c $< -o $@
-$(B)/rt/gamelib.o: $(GAMELIB_SRCS)
+$(B)/rt/gamelib.o: $(GAMELIB_SRCS) Makefile  # (Makefile: GENFLAGS are in the id; a stale object made the start screen think the built game code was missing)
 $(B)/rt/gamelib.o: RTFLAGS += -DGAMELIB_ID='"$(GAMELIB_ID)"'
 # the start screen's build of it (runtime/gamebuild.c) uses the same flags
 $(B)/rt/gamebuild.o: $(GAMELIB_SRCS) $(GAMELIB_BASE_SRCS) Makefile
