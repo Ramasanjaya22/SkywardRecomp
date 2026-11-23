@@ -10,6 +10,9 @@
 #include <sys/stat.h>
 #ifndef _WIN32
 #include <signal.h>
+#include <sys/statvfs.h>
+#else
+#include <windows.h>
 #endif
 
 #include "gamelib.h"
@@ -239,12 +242,50 @@ static void log_tail(const char *path, char *out, size_t n) {  // the last line 
     snprintf(out, n, "%s", nl ? nl + 1 : buf);
 }
 
+// The first line of a build log that says what went wrong: a compiler's last line is usually just "1 error generated.", and
+// every later error follows from the first. "" if it names none (the caller falls back to the last line).
+static void log_first_error(const char *path, char *out, size_t n) {
+    out[0] = 0;
+    FILE *f = fopen(path, "rb");
+    if (!f) return;
+    char buf[1 << 16];
+    size_t k = fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    buf[k] = 0;
+    for (char *s = buf, *e = NULL; s && *s; s = e ? e + 1 : NULL) {
+        e = strchr(s, '\n');
+        if (e) *e = 0;
+        if (strstr(s, "error:") || strstr(s, "fatal error") || strstr(s, "LLVM ERROR") || strstr(s, "undefined symbol") ||
+            strstr(s, "OutOfMemory") || strstr(s, "out of memory") || strstr(s, "Cannot allocate memory")) {
+            size_t l = strlen(s);
+            while (l && (s[l - 1] == '\r' || s[l - 1] == ' ')) s[--l] = 0;
+            snprintf(out, n, "%s", s);
+            return;
+        }
+    }
+}
+
+// Did the build step die for lack of memory? On Linux the kernel's OOM killer sends SIGKILL and writes nothing; elsewhere
+// the compiler says so in its log.
+static bool ran_out_of_memory(int r, const char *log) {
+#ifndef _WIN32
+    if (r == PLAT_PROC_SIGNALED + SIGKILL) return true;
+#else
+    (void)r;
+#endif
+    char first[300];
+    log_first_error(log, first, sizeof first);
+    return strstr(first, "OutOfMemory") || strstr(first, "out of memory") || strstr(first, "Cannot allocate memory") ||
+           strstr(first, "bad_alloc");
+}
+
 // A helper that failed (plat_proc_wait's r != 0): its log's last line for our log, and how it ended when that says
 // nothing or a signal ended it (the system killing it for memory writes nothing). A signal also gives the player why.
 static bool g_killed, g_cfg_stopped;
 static void helper_failed(const char *what, int r, const char *log, char *why, size_t why_size) {
     char last[300], how[120] = "";
-    log_tail(log, last, sizeof last);
+    log_first_error(log, last, sizeof last);
+    if (!last[0]) log_tail(log, last, sizeof last);
 #ifndef _WIN32
     if (r > PLAT_PROC_SIGNALED) {
         int sig = r - PLAT_PROC_SIGNALED;
@@ -267,9 +308,28 @@ static void helper_failed(const char *what, int r, const char *log, char *why, s
         snprintf(how, sizeof how, "exit status %d", r);
     }
     LOG("[gamebuild] %s failed: %s%s%s\n", what, how, how[0] && last[0] ? ": " : "", last);
+    // what the player reads: the step, then the compiler's own first error (the full log stays in the build folder)
+    if (last[0] && !g_killed) {
+        size_t l = strlen(why);
+        snprintf(why + l, why_size - l, ": %s", last);
+    }
 }
 
 bool gamebuild_killed(void) { return g_killed; }
+
+// Free bytes on the volume of dir; 0 when it can't be asked (then nothing is refused).
+static unsigned long long free_bytes(const char *dir) {
+#ifdef _WIN32
+    ULARGE_INTEGER a;
+    return GetDiskFreeSpaceExA(dir, &a, NULL, NULL) ? a.QuadPart : 0;
+#else
+    struct statvfs v;
+    return statvfs(dir, &v) == 0 ? (unsigned long long)v.f_bavail * v.f_frsize : 0;
+#endif
+}
+// Measured on the game's chunks: about 100 MB per compiler process plus ~350 MB per MB of C (the largest chunk, 3.8 MB: 1.4 GB).
+#define BUILD_DISK_NEED (3ull << 30)  // generated C, objects and the compiler's cache
+static unsigned long long compile_mem_estimate(unsigned long long c_bytes) { return (100ull << 20) + c_bytes * 350; }
 bool gamebuild_cfg_stopped(void) { return g_cfg_stopped; }
 
 // ------------------------------------------------------------------ compiling
@@ -368,6 +428,16 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
              t.zig && ZIG_TARGET[0] ? " target=" : "", t.zig ? ZIG_TARGET : "");  // before it are rebuilt once)
     if (o->progress) o->progress(0, "Checking completed build files...");
     bool resuming = build_cache_resumable(game_dir);  // (a cancelled or interrupted build; read before open marks this one)
+    if (!resuming) {  // (a resumed build already has most of its files)
+        const char *e = getenv("LARECOMP_BUILD_MIN_FREE");  // bytes; a different floor, or 1 to skip the check
+        unsigned long long need = e && *e ? strtoull(e, NULL, 10) : BUILD_DISK_NEED, have = free_bytes(game_dir);
+        if (have && have < need) {
+            snprintf(why, why_size, "There isn't enough free disk space to build the game code: %.1f GB free, about %.1f GB needed "
+                     "on the drive that holds the game's data folder. Free some space (or move the data folder with "
+                     "LARECOMP_DATA_ROOT) and try again.", (double)have / (1 << 30), (double)need / (1 << 30));
+            return false;
+        }
+    }
     BuildCache *cache = build_cache_open(game_dir, spec, inputs, 5, why, why_size);
     if (!cache) return false;
     // an update keeps the last good build's objects (open drops them when compiler, headers or flags changed)
@@ -433,8 +503,15 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     int queued[2] = {0, 0};  // chunk files of each module put in units so far
     bool tables[2] = {false, false};
     int next = 0, jobs = o->jobs < 1 ? 1 : o->jobs > 64 ? 64 : o->jobs;
-    struct { PlatProc p; int unit; } run[64];
-    int nrun = 0;
+    struct { PlatProc p; int unit; bool shared; unsigned long long mem; } run[64];  // shared: ran at the same time as another
+    int nrun = 0, retry[64], nretry = 0;  // retry: compiles the system killed for memory, to run again with fewer at a time
+    unsigned long long mem_used = 0, mem_budget = 0;
+    {   // the compilers running at once must fit in most of the RAM (the generator and the system need the rest)
+        PlatSysInfo si = {0};
+        plat_system_info(&si);
+        mem_budget = si.ram / 10 * 6;
+    }
+    if (mem_budget) LOG("[gamebuild] compilers share a memory budget of %llu MB\n", mem_budget >> 20);
     int reused = 0, compiled = 0;
     unsigned long long done_bytes = 0;
     double shown = 0;
@@ -491,25 +568,51 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         for (int k = 0; k < units.n; k++) written += units.u[k].bytes;
 
         // compiles
-        while (nrun < jobs && next < units.n) {
-            Unit *u = &units.u[next];
-            int cached = build_cache_object(cache, u->stem, u->src, u->source_hash);
-            if (cached < 0) { snprintf(why, why_size, "A generated source file is missing or unreadable."); ok = false; break; }
-            if (cached && next != 0) { done_bytes += u->bytes; ++reused; ++next; continue; }
-            PlatProc p = start_compile(&t, &units.u[next]);
+        while (nrun < jobs && (nretry || next < units.n)) {
+            bool again = nretry > 0;
+            int idx = again ? retry[nretry - 1] : next;
+            Unit *u = &units.u[idx];
+            if (!again) {
+                int cached = build_cache_object(cache, u->stem, u->src, u->source_hash);
+                if (cached < 0) { snprintf(why, why_size, "A generated source file is missing or unreadable."); ok = false; break; }
+                if (cached && idx != 0) { done_bytes += u->bytes; ++reused; ++next; continue; }
+            }
+            unsigned long long need = compile_mem_estimate(u->bytes);
+            if (nrun > 0 && mem_budget && mem_used + need > mem_budget) break;  // wait for a running one to finish
+            PlatProc p = start_compile(&t, u);
             if (!p) { snprintf(why, why_size, "the compiler didn't start"); ok = false; break; }
-            run[nrun].p = p, run[nrun].unit = next++;
+            if (again) --nretry; else ++next;
+            if (nrun > 0) for (int j = 0; j < nrun; j++) run[j].shared = true;
+            run[nrun].p = p, run[nrun].unit = idx, run[nrun].mem = need, run[nrun].shared = nrun > 0;
+            mem_used += need;
             nrun++;
         }
         for (int k = 0; k < nrun; k++) {
             int r = finished(run[k].p);
             if (r < 0) continue;
             Unit *u = &units.u[run[k].unit];
+            mem_used -= run[k].mem;
+            if (r != 0 && ran_out_of_memory(r, u->log) && (run[k].shared || jobs > 1) && nretry < 64) {
+                // not a fault of this file: too many compilers for this machine's memory. Fewer at a time, this one again.
+                if (jobs > 1) {
+                    jobs = nrun > 2 ? nrun / 2 : 1;
+                    LOG("[gamebuild] a compiler ran out of memory (%s): continuing with %d at a time\n", u->src, jobs);
+                }
+                retry[nretry++] = run[k].unit;
+                run[k--] = run[--nrun];
+                continue;
+            }
             if (r != 0) {
                 char what[1200];
                 snprintf(what, sizeof what, "compiling %s", u->src);
                 snprintf(why, why_size, "the game code didn't compile");
                 helper_failed(what, r, u->log, why, why_size);
+                if (ran_out_of_memory(r, u->log)) {
+                    size_t l = strlen(why);
+                    snprintf(why + l, why_size - l, " (not enough memory for this file even on its own: needs about %.1f GB. "
+                             "Close other programs, or add swap, and try again; finished files are kept.)",
+                             (double)compile_mem_estimate(u->bytes) / (1 << 30));
+                }
                 ok = false;
             } else if (!build_cache_save_object(cache, u->stem, u->src, u->source_hash, why, why_size)) {
                 ok = false;
@@ -520,7 +623,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
             run[k--] = run[--nrun];
         }
         if (!ok) break;
-        if (gens_done && next == units.n && nrun == 0) break;
+        if (gens_done && next == units.n && nrun == 0 && nretry == 0) break;
 
         // progress: the generator's share (its functions written), the compiler's (bytes of C compiled, of an
         // estimate of all of it while the generator still writes)

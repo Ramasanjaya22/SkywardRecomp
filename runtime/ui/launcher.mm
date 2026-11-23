@@ -43,6 +43,7 @@ extern "C" {
 #include "gamebuild.h"
 #include "build_cache.h"
 #include "game_addresses.h"
+#include "game_find.h"
 #include "gamelib.h"
 #include "romfs_build.h"
 #include "settings.h"
@@ -297,9 +298,11 @@ static const char *status_hint(const std::string &why) {
 // clones / hard links where the file system allows); the game reads romfs/ in place (runtime/services/fs.c).
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static std::string g_src;           // the picked folder
+static std::string g_keys_pick;     // the prod.keys the player chose (g_lock); empty: search for one
 static std::string g_job;           // current setup step / result for the status line
 static std::string g_job_hint;      // a failure: what to do about it (shown under it)
 static bool g_busy, g_job_failed;
+static bool g_exit_after_setup;  // (test: LARECOMP_LAUNCHER_EXTRACT)
 static bool g_confirm_delete;       // game-files page: "Delete the game files?" shown
 
 static void set_job(const std::string &s, bool failed = false, const std::string &hint = "") {
@@ -311,7 +314,10 @@ static void set_job(const std::string &s, bool failed = false, const std::string
 }
 
 // (the not-found failure's hint, and the caption over the game files page's example folder)
-static const char *const PICK_FOLDER_HINT = "Choose the folder that has the game's exefs and romfs folders (or the .nsp package) in it.";
+static const char *const PICK_FOLDER_HINT =
+    "Choose the folder that has the game's exefs and romfs folders (or the .nsp package) in it.\n\n"
+    "Using a .nsp? It also needs your prod.keys (your Switch's encryption keys, dumped from your own console with "
+    "Lockpick_RCM): it's found by itself next to the .nsp, or choose it in the prod.keys row. Other files in the folder are fine.";
 
 // Setup failures: a short headline and what to do next (also LARECOMP_LAUNCHER_SHOT=<f>:fail<1-6>, screenshots)
 enum { FAIL_NOT_FOUND = 1, FAIL_UNUSABLE, FAIL_COPY, FAIL_VERSION, FAIL_MISSING, FAIL_BUILD };
@@ -340,34 +346,24 @@ static void set_failure(int k, int have = -1, const char *reason = NULL, int wan
     set_job(head[k], true, reason ? std::string(reason) + " " + hint[k] : hint[k]);
 }
 
-static bool is_dir(const std::string &p) {
-    struct stat st;
-    return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+// What the picked folder holds (runtime/game_find.c): the extracted game files (exefs + romfs folders) or a base-game .nsp, found
+// in the folder or a few levels below it. An exefs folder of another game or version is skipped, not picked, and every .nsp that
+// isn't the base game (an update, DLC, another game, a damaged copy) is skipped with its reason; .xci / .nca / .nsz / .xcz are
+// unusable. A base .nsp is extracted in place (extract_nsp below).
+static int exefs_supported(const char *exefs, char *why, size_t n) {
+    char label[32];
+    if (game_release_label(exefs, label, sizeof label)) return 1;
+    snprintf(why, n, "not version 1.0.0 of Skyward Sword HD (a different game, or another version of it)");
+    return 0;
 }
 
-// exefs: the folder with main and main.npdm; romfs: the folder with region_common (the game's data root). Found
-// in the picked folder or a few levels below it (some folder layouts nest them). A base .nsp (the game package)
-// works too: it's extracted in place (extract_nsp below) -- .xci / .nca / .nsz / .xcz stay unusable.
-static void find_game(const std::string &dir, int depth, std::string &exefs, std::string &romfs, std::string &nsp,
-                      bool &unusable) {
-    if (depth > 4 || (!exefs.empty() && !romfs.empty()) || !nsp.empty()) return;
-    if (exefs.empty() && file_exists(dir + "/main") && file_exists(dir + "/main.npdm")) exefs = dir;
-    if (romfs.empty() && is_dir(dir + "/region_common")) romfs = dir;
-    DIR *d = opendir(dir.c_str());
-    if (!d) return;
-    std::vector<std::string> sub;
-    while (struct dirent *e = readdir(d)) {
-        std::string n = e->d_name;
-        if (n[0] == '.') continue;
-        std::string ext = n.size() > 4 ? n.substr(n.size() - 4) : "";
-        for (auto &ch : ext) ch = (char)tolower((unsigned char)ch);
-        if (ext == ".nsp") { if (nsp.empty()) nsp = dir + "/" + n; continue; }
-        if (ext == ".xci" || ext == ".nca" || ext == ".nsz" || ext == ".xcz") unusable = true;
-        if (n != "region_common" && is_dir(dir + "/" + n)) sub.push_back(dir + "/" + n);
-    }
-    closedir(d);
-    std::sort(sub.begin(), sub.end());
-    for (auto &s : sub) find_game(s, depth + 1, exefs, romfs, nsp, unusable);
+// The same description is logged and put in the failure the player reads, so a wrong pick can be seen at once.
+static void find_game(const std::string &dir, GameFind &f, std::string *described = NULL) {
+    game_find(dir.c_str(), exefs_supported, &f);
+    char text[4096];
+    game_find_describe(&f, text, sizeof text);
+    fprintf(stderr, "[launcher] looking in %s (%d folders, %d files)\n%s\n", dir.c_str(), f.dirs, f.files, text);
+    if (described) *described = text;
 }
 
 // A supported game version (runtime/game_addresses/versions.h)? Logs which one.
@@ -439,7 +435,7 @@ static bool build_game_code(void) {
     o.progress = build_progress;
     o.cancelled = build_cancelled;
     o.jobs = (int)std::thread::hardware_concurrency();
-    char why[256] = "";
+    char why[512] = "";
     g_build_frac = 0;
     bool ok = gamebuild_run(g_root.c_str(), &o, why, sizeof why);
     if (!ok) {
@@ -450,7 +446,7 @@ static bool build_game_code(void) {
                     "The tool that builds the game code was stopped by Windows security settings (Control Flow Guard). "
                     "If you changed Control flow guard in Exploit protection, set it back to the default and try again. "
                     "If it keeps happening, report it on GitHub.");
-        else set_failure(FAIL_BUILD, -1, gamebuild_killed() ? why : NULL);
+        else set_failure(FAIL_BUILD, -1, why[0] ? why : NULL);  // the step and the compiler's first error, not "Build failed"
     }
     return ok;
 }
@@ -477,6 +473,70 @@ static void last_log_line(const char *path, char *out, size_t n) {
     if (best) snprintf(out, n, "%s", best);
 }
 
+// ------------------------------------------------------------------ prod.keys search
+// A real prod.keys is a text file of "name = hex" lines that has header_key in it; this rejects empty or unrelated files of that name.
+static bool looks_like_prod_keys(const std::string &p) {
+    FILE *f = fopen(p.c_str(), "rb");
+    if (!f) return false;
+    static char buf[1 << 20];  // (a real one is ~20 KB; only the first MB is read)
+    size_t n = fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    buf[n] = 0;
+    return strstr(buf, "header_key") != NULL;
+}
+
+// Walks dir (depth levels down) for a prod.keys, giving up after *budget directory reads so a huge drive can't stall the launcher.
+static bool scan_for_keys(const std::string &dir, int depth, int *budget, std::string *out) {
+    if (*budget <= 0) return false;
+    DIR *d = opendir(dir.c_str());
+    if (!d) return false;
+    --*budget;
+    std::vector<std::string> subs;
+    while (struct dirent *e = readdir(d)) {
+        if (e->d_name[0] == '.') continue;
+        std::string p = dir + "/" + e->d_name;
+        if (strcasecmp(e->d_name, "prod.keys") == 0 && looks_like_prod_keys(p)) { *out = p; closedir(d); return true; }
+        if (depth > 0) subs.push_back(p);
+    }
+    closedir(d);
+    for (const std::string &s : subs) {
+        struct stat st;
+        if (stat(s.c_str(), &st) == 0 && S_ISDIR(st.st_mode) && scan_for_keys(s, depth - 1, budget, out)) return true;
+    }
+    return false;
+}
+
+// Finds the user's own prod.keys on this PC (nothing is bundled): first the exact places it is normally kept (next to the
+// package, the data root, Lockpick_RCM's and the Switch emulators' folders), then a bounded search of the user's folders.
+// Returns "" if none is found. shortcut: the search stops after ~4000 directory reads and 4 levels, so a key buried deeper
+// or on another drive is missed; the user then puts it next to the .nsp.
+static std::string find_prod_keys(const std::string &nsp_dir) {
+    const char *home = getenv("HOME"), *prof = getenv("USERPROFILE"), *appdata = getenv("APPDATA");
+    std::vector<std::string> cand = {nsp_dir + "/prod.keys", nsp_dir + "/../prod.keys", g_root + "/prod.keys"};
+    std::vector<std::string> homes;
+    for (const char *h : {home, prof}) if (h && std::find(homes.begin(), homes.end(), h) == homes.end()) homes.push_back(h);
+    for (const std::string &h : homes) {
+        cand.push_back(h + "/.switch/prod.keys");
+        for (const char *s : {"/.local/share/yuzu/keys", "/.local/share/eden/keys", "/.config/Ryujinx/system",
+                              "/Library/Application Support/Ryujinx/system"})
+            cand.push_back(h + s + std::string("/prod.keys"));
+    }
+    if (appdata) for (const char *s : {"/yuzu/keys", "/eden/keys", "/suyu/keys", "/Ryujinx/system"})
+        cand.push_back(std::string(appdata) + s + "/prod.keys");
+    for (const std::string &k : cand)
+        if (file_exists(k) && looks_like_prod_keys(k)) return k;
+
+    int budget = 4000;
+    std::string found;
+    if (scan_for_keys(nsp_dir, 4, &budget, &found)) return found;
+    for (const std::string &h : homes) {
+        for (const char *s : {"/Downloads", "/Desktop", "/Documents", "/Switch", "/Games"})
+            if (scan_for_keys(h + s, 4, &budget, &found)) return found;
+        if (scan_for_keys(h, 1, &budget, &found)) return found;  // (the home folder itself, one level: AppData etc. are huge)
+    }
+    return "";
+}
+
 // A picked .nsp (the game package): extracted in place by the extractor (tools/extract.py, shipped as the
 // skywardextract helper, or the source checkout's python) straight into extracted/ -- exefs/ + romfs.bin, the
 // layout runtime/services/fs.c serves. Base game only: an update package needs hactool's BKTR merge. Needs
@@ -485,12 +545,20 @@ static bool extract_nsp(const std::string &nsp) {
     size_t slash = nsp.find_last_of("/\\");
     std::string dir = slash == std::string::npos ? std::string(".") : nsp.substr(0, slash);
     std::string keys;
-    for (const std::string k : {dir + "/prod.keys", dir + "/../prod.keys", g_root + "/prod.keys"})
-        if (file_exists(k)) { keys = k; break; }
+    pthread_mutex_lock(&g_lock);
+    keys = g_keys_pick;
+    pthread_mutex_unlock(&g_lock);
+    if (!keys.empty() && !looks_like_prod_keys(keys)) {  // (chosen, then moved or emptied)
+        fprintf(stderr, "[launcher] chosen prod.keys is gone or invalid: %s\n", keys.c_str());
+        keys.clear();
+    }
+    if (keys.empty()) keys = find_prod_keys(dir);
     if (keys.empty()) {
-        set_job("No prod.keys found", true,
-                "SkywardRecomp needs the console's prod.keys to open a .nsp - put prod.keys next to the game package "
-                "and choose the folder again.");
+        fprintf(stderr, "[launcher] no prod.keys found (looked next to %s, in the data folder, in yuzu/Eden/Ryujinx/Lockpick folders and under the home folder)\n", nsp.c_str());
+        set_job("The .nsp can't be opened without prod.keys", true,
+                "A .nsp is encrypted with your Switch's own keys, kept in a file named prod.keys, and SkywardRecomp found none "
+                "on this PC. Dump it from your own console with Lockpick_RCM, then choose it in the \"prod.keys (for a .nsp)\" row of this window, "
+                "or put it in the same folder as the .nsp. Not needed if you have the extracted exefs and romfs folders.");
         return false;
     }
     char helper[1100], py[1100], script[1100];
@@ -518,7 +586,8 @@ static bool extract_nsp(const std::string &nsp) {
     game_files_changed();
     mkdir(g_root.c_str(), 0755);
     std::string log = "extract.log";  // (data-root level, outside extracted/ so extract.py's rmtree of a stale base_out can't hit the open log file)
-    set_job("Extracting the game from the .nsp (this can take several minutes)");
+    set_job("Extracting the game from " + nsp.substr(slash == std::string::npos ? 0 : slash + 1) +
+            " (this can take several minutes)");
     g_total = 0, g_done = 0;
     fprintf(stderr, "[launcher] extracting %s (keys: %s)\n", nsp.c_str(), keys.c_str());
     PlatProc p = plat_spawn(argv, log.c_str(), false);
@@ -527,9 +596,19 @@ static bool extract_nsp(const std::string &nsp) {
     if (r != 0 || !file_exists(g_root + "/exefs/main") || !file_exists(g_root + "/romfs.bin")) {
         char why[256];
         last_log_line(log.c_str(), why, sizeof why);
+        fprintf(stderr, "[launcher] extractor exit %d, last line: %s (see %s/extract.log)\n", r, why, g_root.c_str());
+        if (strstr(why, "No module named")) {  // (a source checkout run with a python that lacks the extractor's packages)
+            set_job("The extractor's Python packages are missing", true,
+                    std::string(why) + ". This copy of SkywardRecomp runs tools/extract.py with the system's Python, which needs "
+                    "the \"cryptography\" package. Install it with: python -m pip install cryptography. "
+                    "(The released installer / AppImage bundles its own extractor and doesn't need Python.)");
+            return false;
+        }
         set_job("The game package didn't extract", true,
-                why[0] ? std::string(why) + " If it keeps happening, report it on GitHub."
-                       : std::string("Make sure the .nsp is the base game (not an update) and prod.keys is valid."));
+                std::string(why[0] ? why : "The extractor stopped without saying why.") +
+                " The .nsp was " + nsp + ", opened with " + keys + ". Is the .nsp the base game (not an update or DLC), "
+                "and is prod.keys from a console whose firmware is as new as the game's? The full log is extract.log in the "
+                "data folder; if it keeps happening, report it on GitHub with that file.");
         return false;
     }
     return true;
@@ -544,7 +623,7 @@ static void *extract_thread(void *) {
     g_cancel_build = false;
     g_done = 0, g_total = 0, g_phase_base = 0, g_build_frac = -1, g_copy_skipped = false;
     game_files_changed();
-    std::string exefs, romfs, nsp;
+    std::string exefs, romfs, nsp, found_text;
     bool unusable = false;  // (game packages rather than its files)
     if (src.empty() && check_copied_files(g_root).empty()) {  // copied already (an update needs new game code)
         g_copy_skipped = true;
@@ -552,8 +631,16 @@ static void *extract_thread(void *) {
         goto check;
     }
     set_job("Looking for the game files...");
-    find_game(src, 0, exefs, romfs, nsp, unusable);
-    if ((exefs.empty() || romfs.empty()) && nsp.empty()) { set_failure(unusable ? FAIL_UNUSABLE : FAIL_NOT_FOUND); goto done; }
+    {
+        GameFind *f = new GameFind;
+        find_game(src, *f, &found_text);
+        exefs = f->exefs, romfs = f->romfs, nsp = f->nsp, unusable = f->unusable;
+        delete f;
+    }
+    if ((exefs.empty() || romfs.empty()) && nsp.empty()) {
+        set_failure(unusable ? FAIL_UNUSABLE : FAIL_NOT_FOUND, -1, found_text.c_str());
+        goto done;
+    }
     if (!nsp.empty() && (exefs.empty() || romfs.empty())) {  // a game package: extract it in place
         if (!extract_nsp(nsp)) goto done;
         if (!build_id_ok(g_root + "/exefs")) { set_failure(FAIL_VERSION); goto done; }
@@ -607,6 +694,7 @@ check:
         if (why.empty() && files_changed(g_root)) set_job(CHANGED_HEAD, true, CHANGED_HINT);  // (playable all the same)
         else if (why.empty()) set_job("Game files ready.");
         else if (why.find("version") != std::string::npos) set_failure(FAIL_VERSION);
+        else if (why == "Game code not built yet") set_failure(FAIL_BUILD);  // (not missing files)
         else set_failure(FAIL_MISSING, g_romfs_count, NULL, romfs_want(g_root));
     }
 done:
@@ -640,6 +728,22 @@ static void SDLCALL picked(void *, const char *const *files, int) {
     pthread_mutex_unlock(&g_lock);
 }
 
+// A chosen prod.keys: checked now, so a wrong file is refused here instead of failing the extraction later.
+static void SDLCALL picked_keys(void *, const char *const *files, int) {
+    if (!files) { set_job(PICKER_FAILED, true, picker_hint("file")); return; }
+    if (!files[0]) return;
+    if (!looks_like_prod_keys(files[0])) {
+        set_job("That file isn't a prod.keys", true,
+                "prod.keys is a text file of lines like \"header_key = ...\", dumped from your own console with Lockpick_RCM. "
+                "Choose that file.");
+        return;
+    }
+    pthread_mutex_lock(&g_lock);
+    g_keys_pick = files[0];
+    if (g_job_failed && g_job.find("prod.keys") != std::string::npos) g_job.clear(), g_job_hint.clear(), g_job_failed = false;
+    pthread_mutex_unlock(&g_lock);
+}
+
 // ------------------------------------------------------------------ OneDrive (Windows)
 // A data root inside a OneDrive folder uploads every game file to the player's OneDrive: a warning on the start screen
 // with roughly how much, and Choose another folder (the Data folder's Change...: move the data there) or Keep here
@@ -659,9 +763,10 @@ static void *onedrive_size_thread(void *arg) {
     double gb;
     if (src->empty()) gb = rt_tree_size(rt_data_root()) / 1e9;
     else {
-        std::string exefs, romfs, nsp;
-        bool unusable = false;
-        if (*src != "\x01") find_game(*src, 0, exefs, romfs, nsp, unusable);
+        GameFind *f = new GameFind;
+        if (*src != "\x01") game_find(src->c_str(), exefs_supported, f);
+        std::string exefs = f->exefs, romfs = f->romfs, nsp = f->nsp;
+        delete f;
         if (!nsp.empty()) {  // (a game package: the extraction writes about its own size)
             struct stat st;
             gb = (stat(nsp.c_str(), &st) == 0 ? (double)st.st_size * 1.05 / 1e9 : GAME_FILES_GB) + SETUP_ADDS_GB;
@@ -793,16 +898,22 @@ static void remove_fonts() {
 #ifdef __APPLE__
 static id<MTLTexture> g_bg;
 #define BG_TEXID ((ImTextureID)(__bridge void *)g_bg)
+#define ART_TEXID ((ImTextureID)(__bridge void *)g_art)
 typedef id<MTLDevice> GpuDevice;
 #else
 static uint64_t g_bg;  // ImGui texture id (Vulkan descriptor set)
 #define BG_TEXID ((ImTextureID)g_bg)
+#define ART_TEXID ((ImTextureID)g_art)
 typedef void *GpuDevice;
 #endif
 static int g_bg_w, g_bg_h;
+// The user's own picture (launcher.jpg / launcher.png in the data folder; nothing is bundled): behind the start screen instead
+// of the title movie frame, and behind the setup page.
+static decltype(g_bg) g_art;
+static int g_art_w, g_art_h;
 
-static void load_background(GpuDevice dev) {
-    std::string path = g_root + "/romfs/region_common/movie/title.webm";
+// The first frame at or after `at` seconds of a video, or a picture (at <= 0), as a texture.
+static void load_frame(GpuDevice dev, const std::string &path, double at, decltype(g_bg) &tex, int &tw, int &th) {
     AVFormatContext *fmt = NULL;
     if (avformat_open_input(&fmt, path.c_str(), NULL, NULL) < 0) return;
     int si = av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
@@ -814,13 +925,13 @@ static void load_background(GpuDevice dev) {
         if (codec && avcodec_open2(cc, codec, NULL) == 0) {
             AVPacket *pkt = av_packet_alloc();
             AVFrame *fr = av_frame_alloc();
-            int64_t want = (int64_t)(6.0 / av_q2d(st->time_base));  // a few seconds in: the island, not black
-            av_seek_frame(fmt, si, want, AVSEEK_FLAG_BACKWARD);
+            int64_t want = (int64_t)(at / av_q2d(st->time_base));
+            if (at > 0) av_seek_frame(fmt, si, want, AVSEEK_FLAG_BACKWARD);
             bool got = false;
             while (!got && av_read_frame(fmt, pkt) >= 0) {
                 if (pkt->stream_index == si && avcodec_send_packet(cc, pkt) == 0)
                     while (avcodec_receive_frame(cc, fr) == 0)
-                        if (fr->best_effort_timestamp >= want) { got = true; break; }
+                        if (at <= 0 || fr->best_effort_timestamp >= want) { got = true; break; }
                 av_packet_unref(pkt);
             }
             if (got) {
@@ -834,13 +945,13 @@ static void load_background(GpuDevice dev) {
 #ifdef __APPLE__
                 MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
                                                                                               width:w height:h mipmapped:NO];
-                g_bg = [dev newTextureWithDescriptor:td];
-                [g_bg replaceRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:0 withBytes:rgba.data() bytesPerRow:w * 4];
+                tex = [dev newTextureWithDescriptor:td];
+                [tex replaceRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:0 withBytes:rgba.data() bytesPerRow:w * 4];
 #else
                 (void)dev;
-                g_bg = vk_imgui_texture_rgba(rgba.data(), w, h);
+                tex = vk_imgui_texture_rgba(rgba.data(), w, h);
 #endif
-                g_bg_w = w, g_bg_h = h;
+                tw = w, th = h;
             }
             av_frame_free(&fr);
             av_packet_free(&pkt);
@@ -848,6 +959,18 @@ static void load_background(GpuDevice dev) {
         avcodec_free_context(&cc);
     }
     avformat_close_input(&fmt);
+}
+
+static void load_background(GpuDevice dev) {
+    load_frame(dev, g_root + "/romfs/region_common/movie/title.webm", 6.0, g_bg, g_bg_w, g_bg_h);  // (a few seconds in: the island, not black)
+}
+
+static void load_art(GpuDevice dev) {
+    for (const char *n : {"/launcher.jpg", "/launcher.png"}) {
+        std::string p = std::string(rt_data_root()) + n;
+        if (file_exists(p)) load_frame(dev, p, 0, g_art, g_art_w, g_art_h);
+        if (g_art) return;
+    }
 }
 
 // ------------------------------------------------------------------ seeds
@@ -1579,6 +1702,7 @@ extern "C" void launcher_run(const char *root) {
         fprintf(stderr, "[launcher] removed the old game data image (romfs.bin)\n");
     std::string status = check_game_files(g_root);
     if (check_copied_files(g_root).empty()) load_background(dev);  // (also behind an update of the game code)
+    load_art(dev);
     std::vector<std::string> seeds = list_seeds();
     std::vector<std::string> choices = {"Vanilla"};
     choices.insert(choices.end(), seeds.begin(), seeds.end());
@@ -1633,9 +1757,11 @@ extern "C" void launcher_run(const char *root) {
     if (const char *t = getenv("LARECOMP_LAUNCHER_EXTRACT")) {  // (test) <folder>: set the game files up, log, exit
         g_src = t;
         g_busy = true;
-        extract_thread(NULL);
-        fprintf(stderr, "[launcher] setup: %s -> %s\n", g_job.c_str(), check_game_files(g_root).empty() ? "READY" : "NOT READY");
-        exit(0);
+        g_exit_after_setup = true;  // (the setup runs on a thread: the window draws its progress meanwhile, not a black frame)
+        page = SETUP;
+        pthread_t th;
+        pthread_create(&th, NULL, extract_thread, NULL);
+        pthread_detach(th);
     }
     if (const char *t = getenv("LARECOMP_LAUNCHER_SETUP")) {  // (test) <folder>: Set up started on the start screen
         g_src = t;
@@ -1648,7 +1774,7 @@ extern "C" void launcher_run(const char *root) {
     // An update: the game files are there and only the game code is out of date - rebuilt at once, by itself (only
     // the pieces that changed: runtime/gamebuild.c), with the progress bar; then the start screen as usual. A failure
     // stays on the setup page with what went wrong.
-    if (!status.empty() && check_copied_files(g_root).empty() && gamebuild_available() &&
+    if (!g_busy && !status.empty() && check_copied_files(g_root).empty() && gamebuild_available() &&
         !getenv("LARECOMP_LAUNCHER_DELETE")) {
         fprintf(stderr, "[launcher] game code out of date: updating it\n");
         g_src.clear();
@@ -1736,6 +1862,10 @@ extern "C" void launcher_run(const char *root) {
         if (was_busy && !busy) {
             g_build_cache_changed = true;
             status = check_game_files(g_root);
+            if (g_exit_after_setup) {
+                fprintf(stderr, "[launcher] setup: %s -> %s\n", g_job.c_str(), status.empty() ? "READY" : "NOT READY");
+                exit(0);
+            }
             if (status.empty()) { if (!g_bg) load_background(dev); page = MAIN; }
             if (status.empty() && ap && getenv("LARECOMP_LAUNCHER_PREPARE")) play = true;
             g_auto_update = false;
@@ -1787,12 +1917,13 @@ extern "C" void launcher_run(const char *root) {
             // an update by itself: only its bar, on the start screen's background (gray without it; a failure or
             // Cancel then shows the Game Files page)
             const bool update_only = g_auto_update && busy;
-            if (g_bg && (status.empty() || update_only)) {  // cover the window, keep the aspect
-                float ia = (float)g_bg_w / g_bg_h, wa = ds.x / ds.y;
+            const bool art_on = g_art && (status.empty() || update_only || page == SETUP);
+            if (art_on || (g_bg && (status.empty() || update_only))) {  // cover the window, keep the aspect
+                float ia = art_on ? (float)g_art_w / g_art_h : (float)g_bg_w / g_bg_h, wa = ds.x / ds.y;
                 ImVec2 uv0(0, 0), uv1(1, 1);
                 if (wa > ia) { float v = ia / wa; uv0.y = (1 - v) / 2; uv1.y = 1 - uv0.y; }
                 else { float u = wa / ia; uv0.x = (1 - u) / 2; uv1.x = 1 - uv0.x; }
-                bg->AddImage(BG_TEXID, ImVec2(0, 0), ds, uv0, uv1);
+                bg->AddImage(art_on ? ART_TEXID : BG_TEXID, ImVec2(0, 0), ds, uv0, uv1);
             } else if (update_only) {
                 bg->AddRectFilled(ImVec2(0, 0), ds, IM_COL32(40, 40, 40, 255));
             } else {
@@ -2075,6 +2206,22 @@ extern "C" void launcher_run(const char *root) {
                         SDL_ShowOpenFolderDialog(picked, NULL, win, NULL, false);
                     check_left_of_value(src_v);
                     first_row();
+                    {  // (only a .nsp needs it; found by itself when it's next to the .nsp or where yuzu / Ryujinx keep it)
+                        pthread_mutex_lock(&g_lock);
+                        std::string kp = g_keys_pick;
+                        pthread_mutex_unlock(&g_lock);
+                        std::string kd = "Only needed when you chose a .nsp package: the prod.keys file (your Switch's encryption "
+                                         "keys, dumped from your own console with Lockpick_RCM) that opens it. SkywardRecomp "
+                                         "looks for it by itself next to the .nsp and where yuzu / Eden / Ryujinx keep it; "
+                                         "choose it here if that didn't find it.";
+                        if (!kp.empty()) kd += "\n\nChosen: " + kp;
+                        static const SDL_DialogFileFilter keys_f[] = {{"Switch keys", "keys"}, {"All files", "*"}};
+                        std::string kv = kp.empty() ? "Choose..." : "Selected";
+                        if (busy) opt_disable_next();
+                        if (opt_action("prod.keys (for a .nsp)", kv.c_str(), kd.c_str(), true))
+                            SDL_ShowOpenFileDialog(picked_keys, NULL, win, keys_f, 2, NULL, false);
+                        check_left_of_value(kv);
+                    }
                     opt_section("Set up");
                     if (busy || (src.empty() && !check_copied_files(g_root).empty())) opt_disable_next();
                     bool resume = !busy && src.empty() && resumable_build();

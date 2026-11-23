@@ -49,7 +49,7 @@ for t in $line; do
         lld-link) ;;
         -OUT:*|-PDB:*|-PDBALTPATH:*|-DEBUG|-IMPLIB:*) ;;  # (gamebuild.c: -OUT; no debug info, no import library)
         -*) echo "$t" >> $O/rt/link.rsp ;;
-        *ubsan_rt*) ;;  # (the sanitizer runtime of an unoptimized link: the game code is built with -O1)
+        *ubsan_rt*) ;;  # (the sanitizer runtime: the game code is built with -fno-sanitize=undefined (zig cc enables UBSan at -O0))
         *.lib|*.obj)
             if [[ $t == *cache* ]]; then  # (paths relative to the folder the probe linked in)
                 p=$(cygpath -u "$t"); [[ $p == /* ]] || p=$W/$p

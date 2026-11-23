@@ -874,6 +874,15 @@ RT_ON_RESET(movie_reset) {
 }
 
 static void dec_get_counts(Cpu *c) {  // slot 14: (int*, int64*) queried after Configure
+    Decoder *d = self_state(c);
+    if (!d->video) {
+        // Audio: (int *bufferSize, int *alignment). The game memaligns its PCM staging buffer with these and derives
+        // its resampler ring size from the size; 0 makes the ring empty and its copy loop never advance.
+        *(int32_t *)(uintptr_t)c->x[1] = (int32_t)d->out_cap;
+        *(int32_t *)(uintptr_t)c->x[2] = 0x1000;
+        c->x[0] = 0;
+        return;
+    }
     if (c->x[1]) *(int32_t *)(uintptr_t)c->x[1] = 0;
     if (c->x[2]) *(int64_t *)(uintptr_t)c->x[2] = 0;
     c->x[0] = 0;
