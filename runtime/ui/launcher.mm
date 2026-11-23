@@ -311,7 +311,10 @@ static void set_job(const std::string &s, bool failed = false, const std::string
 }
 
 // (the not-found failure's hint, and the caption over the game files page's example folder)
-static const char *const PICK_FOLDER_HINT = "Choose the folder that has the game's exefs and romfs folders (or the .nsp package) in it.";
+static const char *const PICK_FOLDER_HINT =
+    "Choose the folder that has the game's exefs and romfs folders (or the .nsp package) in it.\n\n"
+    "Using a .nsp? Put a file named prod.keys (your Switch's encryption keys) in the same folder as the .nsp. "
+    "You can dump it from your own console with Lockpick_RCM.";
 
 // Setup failures: a short headline and what to do next (also LARECOMP_LAUNCHER_SHOT=<f>:fail<1-6>, screenshots)
 enum { FAIL_NOT_FOUND = 1, FAIL_UNUSABLE, FAIL_COPY, FAIL_VERSION, FAIL_MISSING, FAIL_BUILD };
@@ -477,6 +480,70 @@ static void last_log_line(const char *path, char *out, size_t n) {
     if (best) snprintf(out, n, "%s", best);
 }
 
+// ------------------------------------------------------------------ prod.keys search
+// A real prod.keys is a text file of "name = hex" lines that has header_key in it; this rejects empty or unrelated files of that name.
+static bool looks_like_prod_keys(const std::string &p) {
+    FILE *f = fopen(p.c_str(), "rb");
+    if (!f) return false;
+    static char buf[1 << 20];  // (a real one is ~20 KB; only the first MB is read)
+    size_t n = fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    buf[n] = 0;
+    return strstr(buf, "header_key") != NULL;
+}
+
+// Walks dir (depth levels down) for a prod.keys, giving up after *budget directory reads so a huge drive can't stall the launcher.
+static bool scan_for_keys(const std::string &dir, int depth, int *budget, std::string *out) {
+    if (*budget <= 0) return false;
+    DIR *d = opendir(dir.c_str());
+    if (!d) return false;
+    --*budget;
+    std::vector<std::string> subs;
+    while (struct dirent *e = readdir(d)) {
+        if (e->d_name[0] == '.') continue;
+        std::string p = dir + "/" + e->d_name;
+        if (strcasecmp(e->d_name, "prod.keys") == 0 && looks_like_prod_keys(p)) { *out = p; closedir(d); return true; }
+        if (depth > 0) subs.push_back(p);
+    }
+    closedir(d);
+    for (const std::string &s : subs) {
+        struct stat st;
+        if (stat(s.c_str(), &st) == 0 && S_ISDIR(st.st_mode) && scan_for_keys(s, depth - 1, budget, out)) return true;
+    }
+    return false;
+}
+
+// Finds the user's own prod.keys on this PC (nothing is bundled): first the exact places it is normally kept (next to the
+// package, the data root, Lockpick_RCM's and the Switch emulators' folders), then a bounded search of the user's folders.
+// Returns "" if none is found. shortcut: the search stops after ~4000 directory reads and 4 levels, so a key buried deeper
+// or on another drive is missed; the user then puts it next to the .nsp.
+static std::string find_prod_keys(const std::string &nsp_dir) {
+    const char *home = getenv("HOME"), *prof = getenv("USERPROFILE"), *appdata = getenv("APPDATA");
+    std::vector<std::string> cand = {nsp_dir + "/prod.keys", nsp_dir + "/../prod.keys", g_root + "/prod.keys"};
+    std::vector<std::string> homes;
+    for (const char *h : {home, prof}) if (h && std::find(homes.begin(), homes.end(), h) == homes.end()) homes.push_back(h);
+    for (const std::string &h : homes) {
+        cand.push_back(h + "/.switch/prod.keys");
+        for (const char *s : {"/.local/share/yuzu/keys", "/.local/share/eden/keys", "/.config/Ryujinx/system",
+                              "/Library/Application Support/Ryujinx/system"})
+            cand.push_back(h + s + std::string("/prod.keys"));
+    }
+    if (appdata) for (const char *s : {"/yuzu/keys", "/eden/keys", "/suyu/keys", "/Ryujinx/system"})
+        cand.push_back(std::string(appdata) + s + "/prod.keys");
+    for (const std::string &k : cand)
+        if (file_exists(k) && looks_like_prod_keys(k)) return k;
+
+    int budget = 4000;
+    std::string found;
+    if (scan_for_keys(nsp_dir, 4, &budget, &found)) return found;
+    for (const std::string &h : homes) {
+        for (const char *s : {"/Downloads", "/Desktop", "/Documents", "/Switch", "/Games"})
+            if (scan_for_keys(h + s, 4, &budget, &found)) return found;
+        if (scan_for_keys(h, 1, &budget, &found)) return found;  // (the home folder itself, one level: AppData etc. are huge)
+    }
+    return "";
+}
+
 // A picked .nsp (the game package): extracted in place by the extractor (tools/extract.py, shipped as the
 // skywardextract helper, or the source checkout's python) straight into extracted/ -- exefs/ + romfs.bin, the
 // layout runtime/services/fs.c serves. Base game only: an update package needs hactool's BKTR merge. Needs
@@ -484,13 +551,12 @@ static void last_log_line(const char *path, char *out, size_t n) {
 static bool extract_nsp(const std::string &nsp) {
     size_t slash = nsp.find_last_of("/\\");
     std::string dir = slash == std::string::npos ? std::string(".") : nsp.substr(0, slash);
-    std::string keys;
-    for (const std::string k : {dir + "/prod.keys", dir + "/../prod.keys", g_root + "/prod.keys"})
-        if (file_exists(k)) { keys = k; break; }
+    std::string keys = find_prod_keys(dir);
     if (keys.empty()) {
-        set_job("No prod.keys found", true,
-                "SkywardRecomp needs the console's prod.keys to open a .nsp - put prod.keys next to the game package "
-                "and choose the folder again.");
+        set_job("A key file is missing: prod.keys", true,
+                "A .nsp is encrypted, so SkywardRecomp needs a file named prod.keys (your Switch's encryption keys) to open it. "
+                "Dump it from your own console with Lockpick_RCM, put it in the same folder as the .nsp (or keep it where "
+                "yuzu/Ryujinx look for it), then choose the folder again. (Not needed if you already have the extracted exefs and romfs folders.)");
         return false;
     }
     char helper[1100], py[1100], script[1100];
@@ -607,6 +673,7 @@ check:
         if (why.empty() && files_changed(g_root)) set_job(CHANGED_HEAD, true, CHANGED_HINT);  // (playable all the same)
         else if (why.empty()) set_job("Game files ready.");
         else if (why.find("version") != std::string::npos) set_failure(FAIL_VERSION);
+        else if (why == "Game code not built yet") set_failure(FAIL_BUILD);  // (not missing files)
         else set_failure(FAIL_MISSING, g_romfs_count, NULL, romfs_want(g_root));
     }
 done:
