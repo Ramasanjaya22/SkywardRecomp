@@ -209,6 +209,7 @@ jobs:
     needs: [check, tests]
     if: needs.check.outputs.skip != 'true'
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45  # a cold build is ~15 min; a hang should fail, not run for 6 h
     strategy:
       fail-fast: false
       matrix:
