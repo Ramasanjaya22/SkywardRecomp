@@ -1,0 +1,331 @@
+# SkywardRecomp's automatic release: push a tag v* (or beta_*) and this builds the Windows x64 zip and the Linux x86_64 /
+# aarch64 AppImages, tests and smoke-checks them, and PUBLISHES them on a GitHub release with a SHA256SUMS file and notes
+# (the merged pull requests since the previous release). Nothing is published unless every test, build and package
+# check passed. None of the files holds game code or game files (the start screen builds the game code from the
+# player's own game files); every build checks that before its upload. docs/RELEASING.md: how to cut a release.
+#
+# Ways to start it (the tag must equal LARECOMP_VERSION in runtime/ui/launcher.mm at the built commit - the one place
+# the version is set; the file names and the app's own version string come from it):
+#   - git tag v0.8.1 && git push origin v0.8.1                                    (the normal way)
+#   - dry run from a branch (a dispatch needs this file on main): git tag ci-test-1 && git push origin ci-test-1 -> a prerelease
+#   - Actions -> Release (auto) -> Run workflow, tag (+ ref: branch or commit; default: the chosen branch's head);
+#     also the way to re-run a release whose run failed (a re-run of the same tag replaces its files and notes)
+#   - a release published by hand on GitHub: the files are added to it, its own notes stay on top
+# A real release (not test-* / ci-test-*) must be built from a commit on main. Tags test-* / ci-test-* make a prerelease
+# (ci-test-*: may differ from LARECOMP_VERSION, a dry run of this file). The macOS .dmg needs the self-hosted VM, so it
+# stays in release.yml, by hand.
+name: Release (auto)
+on:
+  release:
+    types: [published]
+  push:
+    tags: ['v*', 'beta_*', 'ci-test-*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (= LARECOMP_VERSION at ref; ci-test-*: dry run)'
+        required: true
+      ref:
+        description: 'Branch or commit to build (default: the chosen branch head)'
+        required: false
+        default: ''
+permissions:
+  contents: read
+concurrency:  # (one run per tag at a time)
+  group: release-auto-${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.v.outputs.sha }}
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      skip: ${{ steps.v.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0  # (is the commit on main?)
+      # (the inputs go through env, never into the script text)
+      - name: Tag = LARECOMP_VERSION
+        id: v
+        env:
+          TAG: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
+          EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # a release that already has its files (made by a tag-push run, or a draft of release.yml, then published) is left alone;
+          # read live, since a run queued behind the tag-push run of the same tag must see that one's files
+          if [ "$EVENT" = release ] && gh release view "$TAG" --json assets -q '.assets[].name' | grep -q -e '-windows\.zip$'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "$TAG already has a Windows zip"; exit 0
+          fi
+          [[ $TAG =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::tag '$TAG': letters, digits, . _ - only"; exit 1; }
+          SHA=$(git rev-parse HEAD)
+          VERSION=$(sed -n 's/^#define LARECOMP_VERSION "\(.*\)"/\1/p' runtime/ui/launcher.mm)
+          if [ "$VERSION" != "$TAG" ]; then
+            if [[ $TAG == ci-test-* ]]; then
+              echo "::warning::dry run: tag $TAG, LARECOMP_VERSION $VERSION (the files are named after $VERSION)"
+            else
+              echo "::error::tag $TAG, but LARECOMP_VERSION at $SHA is '$VERSION': set it in runtime/ui/launcher.mm, commit it to main, and tag that commit"
+              exit 1
+            fi
+          fi
+          # an existing tag must already point at this commit
+          if TAGGED=$(gh api "repos/$GITHUB_REPOSITORY/commits/refs/tags/$TAG" -q .sha 2>/dev/null); then
+            [ "$TAGGED" = "$SHA" ] || { echo "::error::tag $TAG exists at $TAGGED, not at $SHA"; exit 1; }
+          fi
+          # a real release is built from main (its history holds every fix), not from a side branch
+          if [[ $TAG != test-* && $TAG != ci-test-* ]] && ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::$SHA is not on main: merge it first, then tag the merge"; exit 1
+          fi
+          # the UBSan fix (8a58be68): without it the game code fails to link on the player's PC
+          grep -q -e '-fno-sanitize=undefined' Makefile || { echo "::error::Makefile GENFLAGS lacks -fno-sanitize=undefined (commit 8a58be68)"; exit 1; }
+          { echo "sha=$SHA"; echo "version=$VERSION"; echo "tag=$TAG"; } >> "$GITHUB_OUTPUT"
+          echo "$TAG: $SHA, LARECOMP_VERSION $VERSION"
+
+  # The tests that need no game files or GPU and cover what a release breaks on: game detection, the build scheduler and
+  # its resume, the build cache, the delete guard. The same environment as ci.yml's Linux job (the Windows ones run in
+  # the windows job, where the junction cases are real).
+  tests:
+    needs: check
+    if: needs.check.outputs.skip != 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/ramasanjaya22/skywardrecomp-ci:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+      - name: Game-file detection
+        run: python3 tools/test_game_find.py
+      - name: Build scheduler resume
+        run: python3 tools/test_gamebuild_resume.py
+      - name: Build cache
+        run: python3 tools/test_build_cache.py
+      - name: Game-files delete guard
+        run: DEPS="/opt/sdl3" python3 tools/test_delete_guard.py
+      - name: Update (1.0.1) RomFS merge
+        run: |
+          python3 -m venv build/ci-venv
+          build/ci-venv/bin/python -m pip install -q cryptography
+          build/ci-venv/bin/python tools/test_extract_update.py
+
+  windows:
+    needs: [check, tests]
+    if: needs.check.outputs.skip != 'true'
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: LF line endings, as tools/setup_windows.ps1 sets for clones
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+      # the generator helpers are frozen from a python.org-style CPython 3.12 (MSYS2's Python has no oead wheel)
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: '3.12'
+      # MSYS2 UCRT64 as tools/setup_windows.ps1 sets it up (minus the debugger / validation layers; no FFmpeg:
+      # the release links make deps-windows' LGPL one), nasm for FFmpeg's VP9 assembly, zip / unzip for the
+      # release zip and the compiler download; python for the tests, as ci.yml's Windows job has it
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: make git curl tar xz diffutils zip unzip
+          pacboy: clang:p lld:p binutils:p python:p sdl3:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
+            vulkan-memory-allocator:p nasm:p
+      - name: Tests on Windows (junctions, paths)
+        run: |
+          python3 tools/test_game_find.py
+          python3 tools/test_build_cache.py
+          python3 tools/test_gamebuild_resume.py
+          python3 tools/test_delete_guard.py
+      - name: Deps cache
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/deps-win
+            !build/deps-win/src
+          key: deps-${{ runner.os }}-${{ hashFiles('tools/build_deps_windows.sh') }}
+      - name: Deps (LGPL FFmpeg)
+        run: make deps-windows
+      - uses: actions/cache/save@v4
+        if: steps.deps.outputs.cache-hit != 'true'
+        with:
+          path: |
+            build/deps-win
+            !build/deps-win/src
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      # the game code generator and the .nsp extractor (the start screen's setup); the inherited Link's Awakening
+      # seed generator (make rando-helper) isn't built: its randomizer sources aren't in this repository
+      - name: Generator helpers
+        run: |
+          PY=$(cygpath -u '${{ steps.py.outputs.python-path }}')
+          make gen-helper RANDO_PY="$PY" && make extract-helper RANDO_PY="$PY"
+      - name: Compiler for the player's machine
+        run: tools/fetch_zig.sh
+      # (make dist: the exe holds no game code, no GPL codec libraries)
+      - name: Release zip
+        run: make -j"$(nproc)" dist
+      - name: No game files or generated C
+        run: |
+          D="build/dist/SkywardRecomp"
+          bad=$(find "$D" -type d \( -name extracted -o -name 'generated*' -o -name exefs -o -name romfs \);
+                find "$D" -name '*.c' ! -path '*/zig/lib/*' ! -path '*/gamelib-src/gamelib_entry.c'; find "$D" -name 'skywardgame*')
+          [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
+          ls -la build/dist
+      # the zip itself, unpacked: its generator starts, its compiler builds the game code entry
+      - name: Package smoke check
+        run: |
+          mkdir build/smoke-win
+          unzip -q build/dist/SkywardRecomp-*-windows.zip -d build/smoke-win
+          tools/smoke_package.sh build/smoke-win/SkywardRecomp
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: build/dist/*.zip
+          if-no-files-found: error
+          compression-level: 0  # (already compressed)
+
+  # Each arch on a runner of its own arch: tools/linux/appimage.sh then builds everything natively in one container
+  # (as release.yml; there the macOS .dmg joins them by hand).
+  linux:
+    needs: [check, tests]
+    if: needs.check.outputs.skip != 'true'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+      # build_deps.sh skips each part whose output exists (deps-build/: the build trees, not needed for that)
+      - name: Deps cache
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: build/linux/${{ matrix.arch }}/deps
+          key: deps-linux-${{ matrix.arch }}-${{ hashFiles('tools/linux/build_deps.sh', 'tools/linux/Containerfile') }}
+      - name: AppImage
+        run: make appimage ARCH=${{ matrix.arch }}
+      # saved once complete (shaderc: build_deps.sh's last part), even when a later part of the build fails
+      - uses: actions/cache/save@v4
+        if: always() && steps.deps.outputs.cache-hit != 'true' && hashFiles(format('build/linux/{0}/deps/lib/libshaderc_shared.so*', matrix.arch)) != ''
+        with:
+          path: build/linux/${{ matrix.arch }}/deps
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      # package.sh checked the executable; here the whole AppDir that was packed (readelf: any arch's ELF)
+      - name: No game code
+        run: |
+          A=build/linux/${{ matrix.arch }}/AppDir
+          bad=$(find "$A" -type d \( -name extracted -o -name 'generated*' -o -name exefs -o -name romfs \);
+                find "$A" -name '*.c' ! -path '*/zig/lib/*' ! -path '*/gamelib-src/gamelib_entry.c'; find "$A" -name 'skywardgame*')
+          [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
+          find "$A" -type f \( -perm /111 -o -name '*.so*' \) | while read -r f; do
+            if readelf -Ws --wide "$f" 2>/dev/null | grep ' f_70' >/dev/null; then echo "::error::game code in $f"; exit 1; fi
+          done
+          ls -la build/dist
+      # the AppImage itself, unpacked (no FUSE needed): its generator starts, its compiler builds the game code entry.
+      # (The full run with the game files, tools/linux/smoketest.sh, needs them: the maintainer's machine, make smoketest)
+      - name: Package smoke check
+        run: |
+          mkdir build/smoke-linux
+          cp build/dist/*.AppImage build/smoke-linux/app.AppImage
+          chmod +x build/smoke-linux/app.AppImage
+          (cd build/smoke-linux && ./app.AppImage --appimage-extract >/dev/null)
+          tools/smoke_package.sh build/smoke-linux/squashfs-root/usr/bin ${{ matrix.arch }}-linux-gnu
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: build/dist/*.AppImage
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    needs: [check, tests, windows, linux]
+    if: needs.check.outputs.skip != 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write  # (only here: the release)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+          fetch-depth: 0  # (the fallback notes: the commits since the previous tag)
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish release
+        env:
+          TAG: ${{ needs.check.outputs.tag }}
+          SHA: ${{ needs.check.outputs.sha }}
+          EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cd dist
+          ls -la
+          [ "$(ls *-windows.zip | wc -l)" = 1 ] && [ "$(ls *-linux-x86_64.AppImage | wc -l)" = 1 ] &&
+            [ "$(ls *-linux-aarch64.AppImage | wc -l)" = 1 ] || { echo "::error::expected the Windows zip and both AppImages"; exit 1; }
+          sha256sum *.zip *.AppImage > SHA256SUMS
+          cat SHA256SUMS
+          # the notes: what was merged since the previous release (GitHub's own, from the pull requests), else the commits
+          if ! CHANGES=$(gh api -X POST "repos/$GH_REPO/releases/generate-notes" -f tag_name="$TAG" -f target_commitish="$SHA" --jq .body); then
+            PREV=$(git describe --tags --abbrev=0 "$SHA^" 2>/dev/null || true)
+            CHANGES=$(echo "## What's Changed"; git log --pretty='* %s' ${PREV:+"$PREV..$SHA"} | head -100)
+          fi
+          {
+            echo "## Download"
+            echo
+            echo "* **Windows x64:** \`$(ls *-windows.zip)\`. Unzip it anywhere you can write to and run \`SkywardRecomp/skywardrecomp.exe\`."
+            echo "* **Linux x86_64 / aarch64 (experimental):** \`*-linux-<arch>.AppImage\`. \`chmod +x\` it and run it."
+            echo
+            echo "Needs a GPU with Vulkan 1.3 and, on x86-64, a CPU with AVX2 / FMA (Windows 10 / 11 x64; Linux: glibc 2.35 or newer)."
+            echo "You need your own legally obtained copy of *The Legend of Zelda: Skyward Sword HD* (Switch, v1.0.0 or v1.0.1)."
+            echo "These downloads hold no game code or game files: the start screen builds the game code on your PC from"
+            echo "your own files. Setup guide: docs/SETUP.md."
+            echo
+            echo "$CHANGES"
+            echo
+            echo "## Checksums (sha256)"
+            echo
+            echo '```'
+            cat SHA256SUMS
+            echo '```'
+            echo
+            echo "Built from $SHA."
+          } > ../notes.md
+          cat ../notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" --clobber *.zip *.AppImage SHA256SUMS
+            if [ "$EVENT" = release ]; then  # (published by hand: its own notes stay on top)
+              { gh release view "$TAG" --json body -q .body; echo; echo "---"; echo; cat ../notes.md; } > ../body.md
+            else  # (a re-run: the same notes again, not a second copy)
+              cp ../notes.md ../body.md
+            fi
+            gh release edit "$TAG" --notes-file ../body.md
+          else
+            FLAGS=(--latest); [[ $TAG == test-* || $TAG == ci-test-* ]] && FLAGS=(--prerelease --latest=false)
+            gh release create "$TAG" --target "$SHA" --title "SkywardRecomp $TAG" --notes-file ../notes.md "${FLAGS[@]}" *.zip *.AppImage SHA256SUMS
+          fi
+          gh release view "$TAG" --json url,isDraft,isPrerelease,assets -q '.url, .isDraft, .isPrerelease, (.assets[] | "\(.name) \(.size)")'
