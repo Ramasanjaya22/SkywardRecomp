@@ -191,6 +191,18 @@ with tempfile.TemporaryDirectory() as temporary:
         (game/'exefs/main').write_bytes(main+b'changed input')
         assert run(),why.value
         assert len(generators())==2 and len(compiles())==1
+        generator.write_text(GENERATOR+'# another generator version, the same functions\n')
+        assert run(),why.value
+        assert len(generators())==2 and len(compiles())==1  # (the entry only: an update keeps every chunk's object)
+        # Rebuild game code: the installed library stops counting, the objects stay
+        library.build_cache_rebuild.argtypes=[ct.c_char_p,ct.c_char_p,ct.c_size_t]
+        library.build_cache_rebuild.restype=ct.c_bool
+        objs=sorted(p.name for p in work.glob('*.o'))
+        assert list(game.glob('skywardgame.*.id'))
+        assert library.build_cache_rebuild(str(game).encode(),why,len(why)),why.value
+        assert not list(game.glob('skywardgame.*.id')) and sorted(p.name for p in work.glob('*.o'))==objs
+        assert run(),why.value
+        assert len(generators())==2 and len(compiles())==1 and list(game.glob('skywardgame.*.id'))
         relocated.parent.mkdir()
         shutil.copy(compiler, relocated) # contents/mode only; macOS system file flags are not part of the identity
         os.environ['LARECOMP_CC'] = str(relocated)

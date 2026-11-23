@@ -87,6 +87,7 @@ with tempfile.TemporaryDirectory() as directory:
     want = snapshot(home)
     env = dict(os.environ, LARECOMP_DATA_HOME=str(home))
     env.pop('LARECOMP_DATA_ROOT', None)
+    env['LOCALAPPDATA'] = str(S / 'localappdata')  # (where Windows remembers the last data folder: never the real one)
 
     def run(*args, stall=False, extra_env=None):
         p = subprocess.Popen([str(exe), *map(str, args)], cwd=start, env=dict(env, **(extra_env or {})),
@@ -179,4 +180,15 @@ with tempfile.TemporaryDirectory() as directory:
     assert r['USE'].startswith('ok'), r
     check_in(home, 'switched back')
     print('start fresh: the old data stays; back to it as it is; never moved into a folder with data')
+
+    # a new version in another folder (Windows portable: the data folder is the program's): the last one is offered
+    assert run('previous')['PREV'] == ''  # (this is the last one)
+    new = {'LARECOMP_DATA_HOME': str(S / 'new_version')}
+    for _ in range(2):  # (an empty folder's start doesn't forget it)
+        prev = run('previous', extra_env=new)['PREV']
+        assert (Path(prev) == home) if os.name == 'nt' else prev == '', prev
+    home.rename(S / 'home_gone')
+    assert run('previous', extra_env=new)['PREV'] == ''
+    print('a new folder: the data folder used before is offered while it holds data' if os.name == 'nt' else
+          'previous data folder: Windows only')
     print(f'{plat}: data folder moves never lose data')

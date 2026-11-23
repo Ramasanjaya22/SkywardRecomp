@@ -738,6 +738,17 @@ done:
     pthread_mutex_unlock(&g_lock);
     return NULL;
 }
+// The game files copied already: only the game code built again (an update, Rebuild game code), with the bar
+static void start_game_code_update(void) {
+    pthread_mutex_lock(&g_lock);
+    g_src.clear();
+    g_busy = true;
+    pthread_mutex_unlock(&g_lock);
+    g_auto_update = true;
+    pthread_t th;
+    pthread_create(&th, NULL, extract_thread, NULL);
+    pthread_detach(th);
+}
 
 // ------------------------------------------------------------------ folder dialog (SDL calls back on any thread)
 // files NULL: no window could be shown (an empty list is a cancel). Linux shows it through the desktop's file chooser
@@ -1501,6 +1512,7 @@ static std::atomic<int> g_df_step{0}, g_df_result{0};  // result: 0 running, 1 m
 static std::atomic<float> g_df_frac{0};
 static char g_df_err[600];
 static bool g_df_auto_move, g_df_auto_fresh;  // (test: LARECOMP_LAUNCHER_DATA_PICK=<folder>:move / :fresh)
+static bool g_df_prev;  // the pick is the data folder used before (a new version in another folder): offered at start
 
 static void SDLCALL picked_data(void *, const char *const *files, int) {
     if (!files || !files[0]) return;
@@ -1560,6 +1572,13 @@ static void data_folder_popup(float s) {
             ImGui::TextColored(red, "%s", t.refuse);
             ImGui::Spacing();
             close = ImGui::Button("OK", bw) || esc;
+        } else if (t.has_data && g_df_prev) {
+            ImGui::Text("Use existing data in this folder (saves, game files, build cache)?");
+            ImGui::Spacing();
+            if (ImGui::Button("Use existing data", bw)) use_it();
+            ImGui::SameLine();
+            ImGui::SetItemDefaultFocus();
+            close = ImGui::Button("Start fresh", bw) || esc;
         } else if (t.has_data) {
             ImGui::Text("This folder already has SkywardRecomp data. Use it?");
             ImGui::Spacing();
@@ -1604,7 +1623,7 @@ static void data_folder_popup(float s) {
     }
     ImGui::PopTextWrapPos();
     ImGui::PopFont();
-    if (close) g_df = DF_NONE, ImGui::CloseCurrentPopup();
+    if (close) g_df = DF_NONE, g_df_prev = false, ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
 }
 
@@ -1813,6 +1832,9 @@ extern "C" void launcher_run(const char *root) {
         if (c != std::string::npos && (p.substr(c) == ":move" || p.substr(c) == ":fresh"))
             g_df_auto_move = p.substr(c) == ":move", g_df_auto_fresh = p.substr(c) == ":fresh", p.resize(c);
         g_df_pick = p;
+    } else if (char prev[1100]; rt_previous_data_root(prev, sizeof prev)) {
+        fprintf(stderr, "[launcher] data from before in %s: offered\n", prev);
+        g_df_pick = prev, g_df_prev = true;
     }
     if (const char *t = getenv("LARECOMP_LAUNCHER_EXTRACT")) {  // (test) <folder>: set the game files up, log, exit
         g_src = t;
@@ -1837,12 +1859,8 @@ extern "C" void launcher_run(const char *root) {
     if (!g_busy && !status.empty() && check_copied_files(g_root).empty() && gamebuild_available() &&
         !getenv("LARECOMP_LAUNCHER_DELETE")) {
         fprintf(stderr, "[launcher] game code out of date: updating it\n");
-        g_src.clear();
-        g_busy = true, g_auto_update = true;
         page = SETUP;
-        pthread_t th;
-        pthread_create(&th, NULL, extract_thread, NULL);
-        pthread_detach(th);
+        start_game_code_update();
     }
     if (getenv("LARECOMP_LAUNCHER_DELETE")) {  // (test) what DELETE GAME FILES does, logged; then the start screen
         double gb = rt_game_files_size(g_root.c_str()) / 1e9;
@@ -2363,10 +2381,33 @@ extern "C" void launcher_run(const char *root) {
                     if (busy || fixed) opt_disable_next();
                     if (opt_action("Data folder", "Change...", d.c_str(), true)) choose_data_folder();
                 }
-                if (!busy && has_build_cache()) {
+                bool code_rebuild = check_copied_files(g_root).empty() && gamebuild_available();
+                if (!busy && (has_build_cache() || code_rebuild || status.empty())) {
                     opt_section("Build cache");
-                    if (opt_action("Clear build cache", "", "Removes the saved game-code build files. The next setup compiles "
-                                   "everything again.", true)) {
+                    if (code_rebuild && opt_action("Rebuild game code", "", "Builds the game code again from the game files. "
+                                                   "Pieces that didn't change are reused.", true)) {
+                        char why[512] = "";
+                        g_build_cache_changed = true;
+                        if (build_cache_rebuild(g_root.c_str(), why, sizeof why)) start_game_code_update();
+                        else set_job("Could not rebuild the game code.", true, why);
+                    }
+                    if (status.empty()) {
+                        if (g_bg_prep) opt_disable_next();  // (its growth would be saved again by this process)
+                        if (opt_action("Rebuild shader cache", g_bg_prep ? "Preparing..." : "", "Removes the saved shader "
+                                       "cache and restarts SkywardRecomp to prepare the shaders again.", true)) {
+                            stop_background_prep();
+                            settings_save();
+                            for (const char *f : {"cache/vk_pipelines.bin", "cache/vk_pipelines.bin.tag",
+                                                  "cache/shaders.metalarchive", "cache/shaders.metalarchive.tag"})
+                                remove(f);  // (relative to the data folder: the working directory)
+                            plat_remove_tree("cache/spirv");
+                            fprintf(stderr, "[launcher] shader cache removed: restarting\n");
+                            rt_paths_restart();
+                            set_job("Shader cache removed.", true, "Start SkywardRecomp again to prepare the shaders.");
+                        }
+                    }
+                    if (has_build_cache() && opt_action("Clear build cache", "", "Removes the saved game-code build files. "
+                                                        "The next setup compiles everything again.", true)) {
                         char why[512] = "";
                         g_build_cache_changed = true;
                         if (build_cache_clear(g_root.c_str(), why, sizeof why)) set_job("Build cache cleared.");

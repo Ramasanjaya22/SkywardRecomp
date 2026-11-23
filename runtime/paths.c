@@ -217,6 +217,43 @@ static bool pointer_root(const char *home, char *out, size_t n) {
     return true;
 }
 
+// ---- the last data folder that held data, remembered outside it: on Windows the data folder is the program's own,
+// so a new version unpacked into another folder starts empty while the old one still holds everything
+static bool holds_data(const char *dir) {
+    char p[1100];
+    join(p, sizeof p, dir, "skywardrecomp.ini");
+    if (exists(p)) return true;
+    join(p, sizeof p, dir, "extracted");
+    return is_dir(p);
+}
+
+static bool recall_file(char *out, size_t n) {
+#ifdef _WIN32
+    const char *l = getenv("LOCALAPPDATA");
+    return l && *l && (size_t)snprintf(out, n, "%s" SEP "SkywardRecomp" SEP POINTER_FILE, l) < n;
+#else
+    (void)out, (void)n;
+    return false;  // (the data folder is the same for every version)
+#endif
+}
+
+// an empty folder is never remembered: it would forget the one with the data
+static void remember(const char *root) {
+    char f[1100], r[1100];
+    if (!recall_file(f, sizeof f) || !holds_data(root) || !resolve(root, r, sizeof r)) return;
+    char d[1100];
+    snprintf(d, sizeof d, "%s", f);
+    *strrchr(d, SEP[0]) = 0;
+    mkdirs(d);
+    if (!write_line(f, r)) fprintf(stderr, "[paths] can't write %s\n", f);
+}
+
+bool rt_previous_data_root(char *out, size_t n) {
+    char f[1100];
+    return !rt_data_root_fixed() && recall_file(f, sizeof f) && read_line(f, out, n) && is_dir(out) && holds_data(out) &&
+           !same_dir(out, g_root);
+}
+
 bool rt_data_root_early(char *out, size_t n) {
     const char *env = getenv("LARECOMP_DATA_ROOT");
     if (env && *env) return (size_t)snprintf(out, n, "%s", env) < n;
@@ -331,7 +368,7 @@ void rt_paths_init(void) {
     }
     if (!getcwd(g_root, sizeof g_root)) snprintf(g_root, sizeof g_root, "%s", root);
     fprintf(stderr, "[paths] data: %s\n", g_root);
-    if (!g_dev && !(env && *env)) finish_moves(g_root, NULL);
+    if (!g_dev && !(env && *env)) finish_moves(g_root, NULL), remember(g_root);
 }
 
 const char *rt_data_root(void) { return g_root; }
@@ -722,6 +759,7 @@ bool rt_data_use(const char *to, char *err, size_t n) {
         return false;
     }
     fprintf(stderr, "[paths] data folder: %s from the next start\n", to);
+    remember(to);
     return true;
 }
 
@@ -772,6 +810,7 @@ bool rt_data_move(const char *to, void (*progress)(int step, double frac), char 
         return false;
     }
     fprintf(stderr, "[paths] data moved to %s\n", abs_to);
+    remember(abs_to);
     finish_moves(abs_to, progress);  // (the old copy; interrupted, the next start finishes it)
     return true;
 }

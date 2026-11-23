@@ -385,6 +385,23 @@ extern "C" bool build_cache_publish(BuildCache *c, const char *name, const char 
     }
 }
 
+extern "C" bool build_cache_rebuild(const char *game_dir, char *why, size_t cap) {
+    try {
+        auto game = fs::weakly_canonical(fs::absolute(fs::u8path(game_dir)));
+        std::unique_ptr<BuildCache> c;
+        if (fs::exists(game / ".gamebuild")) { c = acquire(game_dir); recover(c.get()); }  // (a build running: refused)
+        for (const char *name : {"skywardgame.dll", "skywardgame.so", "skywardgame.dylib"}) {
+            auto id = game / (std::string(name) + ".id");
+            plain(id);
+            if (fs::exists(id)) fs::remove(id);
+        }
+        return true;
+    } catch (const std::exception &e) {
+        error(why, cap, e);
+        return false;
+    }
+}
+
 extern "C" bool build_cache_clear(const char *game_dir, char *why, size_t cap) {
     try {
         auto game = fs::weakly_canonical(fs::absolute(fs::u8path(game_dir)));

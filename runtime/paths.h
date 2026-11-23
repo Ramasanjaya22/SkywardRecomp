@@ -49,6 +49,9 @@ void rt_data_target(const char *picked, RtDataTarget *t);
 bool rt_data_move(const char *to, void (*progress)(int step, double frac), char *err, size_t n);
 // Only the switch: from the next start the data folder is `to` (created if needed), as it is. The old one is kept.
 bool rt_data_use(const char *to, char *err, size_t n);
+// Windows: the data folder last used (%LOCALAPPDATA%\SkywardRecomp\data_root.txt) when it isn't this one and still
+// holds skywardrecomp.ini or extracted/ (a new version unpacked elsewhere). Other platforms: always false.
+bool rt_previous_data_root(char *out, size_t n);
 // Start again (the same command line, from the starting folder): after a switch. Returns only on failure.
 void rt_paths_restart(void);
 
