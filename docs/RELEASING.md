@@ -5,9 +5,9 @@ AppImages, checks the packages, and publishes them on a GitHub release with a `S
 
 ## Cut a release
 
-1. **Bump the version** in one place: `#define LARECOMP_VERSION "v0.8.1"` in `runtime/ui/launcher.mm`. The Makefile,
+1. **Bump the version** in one place: `#define LARECOMP_VERSION "v0.8.2"` in `runtime/ui/launcher.mm`. The Makefile,
    the package scripts and the file names read it from there. The new value must not be an existing tag
-   (`git tag`; `v0.8.0` is taken).
+   (`git tag`; `v0.8.1` is taken).
 2. Merge that change to `main` (PR). A real release is only built from a commit on `main`, so everything merged
    before it - including the UBSan fix `8a58be68` - is in the files.
 3. Tag the merge commit and push the tag:
