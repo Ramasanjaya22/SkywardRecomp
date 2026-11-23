@@ -146,7 +146,7 @@ jobs:
           msystem: UCRT64
           update: true
           install: make git curl tar xz diffutils zip unzip
-          pacboy: clang:p lld:p binutils:p python:p sdl3:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
+          pacboy: clang:p lld:p binutils:p python:p python-cryptography:p sdl3:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
             vulkan-memory-allocator:p nasm:p
       - name: Tests on Windows (junctions, paths)
         run: |
@@ -154,6 +154,7 @@ jobs:
           python3 tools/test_build_cache.py
           python3 tools/test_gamebuild_resume.py
           python3 tools/test_delete_guard.py
+          python3 tools/test_extract_update.py
       - name: Deps cache
         id: deps
         uses: actions/cache/restore@v4
