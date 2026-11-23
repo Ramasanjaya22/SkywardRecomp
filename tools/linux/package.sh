@@ -47,8 +47,9 @@ cp third_party/fonts/BIZUDPGothic/OFL.txt "$APPDIR/usr/bin/BIZUDPGothic-OFL.txt"
 cp third_party/fonts/DejaVu/DejaVuSans.ttf third_party/fonts/DejaVu/DejaVuSans-Bold.ttf "$APPDIR/usr/bin/"  # (last-resort fonts, free license)
 cp third_party/fonts/DejaVu/LICENSE "$APPDIR/usr/bin/DejaVu-LICENSE.txt"
 cp README.md LICENSE "$APPDIR/usr/bin/"  # (licenses and source links of the bundled components: README "License")
-[ -d "$L/helper/rando-gen" ] || { echo "no seed generator helper: tools/linux/rando_helper.sh $ARCH first"; exit 1; }
-cp -R "$L/helper/rando-gen" "$APPDIR/usr/bin/"
+[ -d "$L/helper/rando-gen" ] && cp -R "$L/helper/rando-gen" "$APPDIR/usr/bin/"  # (Link's Awakening seeds: optional, as on Windows)
+[ -d "$L/helper/skywardextract" ] || { echo "no .nsp extractor helper: tools/linux/rando_helper.sh $ARCH first"; exit 1; }
+cp -R "$L/helper/skywardextract" "$APPDIR/usr/bin/"
 [ -d "$L/helper/skywardgen" ] || { echo "no game code generator helper: tools/linux/rando_helper.sh $ARCH first"; exit 1; }
 cp -R "$L/helper/skywardgen" build/zig "$APPDIR/usr/bin/"
 mkdir "$APPDIR/usr/bin/gamelib-src"

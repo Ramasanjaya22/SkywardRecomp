@@ -220,27 +220,14 @@ jobs:
         with:
           path: build/linux/${{ matrix.arch }}/deps
           key: deps-linux-${{ matrix.arch }}-${{ hashFiles('tools/linux/build_deps.sh', 'tools/linux/Containerfile') }}
-      # the helpers' wheels (arm64: oead and keystone-engine built from source, no wheels on PyPI)
-      - name: Wheels cache
-        id: wheels
-        uses: actions/cache/restore@v4
-        with:
-          path: build/linux/${{ matrix.arch }}/wheels
-          key: wheels-linux-${{ matrix.arch }}-${{ hashFiles('tools/linux/rando_helper.sh', 'tools/linux/Containerfile') }}
       - name: AppImage
         run: make appimage ARCH=${{ matrix.arch }}
-      # saved once complete (shaderc: build_deps.sh's last part; .ok: the helpers' wheels all installed), even when a
-      # later part of the build fails
+      # saved once complete (shaderc: build_deps.sh's last part), even when a later part of the build fails
       - uses: actions/cache/save@v4
         if: always() && steps.deps.outputs.cache-hit != 'true' && hashFiles(format('build/linux/{0}/deps/lib/libshaderc_shared.so*', matrix.arch)) != ''
         with:
           path: build/linux/${{ matrix.arch }}/deps
           key: ${{ steps.deps.outputs.cache-primary-key }}
-      - uses: actions/cache/save@v4
-        if: always() && steps.wheels.outputs.cache-hit != 'true' && hashFiles(format('build/linux/{0}/rando-venv/.ok', matrix.arch)) != ''
-        with:
-          path: build/linux/${{ matrix.arch }}/wheels
-          key: ${{ steps.wheels.outputs.cache-primary-key }}
       # package.sh checked the executable; here the whole AppDir that was packed (readelf: any arch's ELF)
       - name: No game code
         run: |
