@@ -13,7 +13,7 @@ case $ARCH in x86_64) PODARCH=amd64 ;; aarch64) PODARCH=arm64 ;;
     *) echo "unknown arch $ARCH"; exit 1 ;; esac
 
 image() {  # arch -> tag (built once, then cached by podman)
-    podman build -q --arch "$1" -t "localhost/skywardrecomp-build:$1" -f tools/linux/Containerfile tools/linux >/dev/null
+    podman build --arch "$1" -t "localhost/skywardrecomp-build:$1" -f tools/linux/Containerfile tools/linux >&2  # (its log goes to stderr: stdout is the tag below; not quiet, so a slow apt step shows in the CI log)
     echo "localhost/skywardrecomp-build:$1"
 }
 run() {  # image, command...: the checkout mounted at /src

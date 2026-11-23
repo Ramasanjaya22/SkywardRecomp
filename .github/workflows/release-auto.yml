@@ -209,7 +209,7 @@ jobs:
     needs: [check, tests]
     if: needs.check.outputs.skip != 'true'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45  # a cold build is ~15 min; a hang should fail, not run for 6 h
+    timeout-minutes: 90  # a cold x86_64 build took 14 min (v0.8.1) and 45 min (v0.8.2: the container image's apt step); a hang should fail, not run for 6 h
     strategy:
       fail-fast: false
       matrix:
