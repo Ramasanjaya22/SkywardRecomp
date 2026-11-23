@@ -1033,7 +1033,8 @@ static void load_frame(GpuDevice dev, const std::string &path, double at, declty
 }
 
 static void load_background(GpuDevice dev) {
-    load_frame(dev, g_root + "/romfs/region_common/movie/title.webm", 6.0, g_bg, g_bg_w, g_bg_h);  // (a few seconds in: the island, not black)
+    // SS's opening movie (the LA movie/title.webm does not exist here); 8 s in: past the fade-in from black, a lit scene
+    load_frame(dev, g_root + "/romfs/THP/Demo01_01.webm", 8.0, g_bg, g_bg_w, g_bg_h);
 }
 
 static void load_art(GpuDevice dev) {
