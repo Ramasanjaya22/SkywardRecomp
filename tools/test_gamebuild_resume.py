@@ -119,7 +119,7 @@ with tempfile.TemporaryDirectory() as temporary:
             command=[sys.executable,'-c','import sys;print("noise line");print("unit.c:3:5: error: synthetic failure");print("1 error generated.");sys.exit(7)']
         elif oom_compiles and '-c' in command:  # the compiler gives up for lack of memory
             oom_compiles-=1
-            command=[sys.executable,'-c','import sys;print("fatal error: out of memory allocating 1 bytes");sys.exit(9)']
+            command=[sys.executable,'-c','import sys,time;time.sleep(1);print("fatal error: out of memory allocating 1 bytes");sys.exit(9)']  # (slow: both are running together when the first is noticed, as under real memory pressure; fast ones made the pool drop to 1 before the second started, a real "alone" failure)
         if '-c' in command or fail_link:
             max_parallel=max(max_parallel,1+sum(1 for q in processes.values() if q.poll() is None and '-c' in q.args))  # compilers only (the generator runs too)
         stream=open(log.decode(),'ab' if append else 'wb')
