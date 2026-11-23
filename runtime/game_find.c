@@ -154,6 +154,9 @@ typedef struct {
     int n, full;
     char exefs[16][GAME_FIND_PATH], romfs[16][GAME_FIND_PATH];  // every exefs / romfs folder seen, in search order
     int nexefs, nromfs;
+    Cand u[16];  // the update packages seen: used only together with a base game package
+    char uwhy[16][200];
+    int nu;
 } Walk;
 
 static int cmp_str(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
@@ -193,7 +196,11 @@ static void walk(Walk *w, const char *dir, int depth) {
             g->nsp_seen++;
             char why[200];
             int k = game_nsp_classify(p, why, sizeof why);
-            if (k < 0) note(g, p, why);
+            if (k == GAME_NSP_UPDATE && w->nu < 16) {
+                snprintf(w->u[w->nu].path, sizeof w->u[0].path, "%s", p);
+                w->u[w->nu].depth = depth;
+                snprintf(w->uwhy[w->nu++], sizeof w->uwhy[0], "%s", why);
+            } else if (k < 0) note(g, p, why);
             else if (w->n < 256) { snprintf(w->c[w->n].path, sizeof w->c[0].path, "%s", p); w->c[w->n].kind = k; w->c[w->n].depth = depth; w->n++; }
             else w->full = 1;
             continue;
@@ -264,7 +271,10 @@ void game_find(const char *dir, GameFindExefsCheck check, GameFind *g) {
         char why[200];
         g->nsp_seen = 1;
         int k = game_nsp_classify(dir, why, sizeof why);
-        if (k < 0) note(g, dir, why);
+        if (k == GAME_NSP_UPDATE) {
+            snprintf(w->u[0].path, sizeof w->u[0].path, "%s", dir);
+            snprintf(w->uwhy[w->nu++], sizeof w->uwhy[0], "%s", why);
+        } else if (k < 0) note(g, dir, why);
         else { snprintf(w->c[0].path, sizeof w->c[0].path, "%s", dir); w->c[0].kind = k; w->n = 1; }
     } else {
         walk(w, dir, 0);
@@ -283,6 +293,17 @@ void game_find(const char *dir, GameFindExefsCheck check, GameFind *g) {
         snprintf(why, sizeof why, "also a game package, but %s is used instead", w->c[best].path);
         note(g, w->c[i].path, why);
     }
+    int ubest = -1;  // (the update to apply: shallowest, then name, like the base)
+    for (int i = 0; i < w->nu && best >= 0; i++)
+        if (ubest < 0 || w->u[i].depth < w->u[ubest].depth ||
+            (w->u[i].depth == w->u[ubest].depth && strcmp(w->u[i].path, w->u[ubest].path) < 0)) ubest = i;
+    for (int i = 0; i < w->nu; i++) {
+        if (i == ubest) continue;
+        char why[GAME_FIND_PATH + 80];
+        if (ubest >= 0) snprintf(why, sizeof why, "also an update package, but %s is used instead", w->u[ubest].path);
+        note(g, w->u[i].path, ubest >= 0 ? why : w->uwhy[i]);
+    }
+    if (ubest >= 0) snprintf(g->update, sizeof g->update, "%s", w->u[ubest].path);
     if (best >= 0) {
         snprintf(g->nsp, sizeof g->nsp, "%s", w->c[best].path);
         int others = w->n - 1;
@@ -311,6 +332,7 @@ void game_find_describe(const GameFind *g, char *out, size_t n) {
         put(out, n, &len, "Found an exefs folder (%s) but no romfs folder (the one with region_common) to go with it.\n", g->exefs, "");
     } else if (g->nsp[0]) {
         put(out, n, &len, "Using the package %s (%s).\n", g->nsp, g->nsp_why);
+        if (g->update[0]) put(out, n, &len, "With the update package %s (version 1.0.1), applied over the base game.\n", g->update, "");
     } else {
         snprintf(num, sizeof num, "%d folder%s and %d file%s", g->dirs, g->dirs == 1 ? "" : "s", g->files, g->files == 1 ? "" : "s");
         put(out, n, &len, "Looked through %s: ", num, "");

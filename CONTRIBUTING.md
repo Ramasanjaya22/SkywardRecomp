@@ -42,7 +42,7 @@ progress. Rebase onto it if it has moved since you branched.
 ## Building
 
 See the README's "Building from source" for macOS and [docs/BUILD-windows.md](docs/BUILD-windows.md) for Windows.
-In short: set up your own game files (v1.0.0, v1.0.1 or v1.1.0) on the start screen, `make gen` once to recompile the game code from
+In short: set up your own game files (v1.0.0, or v1.0.1 from the base + update .nsp) on the start screen, `make gen` once to recompile the game code from
 them, then `make -j10`.
 
 ## More documentation

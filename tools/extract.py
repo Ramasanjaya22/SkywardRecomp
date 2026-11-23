@@ -1,32 +1,30 @@
 """Extract The Legend of Zelda: Skyward Sword HD (title 01002DA013484000) into build/ and verify it.
 
 Adapted for SkywardRecomp (rebuild) from the Astral Chain port's tools/extract.py (MacNativeGames lineage,
-MIT): the same NCA3 AES-CTR/XTS decryption, hierarchical PFS0 and IVFC verification, in pure Python
-for the base-only path. hactool is only needed to merge an update's BKTR section; with no update NSP
-the base RomFS is streamed and verified directly (all six IVFC levels).
+MIT): the same NCA3 AES-CTR/XTS decryption, hierarchical PFS0 and IVFC verification, in pure Python.
 
-Steps, each skipped when its verified output already exists:
+Two inputs, each checked against tools/data/expected-v<version>.json:
 
-1. ExeFS of the base game (1.0.0), checked against tools/data/expected-v1.0.0.json when it exists;
-   on the first run of a new dump the hashes are measured and written there instead.
-2. Optional: ExeFS and merged RomFS of an update NSP (needs the BKTR-patched hactool).
+1. The base game NSP alone: version 1.0.0. ExeFS and RomFS are read from its Program NCA.
+2. The base game NSP plus the update NSP (title 01002DA013484800): the version the update carries (1.0.1). Its ExeFS
+   is the update's; its RomFS is the update's BKTR patch applied over the base's RomFS, in pure Python (no hactool).
 
-A file whose data fails its hashes or ends early stops the extraction.
+All six IVFC levels of the RomFS are verified, so a wrong or damaged base/update stops here. Steps whose verified
+output already exists are skipped. An update that is not a known version is refused.
 
 --base, --update, --keys and --work name the files and the output directory. Key values are read by
 the tools from the keys file and never printed.
 """
 import argparse
+import bisect
+import contextlib
 import hashlib
 import io
 import json
 import os
-import re
 import shutil
 import struct
-import subprocess
 import sys
-import tempfile
 import tomllib
 from pathlib import Path
 
@@ -264,14 +262,18 @@ def extract_exefs(game, keys, output, update=False):
     raise ValueError('No ExeFS section found')
 
 
-def extract_romfs(game, keys, manifest, output):
-    """Verify all six IVFC levels, stream the RomFS image, and index its files."""
+def extract_romfs(game, keys, manifest, output, base=None):
+    """Verify all six IVFC levels, stream the RomFS image, and index its files.
+
+    base: with an update NSP as `game`, the base game's NSP: the update's RomFS is a BKTR patch whose unchanged ranges
+    are read from the base's RomFS section (pure Python, no hactool); every IVFC level of the merged image is verified.
+    """
     require(not output.exists(), 'RomFS output already exists')
     keys = load_keys(keys)
     record = manifest['program']
-    with game.open('rb') as f:
+    with game.open('rb') as f, (base.open('rb') if base else contextlib.nullcontext()) as base_file:
         _, entries = container_entries(f, game.stat().st_size)
-        actual, hdr = program_nca(nca_inventory(f, entries, keys))
+        actual, hdr = program_nca(nca_inventory(f, entries, keys), update=bool(base))
         require(actual['name'] == record['name'] and actual['size'] == record['size'] and
                 actual['nca_offset'] == record['nca_offset'], 'Source Program NCA changed; extract ExeFS again')
         ctr_key = nca_ctr_key(hdr, keys, common_tickets(f, entries))
@@ -281,20 +283,26 @@ def extract_romfs(game, keys, manifest, output):
                 continue
             fs = hdr[0x400 + 512 * i:0x600 + 512 * i]
             require(hashlib.sha256(fs).digest() == hdr[0x280 + 32 * i:0x2A0 + 32 * i], 'FS header hash')
-            if fs[2:5] != bytes([0, 3, 3]):
+            if fs[2:5] != bytes([0, 3, 4 if base else 3]):
                 continue
             require(fs[8:12] == b'IVFC' and struct.unpack_from('<III', fs, 12) == (0x20000, 32, 7),
                     'Unsupported IVFC layout')
             levels = [struct.unpack_from('<QQII', fs, 0x18 + j * 24) for j in range(6)]
 
-            def read(relative, size):
+            def read(relative, size, generation=None):
                 require(0 <= relative <= relative + size <= (end - start) * 512, 'Section bounds')
                 absolute = start * 512 + relative
                 aligned = absolute & ~15
                 skip = absolute - aligned
-                iv = fs[0x140:0x148][::-1] + (aligned // 16).to_bytes(8, 'big')
+                high = fs[0x140:0x148][::-1]
+                if generation is not None:  # (AES-CTR-EX: the subsection's counter replaces the section's generation)
+                    high = high[:4] + generation.to_bytes(4, 'big')
+                iv = high + (aligned // 16).to_bytes(8, 'big')
                 return decrypt(ctr_key, modes.CTR(iv),
                                read_at(f, record['nca_offset'] + aligned, size + skip))[skip:]
+
+            if base:
+                read = bktr_merged_reader(read, fs, base_romfs_reader(base_file, keys))
 
             output.mkdir(parents=True)
             image_path = output / 'romfs.bin'
@@ -334,6 +342,86 @@ def extract_romfs(game, keys, manifest, output):
                                   sha256=digest.hexdigest())))
             return report
     raise ValueError('No supported RomFS found')
+
+
+def bktr_tables(read, fs):
+    """The BKTR tables of an update RomFS section: ([(virtual offset, physical offset, from the patch)],
+    [(offset, reserved, counter)], virtual size). read(relative, size) reads the section with plain AES-CTR (the tables
+    are not CTR-EX)."""
+    reloc_offset, reloc_size = struct.unpack_from('<QQ', fs, 0x100)
+    sub_offset, sub_size = struct.unpack_from('<QQ', fs, 0x120)
+    require(fs[0x110:0x114] == b'BKTR' and fs[0x130:0x134] == b'BKTR', 'Unsupported update RomFS (no BKTR tables)')
+    raw = read(reloc_offset, reloc_size)
+    _, buckets, virtual_size = struct.unpack_from('<IIQ', raw, 0)
+    require(buckets and reloc_size >= 0x4000 * (1 + buckets), 'Truncated BKTR relocation table')
+    entries = []
+    for i in range(buckets):
+        bucket = 0x4000 * (1 + i)
+        count = struct.unpack_from('<I', raw, bucket + 4)[0]
+        require(count <= 818, 'Invalid BKTR relocation bucket')
+        entries += [struct.unpack_from('<QQI', raw, bucket + 0x10 + 0x14 * j) for j in range(count)]
+    require(entries and entries[0][0] == 0 and all(a[0] < b[0] for a, b in zip(entries, entries[1:])) and
+            entries[-1][0] < virtual_size and all(e[2] in (0, 1) for e in entries), 'Invalid BKTR relocation table')
+    raw = read(sub_offset, sub_size)
+    buckets = struct.unpack_from('<I', raw, 4)[0]
+    require(buckets and sub_size >= 0x4000 * (1 + buckets), 'Truncated BKTR subsection table')
+    subsections = []
+    for i in range(buckets):
+        bucket = 0x4000 * (1 + i)
+        count = struct.unpack_from('<I', raw, bucket + 4)[0]
+        require(count <= 1023, 'Invalid BKTR subsection bucket')
+        subsections += [struct.unpack_from('<QII', raw, bucket + 0x10 + 0x10 * j) for j in range(count)]
+    require(subsections and subsections[0][0] == 0 and all(a[0] < b[0] for a, b in zip(subsections, subsections[1:])),
+            'Invalid BKTR subsection table')
+    return entries, subsections, virtual_size
+
+
+def base_romfs_reader(f, keys):
+    """read(relative, size) of the base game's RomFS section (plain AES-CTR), from the open base NSP f."""
+    _, entries = container_entries(f, os.fstat(f.fileno()).st_size)
+    record, hdr = program_nca(nca_inventory(f, entries, keys))
+    ctr_key = nca_ctr_key(hdr, keys, common_tickets(f, entries))
+    for i in range(4):
+        start, end = struct.unpack_from('<II', hdr, 0x240 + i * 16)
+        fs = hdr[0x400 + 512 * i:0x600 + 512 * i]
+        if start and fs[2:5] == bytes([0, 3, 3]):
+            require(hashlib.sha256(fs).digest() == hdr[0x280 + 32 * i:0x2A0 + 32 * i], 'FS header hash')
+
+            def read(relative, size):
+                require(0 <= relative <= relative + size <= (end - start) * 512, 'Base section bounds')
+                absolute = start * 512 + relative
+                aligned = absolute & ~15
+                iv = fs[0x140:0x148][::-1] + (aligned // 16).to_bytes(8, 'big')
+                return decrypt(ctr_key, modes.CTR(iv),
+                               read_at(f, record['nca_offset'] + aligned, size + absolute - aligned))[absolute - aligned:]
+            return read
+    raise ValueError('The base game has no RomFS section')
+
+
+def bktr_merged_reader(read_patch, fs, read_base):
+    """read(relative, size) of the update's RomFS as the game sees it: each range comes from the base or the patch."""
+    entries, subsections, virtual_size = bktr_tables(read_patch, fs)
+    starts = [e[0] for e in entries]
+    sub_starts = [s[0] for s in subsections]
+
+    def read(relative, size):
+        require(0 <= relative <= relative + size <= virtual_size, 'BKTR read out of bounds')
+        out = bytearray()
+        while size:
+            i = bisect.bisect_right(starts, relative) - 1
+            virtual, physical, patched = entries[i]
+            n = min(size, (entries[i + 1][0] if i + 1 < len(entries) else virtual_size) - relative)
+            where = physical + (relative - virtual)
+            if patched:  # (a subsection boundary starts another counter)
+                j = bisect.bisect_right(sub_starts, where) - 1
+                n = min(n, (subsections[j + 1][0] if j + 1 < len(subsections) else where + n) - where)
+                out += read_patch(where, n, subsections[j][2])
+            else:
+                out += read_base(where, n)
+            relative += n
+            size -= n
+        return bytes(out)
+    return read
 
 
 def index_romfs(path):
@@ -388,178 +476,16 @@ def index_romfs(path):
 VERSION_FILES = ('main', 'sdk', 'rtld')
 
 
-# ---- update RomFS: the base Program NCA and the update's BKTR section merged by hactool
-#
-# The BKTR reader is MacNativeGames' hactool patch (tools/hactool/portable.patch). Its base-range hook is macOS-only
-# and left out of the Windows build, so the base Program NCA is copied out of its NSP first (about 10 GB), as the
-# TotK Recomp installer did.
-
-class DamagedFile(ValueError):
-    """A game file whose data fails its hash checks or ends early. path: that file; detail: the check that failed."""
-
-    def __init__(self, path, detail):
-        self.path, self.detail = Path(path), detail
-        super().__init__(f'{self.path} is damaged or incomplete ({detail}). Copy that file again from its source '
-                         f'(or dump it again) and retry.')
-
-
-# hactool verifies two signatures with Nintendo public keys it does not ship; these lines always read (FAIL).
-UNSIGNED = re.compile(r'\s*(?:Fixed-Key Signature|NPDM Signature) \(FAIL\)')
-HACTOOL_ERROR = re.compile(r'\(FAIL\)|\(INVALID\)|Failed to|Error:')
-HACTOOL_HASH_FAIL = re.compile(r'^\s*(?:Level \d|Superblock Hash|Hash Table) \(FAIL\)', re.M)
-LONG_HEX = re.compile(r'[0-9A-Fa-f]{32,}')
-# Lockpick_RCM writes these as 17 bytes: the 16-byte source plus a trailing NUL. hactool exits unless the value is
-# exactly 16 bytes, before any BKTR check.
-LOCKPICK_KEK_SOURCE = re.compile(r'(?:mariko_)?master_kek_source_[0-9a-f]{2}\Z')
-
-
-def copy_range(source, offset, size, target):
-    """Copy size bytes at offset into target (from MacNativeGames extract_update_romfs.py)."""
-    with source.open('rb') as src, target.open('wb') as dst:
-        src.seek(offset)
-        while size:
-            data = src.read(min(size, 8 << 20))
-            require(bool(data), 'Truncated NCA')
-            dst.write(data)
-            size -= len(data)
-
-
-def hactool_prod_keys(source, target):
-    """Copy prod.keys for hactool (from MacNativeGames extract_update_romfs.py).
-
-    hactool knows no comments: it reads the rest of a line as the value, so a trailing `# note` makes it exit. The copy
-    keeps only the `name = value` lines. A Lockpick trailing NUL on master_kek_source / mariko_master_kek_source is
-    dropped. Any other length is rejected without recording the key bytes.
-    """
-    lines = []
-    for number, line in enumerate(Path(source).read_text(encoding='utf-8').splitlines(), 1):
-        body = line.split('#', 1)[0]
-        if '=' not in body:
-            continue
-        name, value = (part.strip() for part in body.split('=', 1))
-        if LOCKPICK_KEK_SOURCE.fullmatch(name.lower()) is not None:
-            require(re.fullmatch(r'[0-9a-fA-F]+', value) is not None, f'Invalid key encoding at line {number}')
-            if len(value) == 34 and value[-2:].lower() == '00':
-                value = value[:32]
-            require(len(value) == 32, f'{name.lower()} must be 16 bytes')
-        lines.append(f'{name} = {value}')
-    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, 'w') as f:
-        f.write('\n'.join(lines) + ('\n' if lines else ''))
-
-
-def program_ncas(base, update, keys_path):
-    """(tickets, [(source, record, header)] of the base and the update Program NCA)."""
-    keys = load_keys(keys_path)
-    tickets, inputs = {}, []
-    for source, is_update in ((base, False), (update, True)):
-        with source.open('rb') as f:
-            kind, entries = container_entries(f, source.stat().st_size)
-            require(not is_update or kind == 'nsp', 'Update must be an NSP')
-            for rights, key in common_tickets(f, entries).items():
-                require(tickets.get(rights, key) == key, 'Conflicting common tickets')
-                tickets[rights] = key
-            record, header = program_nca(nca_inventory(f, entries, keys), update=is_update)
-            rights = header[0x230:0x240]
-            require(rights == bytes(16) or rights in tickets, 'Missing common ticket')
-            inputs.append((source, record, header))
-    return tickets, inputs
-
-
-def merge_space(base, update, keys_path):
-    """Bytes merge_update_romfs copies next to its output beyond the merged image: both Program NCAs."""
-    _, inputs = program_ncas(base, update, keys_path)
-    return inputs[0][1]['size'] + inputs[1][1]['size']
-
-
-def run_hactool(command, environment):
-    """(exit code, stdout and stderr with long hex strings removed). hactool prints UTF-8."""
-    completed = subprocess.run(command, env=environment, capture_output=True, encoding='utf-8', errors='replace')
-    return completed.returncode, LONG_HEX.sub('<hex removed>', completed.stdout + completed.stderr)
-
-
-def damaged_merge_input(hactool, hactool_keys, environment, base, update, base_nca, log_path):
-    """The DamagedFile for a merge whose hash checks failed. The merged RomFS mixes data of both files, so hactool
-    verifies the base Program NCA alone: if it fails, the base game file is damaged, else the update file is."""
-    code, log = run_hactool([str(hactool), '-y', '--disablekeywarns', '--suppresskeys', '-k', str(hactool_keys),
-                             str(base_nca)], environment)
-    with log_path.open('a', encoding='utf-8') as f:
-        f.write(f'\n---- base Program NCA alone (exit code {code}) ----\n{log}')
-    checked = '\n'.join(line for line in log.splitlines() if not UNSIGNED.match(line))
-    if HACTOOL_HASH_FAIL.search(checked):
-        return DamagedFile(base, f'its game data fails the hash check; see {log_path}')
-    if all(re.search(rf'Level {i} \(GOOD\)', log) for i in range(6)):
-        return DamagedFile(update, f'its game data fails the hash check; see {log_path}')
-    return ValueError(f'the game data fails the hash check: the base game file {base} or the update file {update} '
-                      f'is damaged or incomplete. Copy them again from their source and retry; see {log_path}')
-
-
-def merge_update_romfs(base, update, keys_path, hactool, output, logs, expected_size, phase=lambda name: None):
-    """Merge the base Program NCA with the update's BKTR section and write output/ (romfs.bin, index.json).
-
-    Needs room for both Program NCAs and the merged image next to output: base and update are copied into
-    update-merge-* (hactool's Windows build cannot read the base NCA inside its NSP). phase(name) is called as each
-    part starts. Raises DamagedFile when one of the two files fails its hashes.
-    """
-    if output.exists():
-        shutil.rmtree(output)
-    tickets, inputs = program_ncas(base, update, keys_path)
-    sections = [i for i in range(4) if inputs[1][2][0x400 + i * 512 + 4] == 4]
-    require(len(sections) == 1, 'Expected one BKTR section')
-    need = inputs[0][1]['size'] + inputs[1][1]['size'] + expected_size
-    require(shutil.disk_usage(output.parent).free > need,
-            f'Need {need / (1 << 30):.0f} GiB free in {output.parent}')
-    logs.mkdir(parents=True, exist_ok=True)
-    log_path = logs / f'merge_romfs-{output.parent.name}.log'
-    with tempfile.TemporaryDirectory(prefix='update-merge-', dir=output.parent) as tmp:
-        tmp = Path(tmp)
-        title_keys = tmp / 'title.keys'
-        fd = os.open(title_keys, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, 'w') as f:
-            for rights, key in tickets.items():
-                f.write(f'{rights.hex()} = {key.hex()}\n')
-        hactool_keys = tmp / 'hactool.keys'
-        hactool_prod_keys(keys_path, hactool_keys)
-        phase('copy')
-        base_nca, update_nca = tmp / 'base.nca', tmp / 'update.nca'
-        for (source, record, _), target in zip(inputs, (base_nca, update_nca)):
-            try:
-                copy_range(source, record['nca_offset'], record['size'], target)
-            except ValueError as e:   # the file ends inside its Program NCA
-                raise DamagedFile(source, str(e)) from None
-        result = tmp / 'result'
-        result.mkdir()
-        phase('merge')
-        environment = dict(os.environ, MNG_TITLE_KEYS=str(title_keys))
-        command = [str(hactool), '-x', '-y', '--disablekeywarns', '--suppresskeys', '-k', str(hactool_keys),
-                   f'--basenca={base_nca}', f'--section{sections[0]}={result / "romfs.bin"}', str(update_nca)]
-        code, log = run_hactool(command, environment)
-        log_path.write_text(log, encoding='utf-8')
-        checked = '\n'.join(line for line in log.splitlines() if not UNSIGNED.match(line))
-        if HACTOOL_HASH_FAIL.search(checked):
-            phase('diagnose')
-            raise damaged_merge_input(hactool, hactool_keys, environment, base, update, base_nca, log_path)
-        require(code == 0 and not HACTOOL_ERROR.search(checked), f'hactool merge failed; see {log_path}')
-        require(all(re.search(rf'Level {i} \(GOOD\)', log) for i in range(6)),
-                'hactool did not verify all six IVFC levels')
-        image = result / 'romfs.bin'
-        phase('index')
-        files = index_romfs(image)
-        report = dict(status='pass', romfs_size=image.stat().st_size, romfs_sha256=sha256(image), files=files,
-                      integrity='BKTR merge; all six IVFC levels verified')
-        (result / 'index.json').write_text(json.dumps(report, indent=2) + '\n')
-        result.rename(output)
-        return report
-
-
 def identify_update(exefs, versions):
     """The expected data of the update whose `main` hash this ExeFS has."""
     digest = sha256(exefs / 'main')
     for expected in versions.values():
         if expected.get('version') and expected['exefs_sha256'].get('main') == digest:
             return expected
-    raise ValueError(f'Update main {digest[:16]}... matches no supported version '
-                     f'({", ".join(v for v, e in versions.items() if e.get("version"))})')
+    supported = ', '.join(v for v, e in versions.items() if e.get('version'))
+    raise ValueError(f'This update is not a version SkywardRecomp supports (its game code, main {digest[:12]}..., is '
+                     f'unknown; supported updates: {supported}). Use the 1.0.1 update (title 01002DA013484800, '
+                     f'v65536), or play without an update to use 1.0.0.')
 
 
 def exefs_ok(exefs_dir, expected):
@@ -597,7 +523,7 @@ def update_expected(display_version, version, manifest, romfs_report):
 def check_expected(display_version, manifest, romfs_report):
     expected = load_expected().get(display_version)
     if not expected:
-        version = 0 if display_version == '1.0.0' else int(display_version.replace('.', ''))
+        version = {'1.0.0': 0, '1.0.1': 65536}[display_version]
         update_expected(display_version, version, manifest, romfs_report)
         print(f'expected-v{display_version}.json: written from this dump (ExeFS: {len(manifest["files"])} files, '
               f'RomFS {romfs_report["romfs_size"]} bytes)')
@@ -617,20 +543,38 @@ def check_expected(display_version, manifest, romfs_report):
                           f'Copy the game files again from their source and retry.')
 
 
+def romfs_step(game, keys, manifest, out, flat, base=None):
+    """The verified RomFS report of out/romfs (or of a finished flat run), extracting the image when it is not there."""
+    romfs = out / 'romfs'
+    if (romfs / 'romfs.bin').is_file() and (romfs / 'index.json').is_file():
+        return json.loads((romfs / 'index.json').read_text(encoding='utf-8'))
+    if flat and (out / 'romfs.bin').is_file() and (out / 'index.json').is_file():
+        return json.loads((out / 'index.json').read_text(encoding='utf-8'))  # (a finished flat run)
+    print('Extracting the RomFS (pure Python; needs about the image size in free space)')
+    shutil.rmtree(romfs, ignore_errors=True)  # (what a stopped run left)
+    return extract_romfs(game, keys, manifest, romfs, base)
+
+
+def flatten_romfs(out):
+    """The runtime serves the image straight from romfs.bin (runtime/services/fs.c); the report goes next to it."""
+    romfs = out / 'romfs'
+    if romfs.is_dir():
+        (romfs / 'romfs.bin').replace(out / 'romfs.bin')
+        (romfs / 'index.json').replace(out / 'index.json')
+        romfs.rmdir()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--config', type=Path, default=ROOT / 'config.local.toml')
     parser.add_argument('--base', type=Path, help='base game NSP (default: input.base of the config)')
     parser.add_argument('--update', type=Path, help='update NSP, 1.0.1 (default: input.update of the config)')
     parser.add_argument('--keys', type=Path, help='prod.keys (default: input.keys of the config)')
-    parser.add_argument('--hactool', type=Path,
-                        default=ROOT / 'toolchain' / 'hactool' / ('hactool.exe' if os.name == 'nt' else 'hactool'),
-                        help='the hactool build with the BKTR reader (tools/build_hactool.py)')
     parser.add_argument('--work', type=Path, help='output directory with extracted/ (default: work.dir of the '
                                                   'config, else build)')
     parser.add_argument('--flat', action='store_true',
-                        help='base-only: write exefs/, romfs.bin and extraction-manifest.json straight into '
-                             'extracted/ (the runtime\'s layout), not extracted/v0/')
+                        help='write exefs/, romfs.bin and extraction-manifest.json straight into extracted/ '
+                             '(the runtime layout), not extracted/v0/ (base) or extracted/v101/ (update)')
     args = parser.parse_args()
 
     config = {}
@@ -644,110 +588,65 @@ def main():
     require(base.is_file(), f'Base game not found: {base}')
     require(not update or update.is_file(), f'Update not found: {update}')
     require(keys.is_file(), f'Keys file not found: {keys}')
-    require(not args.flat or not update, '--flat is base-only (an update needs the v0/ layout for the merge)')
-    if update:
-        require(args.hactool.exists(), f'hactool not found: {args.hactool} (run tools/build_hactool.py)')
 
     versions = load_expected()
-    base_expected = versions.get('1.0.0')
-    logs = work / 'logs'
     extracted = work / 'extracted'
 
+    if update:
+        print(f'Base game: {base.name}')
+        print(f'Update: {update.name}')
+        out = extracted if args.flat else extracted / 'v101'
+        manifest_path = out / 'extraction-manifest.json'
+        manifest = None
+        if (out / 'exefs').is_dir() and manifest_path.is_file():
+            manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+            if not manifest.get('update'):  # (an earlier base-only extraction in the same folder)
+                manifest = None
+        if manifest is None:
+            shutil.rmtree(out, ignore_errors=True)
+            manifest = extract_exefs(update, keys, out / 'exefs', update=True)
+            print('ExeFS extracted:', ', '.join(f['name'] for f in manifest['files']))
+        try:
+            expected = identify_update(out / 'exefs', versions)
+            ok, problems = exefs_ok(out / 'exefs', expected)
+            require(ok, f'Update {expected["display_version"]}: {", ".join(problems)} differ')
+        except ValueError:
+            shutil.rmtree(out, ignore_errors=True)  # (a stale or unsupported ExeFS must not look extracted)
+            raise
+        version = expected['display_version']
+        print(f'  ExeFS {version}: main, sdk, rtld match')
+        if sha256(out / 'exefs' / 'main.npdm') != expected['exefs_sha256']['main.npdm']:
+            print('  main.npdm differs from the reference dump; only the code modules are used')
+        report = romfs_step(update, keys, manifest, out, args.flat, base=base)
+        check_expected(version, manifest, report)
+        if args.flat:
+            flatten_romfs(out)
+        print(f'OK: ExeFS and RomFS verified for Skyward Sword HD {version} ({GAME_TITLE_ID})')
+        return
+
+    base_expected = versions.get('1.0.0')
     print(f'Base game: {base.name}')
-    base_out = extracted if args.flat else extracted / 'v0'
-    if base_expected and base_out.exists() and not exefs_ok(base_out / 'exefs', base_expected)[0]:
-        shutil.rmtree(base_out)
-    if not (base_out / 'exefs').is_dir():
-        manifest = extract_exefs(base, keys, base_out / 'exefs')
+    out = extracted if args.flat else extracted / 'v0'
+    if base_expected and out.exists() and not exefs_ok(out / 'exefs', base_expected)[0]:
+        shutil.rmtree(out)
+    if not (out / 'exefs').is_dir():
+        manifest = extract_exefs(base, keys, out / 'exefs')
         print('ExeFS extracted:', ', '.join(f['name'] for f in manifest['files']))
     else:
-        manifest = json.loads((base_out / 'extraction-manifest.json').read_text(encoding='utf-8'))
+        manifest = json.loads((out / 'extraction-manifest.json').read_text(encoding='utf-8'))
     if base_expected:
-        ok, problems = exefs_ok(base_out / 'exefs', base_expected)
-        require(ok, f'Base game is not Skyward Sword HD 1.0.0: {", ".join(problems)} differ')
-        if sha256(base_out / 'exefs' / 'main.npdm') != base_expected['exefs_sha256']['main.npdm']:
+        ok, problems = exefs_ok(out / 'exefs', base_expected)
+        require(ok, f'Base game is not Skyward Sword HD 1.0.0: {", ".join(problems)} differ. '
+                    f'If this is an update, give it as the update and the 1.0.0 game as the base.')
+        if sha256(out / 'exefs' / 'main.npdm') != base_expected['exefs_sha256']['main.npdm']:
             print('  main.npdm differs from the reference dump; only the code modules are used')
     else:
         print('  no expected hashes for this base game yet; measuring this dump')
-
-    if not update:
-        # Base-only install: the RomFS comes straight from the base Program NCA (pure Python, all six
-        # IVFC levels verified); no hactool and no BKTR merge are involved.
-        romfs = base_out / 'romfs'
-        report = None
-        if (romfs / 'romfs.bin').is_file() and (romfs / 'index.json').is_file():
-            report = json.loads((romfs / 'index.json').read_text(encoding='utf-8'))
-        elif args.flat and (base_out / 'romfs.bin').is_file() and (base_out / 'index.json').is_file():
-            report = json.loads((base_out / 'index.json').read_text(encoding='utf-8'))  # (a finished flat run)
-        if report is None:
-            print('Extracting the base RomFS (pure Python; needs about the image size in free space)')
-            report = extract_romfs(base, keys, manifest, romfs)
-        check_expected('1.0.0', manifest, report)
-        if args.flat:
-            # The runtime serves the image straight from romfs.bin (runtime/services/fs.c); the report goes
-            # next to it as extracted/index.json, like the repo's own build/extracted.
-            (romfs / 'romfs.bin').replace(base_out / 'romfs.bin')
-            (romfs / 'index.json').replace(base_out / 'index.json')
-            romfs.rmdir()
-        print(f'OK: ExeFS and RomFS verified for Skyward Sword HD 1.0.0 ({GAME_TITLE_ID})')
-        return
-
-    print(f'Update: {update.name}')
-    update_out = extracted / 'v101'
-    if (update_out / 'exefs').is_dir():
-        try:
-            known = identify_update(update_out / 'exefs', versions)
-        except ValueError:
-            known = None
-        if known is not None and not exefs_ok(update_out / 'exefs', known)[0]:
-            shutil.rmtree(update_out)
-    manifest_path = update_out / 'extraction-manifest.json'
-    if not (update_out / 'exefs').is_dir() or not manifest_path.is_file():
-        shutil.rmtree(update_out, ignore_errors=True)
-        manifest = extract_exefs(update, keys, update_out / 'exefs', update=True)
-        print('ExeFS extracted:', ', '.join(f['name'] for f in manifest['files']))
-    else:
-        manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
-    try:
-        expected = identify_update(update_out / 'exefs', versions)
-    except ValueError:
-        expected = None
-    bootstrap = expected is None
-    if bootstrap:
-        # No tools/data/expected-v*.json for this update yet: measure this dump, and check_expected writes the file
-        # after the merge. Later runs identify the update by its main hash and stop on any difference.
-        display = '1.0.1'
-        expected = {'display_version': display, 'version': int(display.replace('.', '')),
-                    'exefs_sha256': {f['name']: f['sha256'] for f in manifest['files']},
-                    'romfs': {'size': 11 << 30, 'sha256': None}}
-        print('  no expected hashes for this update yet; measuring this dump')
-    else:
-        ok, problems = exefs_ok(update_out / 'exefs', expected)
-        require(ok, f'Update {expected["display_version"]}: {", ".join(problems)} differ')
-        print(f'  ExeFS {expected["display_version"]}: main, sdk, rtld match')
-        if sha256(update_out / 'exefs' / 'main.npdm') != expected['exefs_sha256']['main.npdm']:
-            print('  main.npdm differs from the reference dump; only the code modules are used')
-
-    romfs = update_out / 'romfs'
-    report = None
-    if not bootstrap and (romfs / 'romfs.bin').is_file() and (romfs / 'index.json').is_file():
-        report = json.loads((romfs / 'index.json').read_text(encoding='utf-8'))
-        if (report.get('romfs_size') != expected['romfs']['size']
-                or report.get('romfs_sha256') != expected['romfs']['sha256']):
-            report = None
-    if report is None:
-        print('Merging RomFS with the update (hactool; about 21 GiB free next to it)')
-        report = merge_update_romfs(base, update, keys, args.hactool, romfs, logs,
-                                    expected['romfs']['size'],
-                                    phase=lambda name: print(f'  {name}'))
-    if not bootstrap:
-        require(report['romfs_size'] == expected['romfs']['size'] and
-                report['romfs_sha256'] == expected['romfs']['sha256'],
-                f'Merged RomFS does not match {expected["display_version"]}: size {report["romfs_size"]}, '
-                f'sha256 {report["romfs_sha256"][:16]}...')
-
-    check_expected(expected['display_version'], manifest, report)
-    print(f'OK: ExeFS and RomFS verified for Skyward Sword HD {expected["display_version"]} ({GAME_TITLE_ID})')
+    report = romfs_step(base, keys, manifest, out, args.flat)
+    check_expected('1.0.0', manifest, report)
+    if args.flat:
+        flatten_romfs(out)
+    print(f'OK: ExeFS and RomFS verified for Skyward Sword HD 1.0.0 ({GAME_TITLE_ID})')
 
 
 if __name__ == '__main__':

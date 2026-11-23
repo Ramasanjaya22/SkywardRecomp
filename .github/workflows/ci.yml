@@ -85,6 +85,11 @@ jobs:
           build/test-simd-rounding
       - name: Game address table tests
         run: python3 tools/test_game_addresses.py
+      - name: Update (1.0.1) RomFS merge tests
+        run: |
+          python3 -m venv build/ci-venv
+          build/ci-venv/bin/python -m pip install -q cryptography
+          build/ci-venv/bin/python tools/test_extract_update.py
       - name: Randomizer room shuffle ledges
         run: python3 tools/test_room_ledges.py
       - name: Vulkan synchronization failure regression
@@ -163,6 +168,11 @@ jobs:
           build/test-active-pad
       - name: Game address table tests
         run: python3 tools/test_game_addresses.py
+      - name: Update (1.0.1) RomFS merge tests
+        run: |
+          python3 -m venv build/ci-venv
+          build/ci-venv/bin/python -m pip install -q cryptography
+          build/ci-venv/bin/python tools/test_extract_update.py
       - name: Vulkan synchronization failure regression
         run: python3 tools/test_vulkan_sync_errors.py
       - name: Shader translator instruction semantics

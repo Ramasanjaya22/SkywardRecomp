@@ -176,7 +176,7 @@ jobs:
             echo
             echo "Needs Windows 10 / 11 x64, a GPU with Vulkan 1.3 and a CPU with AVX2 / FMA."
             echo
-            echo "You need your own legally obtained copy of *The Legend of Zelda: Skyward Sword HD* (Switch, v1.0.0)."
+            echo "You need your own legally obtained copy of *The Legend of Zelda: Skyward Sword HD* (Switch, v1.0.0 or v1.0.1)."
             echo "This download holds no game code or game files: the start screen builds the game code on your PC from"
             echo "your own files."
             echo
