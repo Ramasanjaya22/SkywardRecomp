@@ -860,16 +860,22 @@ static void remove_fonts() {
 #ifdef __APPLE__
 static id<MTLTexture> g_bg;
 #define BG_TEXID ((ImTextureID)(__bridge void *)g_bg)
+#define ART_TEXID ((ImTextureID)(__bridge void *)g_art)
 typedef id<MTLDevice> GpuDevice;
 #else
 static uint64_t g_bg;  // ImGui texture id (Vulkan descriptor set)
 #define BG_TEXID ((ImTextureID)g_bg)
+#define ART_TEXID ((ImTextureID)g_art)
 typedef void *GpuDevice;
 #endif
 static int g_bg_w, g_bg_h;
+// The user's own picture (launcher.jpg / launcher.png in the data folder; nothing is bundled): behind the start screen instead
+// of the title movie frame, and behind the setup page.
+static decltype(g_bg) g_art;
+static int g_art_w, g_art_h;
 
-static void load_background(GpuDevice dev) {
-    std::string path = g_root + "/romfs/region_common/movie/title.webm";
+// The first frame at or after `at` seconds of a video, or a picture (at <= 0), as a texture.
+static void load_frame(GpuDevice dev, const std::string &path, double at, decltype(g_bg) &tex, int &tw, int &th) {
     AVFormatContext *fmt = NULL;
     if (avformat_open_input(&fmt, path.c_str(), NULL, NULL) < 0) return;
     int si = av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
@@ -881,13 +887,13 @@ static void load_background(GpuDevice dev) {
         if (codec && avcodec_open2(cc, codec, NULL) == 0) {
             AVPacket *pkt = av_packet_alloc();
             AVFrame *fr = av_frame_alloc();
-            int64_t want = (int64_t)(6.0 / av_q2d(st->time_base));  // a few seconds in: the island, not black
-            av_seek_frame(fmt, si, want, AVSEEK_FLAG_BACKWARD);
+            int64_t want = (int64_t)(at / av_q2d(st->time_base));
+            if (at > 0) av_seek_frame(fmt, si, want, AVSEEK_FLAG_BACKWARD);
             bool got = false;
             while (!got && av_read_frame(fmt, pkt) >= 0) {
                 if (pkt->stream_index == si && avcodec_send_packet(cc, pkt) == 0)
                     while (avcodec_receive_frame(cc, fr) == 0)
-                        if (fr->best_effort_timestamp >= want) { got = true; break; }
+                        if (at <= 0 || fr->best_effort_timestamp >= want) { got = true; break; }
                 av_packet_unref(pkt);
             }
             if (got) {
@@ -901,13 +907,13 @@ static void load_background(GpuDevice dev) {
 #ifdef __APPLE__
                 MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
                                                                                               width:w height:h mipmapped:NO];
-                g_bg = [dev newTextureWithDescriptor:td];
-                [g_bg replaceRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:0 withBytes:rgba.data() bytesPerRow:w * 4];
+                tex = [dev newTextureWithDescriptor:td];
+                [tex replaceRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:0 withBytes:rgba.data() bytesPerRow:w * 4];
 #else
                 (void)dev;
-                g_bg = vk_imgui_texture_rgba(rgba.data(), w, h);
+                tex = vk_imgui_texture_rgba(rgba.data(), w, h);
 #endif
-                g_bg_w = w, g_bg_h = h;
+                tw = w, th = h;
             }
             av_frame_free(&fr);
             av_packet_free(&pkt);
@@ -915,6 +921,18 @@ static void load_background(GpuDevice dev) {
         avcodec_free_context(&cc);
     }
     avformat_close_input(&fmt);
+}
+
+static void load_background(GpuDevice dev) {
+    load_frame(dev, g_root + "/romfs/region_common/movie/title.webm", 6.0, g_bg, g_bg_w, g_bg_h);  // (a few seconds in: the island, not black)
+}
+
+static void load_art(GpuDevice dev) {
+    for (const char *n : {"/launcher.jpg", "/launcher.png"}) {
+        std::string p = std::string(rt_data_root()) + n;
+        if (file_exists(p)) load_frame(dev, p, 0, g_art, g_art_w, g_art_h);
+        if (g_art) return;
+    }
 }
 
 // ------------------------------------------------------------------ seeds
@@ -1646,6 +1664,7 @@ extern "C" void launcher_run(const char *root) {
         fprintf(stderr, "[launcher] removed the old game data image (romfs.bin)\n");
     std::string status = check_game_files(g_root);
     if (check_copied_files(g_root).empty()) load_background(dev);  // (also behind an update of the game code)
+    load_art(dev);
     std::vector<std::string> seeds = list_seeds();
     std::vector<std::string> choices = {"Vanilla"};
     choices.insert(choices.end(), seeds.begin(), seeds.end());
@@ -1854,12 +1873,13 @@ extern "C" void launcher_run(const char *root) {
             // an update by itself: only its bar, on the start screen's background (gray without it; a failure or
             // Cancel then shows the Game Files page)
             const bool update_only = g_auto_update && busy;
-            if (g_bg && (status.empty() || update_only)) {  // cover the window, keep the aspect
-                float ia = (float)g_bg_w / g_bg_h, wa = ds.x / ds.y;
+            const bool art_on = g_art && (status.empty() || update_only || page == SETUP);
+            if (art_on || (g_bg && (status.empty() || update_only))) {  // cover the window, keep the aspect
+                float ia = art_on ? (float)g_art_w / g_art_h : (float)g_bg_w / g_bg_h, wa = ds.x / ds.y;
                 ImVec2 uv0(0, 0), uv1(1, 1);
                 if (wa > ia) { float v = ia / wa; uv0.y = (1 - v) / 2; uv1.y = 1 - uv0.y; }
                 else { float u = wa / ia; uv0.x = (1 - u) / 2; uv1.x = 1 - uv0.x; }
-                bg->AddImage(BG_TEXID, ImVec2(0, 0), ds, uv0, uv1);
+                bg->AddImage(art_on ? ART_TEXID : BG_TEXID, ImVec2(0, 0), ds, uv0, uv1);
             } else if (update_only) {
                 bg->AddRectFilled(ImVec2(0, 0), ds, IM_COL32(40, 40, 40, 255));
             } else {
