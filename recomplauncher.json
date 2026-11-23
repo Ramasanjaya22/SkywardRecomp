@@ -1,0 +1,11 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "repo": "Ramasanjaya22/SkywardRecomp",
+  "name": "SkywardRecomp",
+  "start": {
+    "program": ["skywardrecomp.exe", "SkywardRecomp.AppImage"],
+    "env": { "LARECOMP_DATA_ROOT": "{data}" }
+  },
+  "saves": ["{data}/save", "{data}/skywardrecomp.ini"]
+}

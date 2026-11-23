@@ -55,6 +55,7 @@ cp -R "$L/helper/skywardgen" build/zig "$APPDIR/usr/bin/"
 mkdir "$APPDIR/usr/bin/gamelib-src"
 cp runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h tools/gamelib_entry.c runtime/hle/hle_symbols.txt \
    "$APPDIR/usr/bin/gamelib-src/"
+cp recomplauncher.json "$APPDIR/"  # (RecompLauncher reads it from the AppDir root)
 cp tools/linux/AppRun "$APPDIR/" && chmod +x "$APPDIR/AppRun"
 cp tools/linux/skywardrecomp.desktop "$APPDIR/"
 cp docs/icon/icon_1024.png "$APPDIR/skywardrecomp.png" && ln -sf skywardrecomp.png "$APPDIR/.DirIcon"

@@ -54,3 +54,7 @@ If any job fails, nothing is published.
 - Never put game files, keys (`prod.keys`) or credentials in the repo or in a release; both build jobs scan for game
   code and fail.
 - The workflow needs the `skywardrecomp-ci` image on `ghcr.io` (built by `ci-image.yml`) for the `tests` job.
+
+## RecompLauncher
+
+`recomplauncher.json` (repo root) is what [RecompLauncher](https://recomplauncher.com/sdk) reads to install and start the game. It ships in every release: next to the exe in the Windows zip, at the AppDir root of the AppImages (`make dist`, `tools/linux/package.sh`), and `tools/smoke_package.sh` fails a package without it. It starts the game with `LARECOMP_DATA_ROOT={data}`, so saves, settings and the game files built from the player's copy live in RecompLauncher's data folder (the start screen's "change data folder" is then off). Check it against the schema after editing: https://raw.githubusercontent.com/elripalda/RecompLauncher-SDK/main/schema/recomplauncher.json
