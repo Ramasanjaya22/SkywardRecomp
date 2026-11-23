@@ -1,0 +1,39 @@
+# Seeds the Linux deps cache on main. Release (auto) runs on a tag, and a tag can only restore caches saved on its own
+# ref or on the default branch - never another tag's - so without this every release rebuilt SDL3/FFmpeg/shaderc from
+# source (10-30 min). Same cache key and path as release-auto.yml's linux job; reruns only when its inputs change.
+name: Linux deps cache
+on:
+  push:
+    branches: [main]
+    paths: ['tools/linux/build_deps.sh', 'tools/linux/Containerfile', '.github/workflows/linux-deps-cache.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deps:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04, podarch: amd64 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm, podarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deps cache
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: build/linux/${{ matrix.arch }}/deps
+          key: deps-linux-${{ matrix.arch }}-${{ hashFiles('tools/linux/build_deps.sh', 'tools/linux/Containerfile') }}
+      - name: Build deps
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: |
+          podman build -q --arch ${{ matrix.podarch }} -t localhost/skywardrecomp-build:${{ matrix.podarch }} -f tools/linux/Containerfile tools/linux
+          podman run --rm --arch ${{ matrix.podarch }} -v "$PWD:/src" -w /src localhost/skywardrecomp-build:${{ matrix.podarch }} tools/linux/build_deps.sh ${{ matrix.arch }}
+      - uses: actions/cache/save@v4
+        if: steps.deps.outputs.cache-hit != 'true' && hashFiles(format('build/linux/{0}/deps/lib/libshaderc_shared.so*', matrix.arch)) != ''
+        with:
+          path: build/linux/${{ matrix.arch }}/deps
+          key: ${{ steps.deps.outputs.cache-primary-key }}
