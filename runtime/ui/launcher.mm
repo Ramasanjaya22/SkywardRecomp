@@ -2397,6 +2397,7 @@ extern "C" void launcher_run(const char *root) {
                                        "cache and restarts SkywardRecomp to prepare the shaders again.", true)) {
                             stop_background_prep();
                             settings_save();
+                            shader_cache_freeze();  // (Windows: this process waits out the restarted one, its saver alive)
                             for (const char *f : {"cache/vk_pipelines.bin", "cache/vk_pipelines.bin.tag",
                                                   "cache/shaders.metalarchive", "cache/shaders.metalarchive.tag"})
                                 remove(f);  // (relative to the data folder: the working directory)

@@ -126,3 +126,7 @@ void shader_cache_tag(char *out, size_t n, const char *gpu);       // gpu: devic
 bool shader_cache_tag_ok(const char *tag_path, const char *tag);   // the cache's tag file says tag
 void shader_cache_tag_write(const char *tag_path, const char *tag);  // (written atomically)
 bool shader_cache_write(const char *path, const void *data, size_t n);  // temp file + rename: never half-written
+// Rebuild shader cache: this process writes no more caches (on Windows it stays alive, waiting, while the restarted
+// one runs: its pipeline saver would put the old cache back). Waits for a write under way.
+void shader_cache_freeze(void);
+bool shader_cache_frozen(void);

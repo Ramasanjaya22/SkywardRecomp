@@ -1392,7 +1392,7 @@ static void remove_old_text_cache(void) {  // (cache/shaders/*.metal: up to ~130
 }
 
 static void archive_save(bool at_exit) {
-    if (!archive_get() || !g_archive_dirty) return;
+    if (shader_cache_frozen() || !archive_get() || !g_archive_dirty) return;  // (Rebuild shader cache: restarting)
     if (at_exit ? pthread_rwlock_trywrlock(&g_archive_lock) : pthread_rwlock_wrlock(&g_archive_lock)) return;
     int adds = g_archive_dirty;
     g_archive_dirty = 0;

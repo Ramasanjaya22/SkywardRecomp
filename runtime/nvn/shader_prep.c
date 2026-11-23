@@ -482,7 +482,23 @@ bool shader_cache_tag_ok(const char *tag_path, const char *tag) {
     return !strcmp(have, tag);
 }
 
+static bool cache_write(const char *path, const void *data, size_t n);
+static pthread_mutex_t g_cache_write_lock = PTHREAD_MUTEX_INITIALIZER;
+static atomic_bool g_cache_frozen;
+void shader_cache_freeze(void) {
+    pthread_mutex_lock(&g_cache_write_lock);  // (a write already under way finishes first)
+    g_cache_frozen = true;
+    pthread_mutex_unlock(&g_cache_write_lock);
+}
+bool shader_cache_frozen(void) { return g_cache_frozen; }
+
 bool shader_cache_write(const char *path, const void *data, size_t n) {
+    pthread_mutex_lock(&g_cache_write_lock);
+    bool ok = !g_cache_frozen && cache_write(path, data, n);
+    pthread_mutex_unlock(&g_cache_write_lock);
+    return ok;
+}
+static bool cache_write(const char *path, const void *data, size_t n) {
     char tmp[1100];
     snprintf(tmp, sizeof tmp, "%s.tmp", path);
     mkdir("cache", 0755);
