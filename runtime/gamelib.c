@@ -60,6 +60,14 @@ bool gamelib_present(const char *game_dir) {
 
 static const GameLibTables *open_lib(const char *path, const char *want) {
 #ifdef _WIN32
+    // The game code imports the runtime by the module name "skywardrecomp.exe": under another file name Windows loads a second
+    // copy of that exe beside the running one (two sets of globals), and the game then crashes right at startup.
+    char exe[MAX_PATH];
+    const char *base = GetModuleFileNameA(NULL, exe, sizeof exe) ? strrchr(exe, '\\') : NULL;
+    if (base && _stricmp(base + 1, "skywardrecomp.exe")) {
+        snprintf(g_error, sizeof g_error, "this program is named %s: rename it back to skywardrecomp.exe so the game code can attach to it", base + 1);
+        return NULL;
+    }
     HMODULE h = LoadLibraryA(path);
     if (!h) { snprintf(g_error, sizeof g_error, "can't load %s (error %lu)", path, GetLastError()); return NULL; }
     GameLibEntry entry = (GameLibEntry)(void *)GetProcAddress(h, GAMELIB_ENTRY);
