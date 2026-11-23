@@ -15,6 +15,8 @@ fail() { echo "smoke: $*" >&2; exit 1; }
 for f in skywardrecomp$X skywardgen/skywardgen$X zig/zig$X gamelib-src/gamelib_entry.c gamelib-src/gamelib.h; do
     [ -e "$PKG/$f" ] || fail "package lacks $f"
 done
+M=$PKG/recomplauncher.json; [ -e "$M" ] || M=$PKG/../../recomplauncher.json  # (Linux: the AppDir root, two up from usr/bin)
+grep -q '"format": *1' "$M" 2>/dev/null || fail "package lacks recomplauncher.json"
 "$PKG/skywardgen/skywardgen$X" --help >/dev/null || fail "skywardgen does not start"
 
 # the flags of the game code, from the one place that defines them (the same ones gamebuild.c puts in its id)
