@@ -61,7 +61,7 @@ cp docs/icon/icon_1024.png "$APPDIR/skywardrecomp.png" && ln -sf skywardrecomp.p
 
 # libraries: what skywardrecomp needs (DT_NEEDED, recursively) that deps/ provides; anything else must be a system one
 needed() { readelf -d "$1" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p'; }
-SYSTEM_LIBS='^(libc|libm|libdl|libpthread|librt|libresolv|libstdc\+\+|libgcc_s|libvulkan)\.so|^ld-linux'
+SYSTEM_LIBS='^(libc|libm|libdl|libpthread|librt|libresolv|libstdc\+\+|libgcc_s|libvulkan|libz)\.so|^ld-linux'  # (libz: -lz for the texture packs; every distro has it)
 todo=("$APPDIR/usr/bin/skywardrecomp")
 while [ ${#todo[@]} -gt 0 ]; do
     f=${todo[0]}; todo=("${todo[@]:1}")
