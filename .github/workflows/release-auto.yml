@@ -7,6 +7,7 @@
 # Ways to start it (the tag must equal LARECOMP_VERSION in runtime/ui/launcher.mm at the built commit - the one place
 # the version is set; the file names and the app's own version string come from it):
 #   - git tag v0.8.1 && git push origin v0.8.1                                    (the normal way)
+#   - dry run from a branch (a dispatch needs this file on main): git tag ci-test-1 && git push origin ci-test-1 -> a prerelease
 #   - Actions -> Release (auto) -> Run workflow, tag (+ ref: branch or commit; default: the chosen branch's head);
 #     also the way to re-run a release whose run failed (a re-run of the same tag replaces its files and notes)
 #   - a release published by hand on GitHub: the files are added to it, its own notes stay on top
@@ -18,7 +19,7 @@ on:
   release:
     types: [published]
   push:
-    tags: ['v*', 'beta_*']
+    tags: ['v*', 'beta_*', 'ci-test-*']
   workflow_dispatch:
     inputs:
       tag:

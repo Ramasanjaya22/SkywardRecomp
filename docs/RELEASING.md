@@ -41,7 +41,7 @@ If any job fails, nothing is published.
 
 - **Re-run** a failed release: *Actions -> Release (auto) -> Run workflow*, `tag` = the tag (or "Re-run failed jobs" on
   the run). If the release exists, its files are replaced (`--clobber`) and the notes rewritten.
-- **Dry run** of the workflow itself: run it with `tag` = `ci-test-<anything>` and `ref` = a branch. The tag may
+- **Dry run** of the workflow itself: push a tag `ci-test-<anything>` on the commit to try (works from any branch), or, once the file is on `main`, run it with `tag` = `ci-test-<anything>` and `ref` = a branch. The tag may
   differ from `LARECOMP_VERSION`, need not be on `main`, and the release is a *prerelease*, not *latest*. `test-*` tags
   are prereleases too. Delete the test release and tag afterwards.
 - **A release made by hand** on GitHub (tag = `LARECOMP_VERSION`): the workflow attaches the files and appends its notes
