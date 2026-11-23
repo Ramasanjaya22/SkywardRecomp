@@ -287,7 +287,7 @@ jobs:
           # the notes: what was merged since the previous release (GitHub's own, from the pull requests), else the commits
           if ! CHANGES=$(gh api -X POST "repos/$GH_REPO/releases/generate-notes" -f tag_name="$TAG" -f target_commitish="$SHA" --jq .body); then
             PREV=$(git describe --tags --abbrev=0 "$SHA^" 2>/dev/null || true)
-            CHANGES=$(git log --pretty='* %s' ${PREV:+"$PREV..$SHA"} | head -100)
+            CHANGES=$(echo "## What's Changed"; git log --pretty='* %s' ${PREV:+"$PREV..$SHA"} | head -100)
           fi
           {
             echo "## Download"
@@ -299,8 +299,6 @@ jobs:
             echo "You need your own legally obtained copy of *The Legend of Zelda: Skyward Sword HD* (Switch)."
             echo "These downloads hold no game code or game files: the start screen builds the game code on your PC from"
             echo "your own files. Setup guide: docs/SETUP.md."
-            echo
-            echo "## What's changed"
             echo
             echo "$CHANGES"
             echo
