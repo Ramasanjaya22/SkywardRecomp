@@ -24,6 +24,7 @@ BRIDGE = r'''
 #include <filesystem>
 #include <string>
 #include <cstdio>
+#include <cstring>
 static std::string root;
 static intptr_t (*start_cb)(const char *const *, const char *, bool);
 static int (*wait_cb)(intptr_t, bool);
@@ -36,6 +37,9 @@ extern "C" bool rt_resource(const char *,const char *dev,char *out,size_t n) {
     return std::filesystem::exists(std::filesystem::u8path(p)) && snprintf(out,n,"%s",p.c_str())<(int)n;
 }
 extern "C" bool rt_dev_mode() { return false; }
+static uint64_t g_ram;
+extern "C" void test_set_ram(uint64_t r) { g_ram = r; }
+extern "C" void plat_system_info(PlatSysInfo *si) { memset(si, 0, sizeof *si); si->ram = g_ram; }
 extern "C" uint64_t plat_now_ns() { return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 extern "C" void plat_sleep_until_ns(uint64_t t) { auto now=plat_now_ns(); if(t>now)std::this_thread::sleep_for(std::chrono::nanoseconds(t-now)); }
 extern "C" intptr_t plat_spawn(const char *const *a,const char *l,bool append) { return start_cb(a,l,append); }
@@ -100,10 +104,10 @@ with tempfile.TemporaryDirectory() as temporary:
     CANCEL=ct.CFUNCTYPE(ct.c_bool)
     class Options(ct.Structure):
         _fields_=[('progress',PROGRESS),('jobs',ct.c_int),('cancelled',CANCEL)]
-    processes={}; launched=[]; next_id=0; fail_compile=False; fail_link=False
+    processes={}; launched=[]; next_id=0; fail_compile=False; fail_link=False; oom_compiles=0; max_parallel=0
     @SPAWN
     def spawn(args, log, append):
-        global next_id, fail_compile, fail_link
+        global next_id, fail_compile, fail_link, oom_compiles, max_parallel
         command=[];i=0
         while args[i]: command.append(args[i].decode()); i+=1
         launched.append(command.copy())
@@ -112,7 +116,12 @@ with tempfile.TemporaryDirectory() as temporary:
         if command[0]==str(generator): command=[sys.executable,*command]
         elif (fail_compile and '-c' in command) or (fail_link and '-c' not in command):
             fail_compile=fail_link=False
-            command=[sys.executable,'-c','import sys;print("synthetic failure");sys.exit(7)']
+            command=[sys.executable,'-c','import sys;print("noise line");print("unit.c:3:5: error: synthetic failure");print("1 error generated.");sys.exit(7)']
+        elif oom_compiles and '-c' in command:  # the compiler gives up for lack of memory
+            oom_compiles-=1
+            command=[sys.executable,'-c','import sys;print("fatal error: out of memory allocating 1 bytes");sys.exit(9)']
+        if '-c' in command or fail_link:
+            max_parallel=max(max_parallel,1+sum(1 for q in processes.values() if q.poll() is None and '-c' in q.args))  # compilers only (the generator runs too)
         stream=open(log.decode(),'ab' if append else 'wb')
         try:
             p=subprocess.Popen(command,stdout=stream,stderr=subprocess.STDOUT,
@@ -175,7 +184,7 @@ with tempfile.TemporaryDirectory() as temporary:
         assert hashlib.sha256(output.read_bytes()).digest()==before
         (work/'sdk_000.o').write_bytes(b'corrupt')
         fail_compile=True
-        assert not run(),why.value
+        assert not run() and b'unit.c:3:5: error: synthetic failure' in why.value,why.value  # the first compiler error reaches the player, not "1 error generated."
         assert hashlib.sha256(output.read_bytes()).digest()==before
         assert run(),why.value
         assert len(compiles())==2 and not generators()
@@ -190,6 +199,30 @@ with tempfile.TemporaryDirectory() as temporary:
         (resources/'runtime/cpu.h').write_text('/* changed header */\n')
         assert run(),why.value
         assert len(generators())==2 and len(compiles())==9
+        # memory pressure: too many compilers at once is retried with fewer, not reported as the player's failure
+        (resources/'runtime/cpu.h').write_text('/* changed again */\n')
+        options.jobs=4; oom_compiles=2; max_parallel=0
+        assert run(),why.value
+        assert len(compiles())>=9+2 and not oom_compiles
+        # on its own an out-of-memory compile is a real failure, and says so
+        (resources/'runtime/cpu.h').write_text('/* and again */\n')
+        options.jobs=1; oom_compiles=1000
+        assert not run() and b'not enough memory' in why.value and b'out of memory' in why.value,why.value
+        oom_compiles=0
+        # the compilers running together are limited to what the RAM holds
+        for pid in list(processes): kill(pid)  # (left behind by the failed run above)
+        library.test_set_ram.argtypes=[ct.c_uint64]
+        library.test_set_ram(300<<20)
+        options.jobs=4; max_parallel=0
+        assert run(),why.value
+        assert max_parallel==1,max_parallel
+        library.test_set_ram(0)
+        # too little free disk is refused up front, with the numbers
+        (resources/'runtime/cpu.h').write_text('/* and the last */\n')
+        os.environ['LARECOMP_BUILD_MIN_FREE']=str(1<<62)
+        assert not run() and b'free disk space' in why.value,why.value
+        del os.environ['LARECOMP_BUILD_MIN_FREE']
+        assert run(),why.value
         print('Build scheduler: cancellation/resume, cleanup, repair, failed-build preservation, compiler relocation and invalidation passed')
     finally:
         for pid in list(processes): kill(pid)

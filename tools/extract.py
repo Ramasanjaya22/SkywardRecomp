@@ -133,11 +133,11 @@ def common_tickets(f, entries):
 
 def read_nca_header(f, offset, size, keys):
     require(size >= 0xc00, 'Truncated NCA header')
-    require('header_key' in keys, 'Missing header_key in prod.keys')
+    require('header_key' in keys, 'This is not a prod.keys: header_key is missing')
     raw = read_at(f, offset, 0xc00)
     hdr = b''.join(decrypt(keys['header_key'], modes.XTS(i.to_bytes(16, 'big')),
                            raw[i * 512:(i + 1) * 512]) for i in range(6))
-    require(hdr[0x200:0x204] == b'NCA3', 'Expected NCA3 (check prod.keys and the game file)')
+    require(hdr[0x200:0x204] == b'NCA3', 'The package could not be decrypted: this prod.keys does not match it, or the .nsp is damaged')
     require(struct.unpack_from('<Q', hdr, 0x208)[0] == size, 'NCA size does not match container entry')
     for i in range(4):
         start, end = struct.unpack_from('<II', hdr, 0x240 + i * 16)
@@ -151,12 +151,12 @@ def nca_ctr_key(hdr, keys, tickets):
     if rights != bytes(16):
         require(rights in tickets, 'Missing common ticket for rights-managed NCA in the NSP')
         keyname = f'titlekek_{generation:02x}'
-        require(keyname in keys, f'Missing {keyname} in prod.keys')
+        require(keyname in keys, f'prod.keys has no {keyname}: it was dumped from a console with older firmware than this game needs; dump it again after updating the console')
         return decrypt(keys[keyname], modes.ECB(), tickets[rights])
     require(hdr[0x207] < 3, 'Unsupported NCA key area')
     area = ('application', 'ocean', 'system')[hdr[0x207]]
     keyname = f'key_area_key_{area}_{generation:02x}'
-    require(keyname in keys, f'Missing {keyname} in prod.keys')
+    require(keyname in keys, f'prod.keys has no {keyname}: it was dumped from a console with older firmware than this game needs; dump it again after updating the console')
     return decrypt(keys[keyname], modes.ECB(), hdr[0x300:0x340])[32:48]
 
 
@@ -173,7 +173,7 @@ def nca_inventory(f, entries, keys):
 
 
 def program_nca(records, update=False):
-    """The one Program NCA of Astral Chain; update: the file must be the update NSP.
+    """The one Program NCA of Skyward Sword HD; update: the file must be the update NSP.
 
     Both packages carry the base title id on their Program NCA; the Meta NCA (content type 1) carries the
     package's own id, so that is what tells an update from a base game.
@@ -182,10 +182,10 @@ def program_nca(records, update=False):
     require(len(programs) == 1, 'Expected one Program NCA; updates, DLC and combined packages are unsupported')
     record, hdr = programs[0]
     require(record['title_id'] == GAME_TITLE_ID,
-            f'Expected Astral Chain ({GAME_TITLE_ID}); this file contains another title')
+            f'This package is not the base game of Skyward Sword HD (expected title {GAME_TITLE_ID}, found {record["title_id"]})')
     metadata = [r['title_id'] for r, _ in records if r['content_type'] == 1]
     if update:
-        require(UPDATE_TITLE_ID in metadata, 'The file is not an Astral Chain update')
+        require(UPDATE_TITLE_ID in metadata, 'The file is not the Skyward Sword HD update')
     return record, hdr
 
 

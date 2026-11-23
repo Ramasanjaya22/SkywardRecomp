@@ -755,7 +755,9 @@ static PlatProc spawn_child(const char *const argv[], const char *log_path, bool
     static __thread wchar_t wprog[MAX_PATH], wfull[MAX_PATH];
     MultiByteToWideChar(CP_UTF8, 0, argv[0], -1, wprog, MAX_PATH);
     for (wchar_t *p = wprog; *p; p++) if (*p == L'/') *p = L'\\';
-    const wchar_t *app = GetFullPathNameW(wprog, MAX_PATH, wfull, NULL) ? wfull : NULL;
+    // (a bare name like "python" has no folder: leave it to CreateProcess's PATH search, not the current folder)
+    bool has_dir = wcschr(wprog, L'\\') != NULL || wcschr(wprog, L':') != NULL;
+    const wchar_t *app = has_dir && GetFullPathNameW(wprog, MAX_PATH, wfull, NULL) ? wfull : NULL;
     BOOL ok = FALSE;
     if (no_cfg) {
         *no_cfg = ERROR_NOT_SUPPORTED;

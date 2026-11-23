@@ -32,6 +32,16 @@ Steam with Steam Input on, the game sees Steam's virtual Xbox controller (Xbox p
 If the AppImage won't start with a FUSE error, install your distribution's `fuse3` package, or run it with
 `APPIMAGE_EXTRACT_AND_RUN=1`. On a Steam Deck, put `APPIMAGE_EXTRACT_AND_RUN=1 %command%` in the game's launch options.
 
+## Fedora, Bazzite and other immutable distributions
+The AppImage needs no installation, so it runs on Bazzite as is (`chmod +x`, then run it from your home folder; if it fails with a
+FUSE error use `APPIMAGE_EXTRACT_AND_RUN=1`). Mesa's RADV (Radeon RX 6000 series) provides Vulkan 1.3. Keep the game files and the
+data folder (`~/.local/share/skywardrecomp`) on a drive with a normal Linux filesystem and about 15 GB free; NTFS / exFAT mounts
+can refuse the executable permissions the compiled game code needs. The game code is compiled on first start with the compiler
+bundled in the AppImage, so no development packages are needed. To build from source on an immutable system, do it inside a
+`distrobox` / `toolbox` container with the Fedora equivalents of the packages below (`sudo dnf install clang lld make
+pkgconf-pkg-config python3 SDL3-devel ffmpeg-free-devel vulkan-loader-devel shaderc-devel ...`; SDL3 3.4+ is required: use
+`tools/linux/build_deps.sh` if Fedora's is older). Not verified on a real Bazzite install by the maintainers: please report results.
+
 ## Building from source
 Ubuntu / Debian packages (other distributions: the same libraries under their names). SDL3 must be 3.4 or newer
 (SkywardRecomp loads and saves PNGs through it); where the distribution ships an older one (Debian 13 has 3.2), build SDL3

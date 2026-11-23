@@ -48,6 +48,10 @@ Running natively on Windows (Vulkan, 21:9 ultrawide).
 
 The percentage is a rough milestone estimate, not a measured figure.
 
+## Setup
+
+Start here: [docs/SETUP.md](docs/SETUP.md) (requirements, game files, prod.keys, troubleshooting).
+
 ## Building (Windows)
 
 See [docs/BUILD-windows.md](docs/BUILD-windows.md) (MSYS2 UCRT64, clang, Vulkan 1.3 GPU, AVX2/FMA CPU).
