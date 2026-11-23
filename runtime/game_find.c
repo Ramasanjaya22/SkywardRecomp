@@ -262,7 +262,7 @@ static void pick_dump(Walk *w, GameFindExefsCheck check, GameFind *g) {
     }
 }
 
-void game_find(const char *dir, GameFindExefsCheck check, GameFind *g) {
+static void find_in(const char *dir, GameFindExefsCheck check, GameFind *g) {
     memset(g, 0, sizeof *g);
     Walk *w = (Walk *)calloc(1, sizeof *w);
     if (!w) return;
@@ -316,6 +316,35 @@ void game_find(const char *dir, GameFindExefsCheck check, GameFind *g) {
     free(w);
 }
 
+// The folder above dir ("" if there is none worth looking at: a drive root or the file system root is never searched).
+static int parent_dir(const char *dir, char *out, size_t n) {
+    snprintf(out, n, "%s", dir);
+    size_t len = strlen(out);
+    while (len > 1 && (out[len - 1] == '/' || out[len - 1] == '\\')) out[--len] = 0;
+    while (len > 0 && out[len - 1] != '/' && out[len - 1] != '\\') len--;
+    while (len > 1 && (out[len - 1] == '/' || out[len - 1] == '\\')) len--;
+    out[len] = 0;
+    return len > 0 && out[len - 1] != ':';
+}
+
+void game_find(const char *dir, GameFindExefsCheck check, GameFind *g) {
+    find_in(dir, check, g);
+    if (!g->exefs[0] || g->romfs[0] || g->nsp[0]) return;
+    // Only an exefs folder, nothing to go with it: the player probably picked the exefs's own folder (or a sibling of the
+    // romfs), so the romfs may sit next to it. Look one level up, bounded like the first search; an unrelated parent changes nothing.
+    char up[GAME_FIND_PATH];
+    if (!parent_dir(dir, up, sizeof up)) return;
+    GameFind *u = (GameFind *)calloc(1, sizeof *u);
+    if (!u) return;
+    find_in(up, check, u);
+    // shortcut: only when the parent search settles on the same exefs, so a neighbour's dump is never taken, if the parent holds several dumps pick_dump decides and this may miss, then refine pick_dump to pair by exefs.
+    if (u->romfs[0] && !strcmp(u->exefs, g->exefs)) {
+        *g = *u;
+        g->from_parent = 1;
+    }
+    free(u);
+}
+
 static void put(char *out, size_t n, size_t *len, const char *fmt, const char *a, const char *b) {
     if (*len >= n) return;
     int r = snprintf(out + *len, n - *len, fmt, a, b);
@@ -327,7 +356,8 @@ void game_find_describe(const GameFind *g, char *out, size_t n) {
     if (n) out[0] = 0;
     char num[96];
     if (g->exefs[0] && g->romfs[0]) {
-        put(out, n, &len, "Using the extracted game files in %s%s.\n", g->exefs, "");
+        put(out, n, &len, "Using the extracted game files in %s%s.\n", g->exefs,
+            g->from_parent ? " (the folder you picked had no romfs, so the folder above it was searched too)" : "");
     } else if (g->exefs[0] && !g->nsp[0]) {
         put(out, n, &len, "Found an exefs folder (%s) but no romfs folder (the one with region_common) to go with it.\n", g->exefs, "");
     } else if (g->nsp[0]) {

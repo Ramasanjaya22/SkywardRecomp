@@ -170,6 +170,21 @@ int main(int argc, char **argv) {
     CHECK(g.exefs[0] && g.romfs[0] && !g.nsp[0], "B: exefs '%s' romfs '%s' nsp '%s'", g.exefs, g.romfs, g.nsp);
     CHECK(ends_with(g.exefs, "/B/Game/exefs") && ends_with(g.romfs, "/B/Game/romfs"), "B: the folders that hold them: '%s' '%s'", g.exefs, g.romfs);
 
+    // B2: the player picked the exefs's own folder, the romfs is next to it (one level up): found, and said so
+    dump_files("B2", "Game");
+    path_of(p, sizeof p, "B2", "Game/exefs"); find(p, &g);
+    if (!g_legacy) {
+        CHECK(g.exefs[0] && g.romfs[0] && g.from_parent, "B2: picked the exefs folder itself: exefs '%s' romfs '%s' parent %d", g.exefs, g.romfs, g.from_parent);
+        game_find_describe(&g, text, sizeof text);
+        CHECK(strstr(text, "folder above"), "B2: says the parent was searched:\n%s", text);
+    }
+
+    // B3: an exefs with no romfs anywhere (also not above): still reported as such, no false match
+    path_of(p, sizeof p, "B3", "Only/exefs/main"); write_file(p, "x", 1);
+    path_of(p, sizeof p, "B3", "Only/exefs/main.npdm"); write_file(p, "x", 1);
+    path_of(p, sizeof p, "B3", "Only"); find(p, &g);
+    CHECK(g.exefs[0] && !g.romfs[0] && !g.nsp[0] && !g.from_parent, "B3: exefs '%s' romfs '%s'", g.exefs, g.romfs);
+
     // C: several packages: update, DLC, another game, damaged one, and the base (named so the wrong ones sort and list first)
     path_of(p, sizeof p, "C", "a_update.nsp"); pfs0(p, UPDATE, 3, 0);
     path_of(p, sizeof p, "C", "b_dlc.nsp"); pfs0(p, DLC, 2, 0);

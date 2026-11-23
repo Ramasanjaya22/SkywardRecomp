@@ -24,6 +24,7 @@ typedef struct {
     char update[GAME_FIND_PATH];                        // the 1.0.1 update package found with it ("" if none): applied over the base game
     int unusable;                                       // .xci / .nca / .nsz / .xcz seen (not supported)
     int dirs, files, nsp_seen;                          // what was looked at
+    int from_parent;                                    // the romfs was found by also looking one folder above the picked one
     int budget_hit;                                     // stopped early: the folder is huge, pick a more specific one
     GameFindNote notes[GAME_FIND_NOTES];                // the candidates that were skipped, and why
     int nnotes, nmore;                                  // nmore: notes beyond the table
