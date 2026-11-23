@@ -1693,6 +1693,7 @@ static void prelaunch_tab(float sc) {
     }
 }
 
+extern "C" bool widescreen_sites_present(void);  // runtime/hle/widescreen.c
 extern "C" void launcher_run(const char *root) {
     g_root = root;
     g_start_screen = 1;
@@ -2089,7 +2090,8 @@ extern "C" void launcher_run(const char *root) {
                 // first PLAY ever: the aspect ratio question, then how to reach our menu, then the game
                 if (g_play_pending && status.empty()) pressed = true, g_play_pending = false;
                 if (pressed) {
-                    if (!g_settings.aspect_asked) ImGui::OpenPopup("##aspect");
+                    // (no game version selected on this screen yet: until a version has aspect sites the question is skipped)
+                    if (!g_settings.aspect_asked && widescreen_sites_present()) ImGui::OpenPopup("##aspect");
                     else if (!g_settings.menu_tip_seen) ImGui::OpenPopup("##menutip");
                     else play = true;
                 }

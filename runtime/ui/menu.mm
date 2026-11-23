@@ -411,6 +411,7 @@ static void tab_display(void) {
     opt_choice("Aspect ratio", &g_settings.aspect, aspects, 2, ASPECT_UNLOCKED,
                "Unlocked: the view fills the window, so wider windows show more - up to ultrawide. Original 16:9: "
                "the game's own framing, with bars.");
+    if (!widescreen_sites_present()) ImGui::TextDisabled("Ultrawide not available for this game version yet");
     bool fs = g_settings.fullscreen;
     if (opt_toggle("Fullscreen", &fs, false, "Fills the screen. Also: F11, Alt+Enter or Cmd+Ctrl+F.")) {
         g_settings.fullscreen = fs;
