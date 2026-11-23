@@ -1,6 +1,6 @@
 // Start screen, shown before the game boots (user 2026-10-08, styled after Dusklight's launcher): PLAY (with
 // ‹ Vanilla / seed › picker), SETTINGS, QUIT, game-files status at the lower left. Nothing of the game ships with
-// SkywardRecomp: on first launch the user picks the folder with their own game files (1.0.0), we check
+// SkywardRecomp: on first launch the user picks the folder with their own game files (1.0.0, or 1.0.1 with its update package), we check
 // the main module's build id (runtime/game_addresses/versions.h), copy the files and build the game's data image; PLAY stays disabled until that worked. The background is a frame of the game's own title movie (from the user's files) once extracted.
 //
 // Skipped with --play, LARECOMP_NO_LAUNCHER=1, or any scripted test run (LARECOMP_INPUT): tests boot straight in
@@ -96,7 +96,7 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 // test build (a pre-release for a few players to try a fix) is test-<name>: the start screen says "Test build <name>",
 // and it previews LARECOMP_TEST_OF - the update check offers that release (or a later one) as soon as it's out, so its
 // players move to it.
-#define LARECOMP_VERSION "v0.8.1"
+#define LARECOMP_VERSION "v0.8.2"
 #define LARECOMP_TEST_OF "v0.8.0"
 extern "C" const char *larecomp_version(void) { return LARECOMP_VERSION; }  // (the shader caches' tag)
 
@@ -113,6 +113,7 @@ extern "C" const char *larecomp_version(void) { return LARECOMP_VERSION; }  // (
 #include "update_tags.h"  // tag_rank, tag_label
 
 static std::string g_update_tag;  // a newer release's tag (g_update_lock)
+static int g_update_state;        // 0 not asked yet, 1 asking, 2 asked (g_update_tag: the newer release, if any), 3 failed (g_update_lock)
 static pthread_mutex_t g_update_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void *update_thread(void *) {
@@ -135,7 +136,13 @@ static void *update_thread(void *) {
         const char *av[] = {curl.c_str(), "-fsSL", "--max-time", "15", "-H", "Accept: application/vnd.github+json",
                             "-A", "SkywardRecomp/" LARECOMP_VERSION, RELEASES_URL, NULL};
         PlatProc p = plat_spawn(av, out.c_str(), false);
-        if (!p || plat_proc_wait(p, true) != 0) { remove(out.c_str()); return NULL; }
+        if (!p || plat_proc_wait(p, true) != 0) {
+            remove(out.c_str());
+            pthread_mutex_lock(&g_update_lock);
+            g_update_state = 3;
+            pthread_mutex_unlock(&g_update_lock);
+            return NULL;
+        }
         if (FILE *f = fopen(out.c_str(), "rb")) {
             char buf[8192];
             size_t n;
@@ -157,8 +164,24 @@ static void *update_thread(void *) {
     if (!best.empty()) fprintf(stderr, "[launcher] update available: %s (this build %s)\n", best.c_str(), LARECOMP_VERSION);
     pthread_mutex_lock(&g_update_lock);
     g_update_tag = best;
+    g_update_state = 2;
     pthread_mutex_unlock(&g_update_lock);
     return NULL;
+}
+
+// The start screen's UPDATE row asks again (the window can stay open while a release comes out); one check at a time.
+static void start_update_check() {
+    pthread_mutex_lock(&g_update_lock);
+    bool go = g_update_state != 1;
+    if (go) g_update_state = 1;
+    pthread_mutex_unlock(&g_update_lock);
+    pthread_t t;
+    if (go && pthread_create(&t, NULL, update_thread, NULL) == 0) pthread_detach(t);
+    else if (go) {
+        pthread_mutex_lock(&g_update_lock);
+        g_update_state = 3;
+        pthread_mutex_unlock(&g_update_lock);
+    }
 }
 
 // ------------------------------------------------------------------ game files
@@ -288,7 +311,7 @@ static const char *status_hint(const std::string &why) {
     if (why.rfind("Game files incomplete", 0) == 0)
         return "Some of the game's files are missing, usually from a copy or unzip that stopped partway. Copy your game "
                "files again, then choose that folder and set them up again.";
-    if (why == "Wrong version of the game") return "SkywardRecomp needs version 1.0.0 of the game.";
+    if (why == "Wrong version of the game") return "SkywardRecomp needs version 1.0.0 of the game, or 1.0.1 (the base game with its update).";
     if (why == "Game code not built yet") return "Set up the game files to build it (a few minutes, only once).";
     return "Set up the game files to play.";
 }
@@ -299,6 +322,8 @@ static const char *status_hint(const std::string &why) {
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static std::string g_src;           // the picked folder
 static std::string g_keys_pick;     // the prod.keys the player chose (g_lock); empty: search for one
+static std::string g_update_pick;   // the 1.0.1 update .nsp the player chose (g_lock); empty: the one found next to the base game
+static std::string g_found;         // what the picked folder holds, as game_find_describe says it (g_lock): shown under the folder row
 static std::string g_job;           // current setup step / result for the status line
 static std::string g_job_hint;      // a failure: what to do about it (shown under it)
 static bool g_busy, g_job_failed;
@@ -315,7 +340,7 @@ static void set_job(const std::string &s, bool failed = false, const std::string
 
 // (the not-found failure's hint, and the caption over the game files page's example folder)
 static const char *const PICK_FOLDER_HINT =
-    "Choose the folder that has the game's exefs and romfs folders (or the .nsp package) in it.\n\n"
+    "Choose the folder that has the game's exefs and romfs folders (or the .nsp package, and for 1.0.1 its update .nsp) in it.\n\n"
     "Using a .nsp? It also needs your prod.keys (your Switch's encryption keys, dumped from your own console with "
     "Lockpick_RCM): it's found by itself next to the .nsp, or choose it in the prod.keys row. Other files in the folder are fine.";
 
@@ -330,7 +355,7 @@ static void set_failure(int k, int have = -1, const char *reason = NULL, int wan
         PICK_FOLDER_HINT,
         "SkywardRecomp needs the game's own files (the exefs and romfs folders), not .xci / .nsp / .nca files.",
         "Make sure there's about 12 GB free and try again.",
-        "SkywardRecomp needs version 1.0.0 of the game.",
+        "SkywardRecomp needs version 1.0.0 of the game, or 1.0.1 (the base game with its update package). Other versions aren't supported.",
         "Some of the game's files are missing - usually a copy or unzip that stopped partway. Copy the game files "
         "again so none are missing, then choose the folder again.",
         "Make sure there's about 2 GB free and try again. If it keeps happening, report it on GitHub."};
@@ -353,7 +378,7 @@ static void set_failure(int k, int have = -1, const char *reason = NULL, int wan
 static int exefs_supported(const char *exefs, char *why, size_t n) {
     char label[32];
     if (game_release_label(exefs, label, sizeof label)) return 1;
-    snprintf(why, n, "not version 1.0.0 of Skyward Sword HD (a different game, or another version of it)");
+    snprintf(why, n, "not version 1.0.0 or 1.0.1 of Skyward Sword HD (a different game, or another version of it)");
     return 0;
 }
 
@@ -539,9 +564,10 @@ static std::string find_prod_keys(const std::string &nsp_dir) {
 
 // A picked .nsp (the game package): extracted in place by the extractor (tools/extract.py, shipped as the
 // skywardextract helper, or the source checkout's python) straight into extracted/ -- exefs/ + romfs.bin, the
-// layout runtime/services/fs.c serves. Base game only: an update package needs hactool's BKTR merge. Needs
+// layout runtime/services/fs.c serves. The 1.0.1 update package, if there, is applied over the base (extract.py merges
+// its BKTR patch with the base's RomFS, no external tool). Needs
 // the console's prod.keys: next to the package, in its parent folder, or already in the data root.
-static bool extract_nsp(const std::string &nsp) {
+static bool extract_nsp(const std::string &nsp, const std::string &update) {
     size_t slash = nsp.find_last_of("/\\");
     std::string dir = slash == std::string::npos ? std::string(".") : nsp.substr(0, slash);
     std::string keys;
@@ -562,7 +588,7 @@ static bool extract_nsp(const std::string &nsp) {
         return false;
     }
     char helper[1100], py[1100], script[1100];
-    const char *argv[10];
+    const char *argv[12];
     int n = 0;
     if (rt_resource("skywardextract/skywardextract" PLAT_EXE_SUFFIX, NULL, helper, sizeof helper)) {
         argv[n++] = helper;
@@ -577,8 +603,11 @@ static bool extract_nsp(const std::string &nsp) {
     }
     fprintf(stderr, "[launcher] extractor: %s%s\n", argv[0], n > 1 ? " (with tools/extract.py)" : "");
     static std::string a_base, a_keys, a_work;  // (the arguments outlive the spawn)
+    static std::string a_update;
+    a_update = update;
     a_base = nsp, a_keys = keys, a_work = ".";  // (cwd is the data root; extract.py appends 'extracted' itself, so passing g_root nested it as extracted/extracted)
     argv[n++] = "--base", argv[n++] = a_base.c_str();
+    if (!a_update.empty()) argv[n++] = "--update", argv[n++] = a_update.c_str();
     argv[n++] = "--keys", argv[n++] = a_keys.c_str();
     argv[n++] = "--work", argv[n++] = a_work.c_str();
     argv[n++] = "--flat", argv[n] = NULL;
@@ -606,8 +635,9 @@ static bool extract_nsp(const std::string &nsp) {
         }
         set_job("The game package didn't extract", true,
                 std::string(why[0] ? why : "The extractor stopped without saying why.") +
-                " The .nsp was " + nsp + ", opened with " + keys + ". Is the .nsp the base game (not an update or DLC), "
-                "and is prod.keys from a console whose firmware is as new as the game's? The full log is extract.log in the "
+                " The .nsp was " + nsp + (update.empty() ? "" : ", with the update " + update) + ", opened with " + keys +
+                ". Is the .nsp the base game 1.0.0 (not DLC), and the update, if any, the 1.0.1 one for it? "
+                "Also, is prod.keys from a console whose firmware is as new as the game's? The full log is extract.log in the "
                 "data folder; if it keeps happening, report it on GitHub with that file.");
         return false;
     }
@@ -623,7 +653,7 @@ static void *extract_thread(void *) {
     g_cancel_build = false;
     g_done = 0, g_total = 0, g_phase_base = 0, g_build_frac = -1, g_copy_skipped = false;
     game_files_changed();
-    std::string exefs, romfs, nsp, found_text;
+    std::string exefs, romfs, nsp, update, found_text;
     bool unusable = false;  // (game packages rather than its files)
     if (src.empty() && check_copied_files(g_root).empty()) {  // copied already (an update needs new game code)
         g_copy_skipped = true;
@@ -634,15 +664,20 @@ static void *extract_thread(void *) {
     {
         GameFind *f = new GameFind;
         find_game(src, *f, &found_text);
-        exefs = f->exefs, romfs = f->romfs, nsp = f->nsp, unusable = f->unusable;
+        exefs = f->exefs, romfs = f->romfs, nsp = f->nsp, update = f->update, unusable = f->unusable;
         delete f;
+    }
+    if (update.empty()) {  // (none next to the base game: the one the player chose, if any)
+        pthread_mutex_lock(&g_lock);
+        update = g_update_pick;
+        pthread_mutex_unlock(&g_lock);
     }
     if ((exefs.empty() || romfs.empty()) && nsp.empty()) {
         set_failure(unusable ? FAIL_UNUSABLE : FAIL_NOT_FOUND, -1, found_text.c_str());
         goto done;
     }
     if (!nsp.empty() && (exefs.empty() || romfs.empty())) {  // a game package: extract it in place
-        if (!extract_nsp(nsp)) goto done;
+        if (!extract_nsp(nsp, update)) goto done;
         if (!build_id_ok(g_root + "/exefs")) { set_failure(FAIL_VERSION); goto done; }
         g_copy_skipped = true;  // (nothing was copied: the build's bar is the whole progress)
         pthread_mutex_lock(&g_lock);
@@ -722,8 +757,15 @@ static std::string picker_hint(const char *what) {
 static void SDLCALL picked(void *, const char *const *files, int) {
     if (!files) { set_job(PICKER_FAILED, true, picker_hint("folder")); return; }
     if (!files[0]) return;
+    std::string found;  // (what's in the folder, so a wrong pick can be seen before Set up)
+    {
+        GameFind *f = new GameFind;
+        find_game(files[0], *f, &found);
+        delete f;
+    }
     pthread_mutex_lock(&g_lock);
     g_src = files[0];
+    g_found = found;
     if (g_job == PICKER_FAILED) g_job.clear(), g_job_hint.clear(), g_job_failed = false;
     pthread_mutex_unlock(&g_lock);
 }
@@ -741,6 +783,24 @@ static void SDLCALL picked_keys(void *, const char *const *files, int) {
     pthread_mutex_lock(&g_lock);
     g_keys_pick = files[0];
     if (g_job_failed && g_job.find("prod.keys") != std::string::npos) g_job.clear(), g_job_hint.clear(), g_job_failed = false;
+    pthread_mutex_unlock(&g_lock);
+}
+
+// A chosen update package: it must be the 1.0.1 update (a .nsp that says so), refused here with its reason otherwise.
+static void SDLCALL picked_update(void *, const char *const *files, int) {
+    if (!files) { set_job(PICKER_FAILED, true, picker_hint("file")); return; }
+    if (!files[0]) return;
+    char why[200] = "";
+    if (game_nsp_classify(files[0], why, sizeof why) != GAME_NSP_UPDATE) {
+        set_job("That isn't the 1.0.1 update package", true,
+                std::string(why[0] ? std::string(why) + " " : "") +
+                "Choose the update .nsp of Skyward Sword HD (title id 01002DA013484800, \"[v65536]\"), or leave this empty "
+                "if it's in the game files folder.");
+        return;
+    }
+    pthread_mutex_lock(&g_lock);
+    g_update_pick = files[0];
+    if (g_job_failed && g_job.find("update package") != std::string::npos) g_job.clear(), g_job_hint.clear(), g_job_failed = false;
     pthread_mutex_unlock(&g_lock);
 }
 
@@ -1639,8 +1699,7 @@ extern "C" void launcher_run(const char *root) {
     static bool update_checked;  // (once per launch, not again after a "Title screen" reboot)
     if (!update_checked && !getenv("LARECOMP_NO_UPDATE_CHECK")) {
         update_checked = true;
-        pthread_t t;
-        if (pthread_create(&t, NULL, update_thread, NULL) == 0) pthread_detach(t);
+        start_update_check();
     }
     ui_window_init();
     SDL_Window *win = ui_window();
@@ -2064,6 +2123,20 @@ extern "C" void launcher_run(const char *root) {
                     if (g_refocus == SETUP) ImGui::SetKeyboardFocusHere(), g_refocus = MAIN;
                     if (menu_item("SET UP GAME FILES", !busy)) page = SETUP;
                 }
+                {  // a newer release: its row opens the release page; otherwise the row asks GitHub again
+                    pthread_mutex_lock(&g_update_lock);
+                    std::string upd = g_update_tag;
+                    int us = g_update_state;
+                    pthread_mutex_unlock(&g_update_lock);
+                    std::string ul = !upd.empty() ? "UPDATE TO " + tag_label(upd, false)
+                                   : us == 1 ? "CHECKING FOR UPDATES..." : us == 2 ? "UP TO DATE" : us == 3 ? "UPDATE CHECK FAILED"
+                                   : "CHECK FOR UPDATES";
+                    ImGui::SetCursorPosX(x0);
+                    if (menu_item(ul.c_str(), upd.empty() ? us != 1 : true)) {
+                        if (!upd.empty()) SDL_OpenURL((RELEASE_PAGE + upd).c_str());
+                        else start_update_check();
+                    }
+                }
                 ImGui::SetCursorPosX(x0);
                 if (menu_item("QUIT", true)) exit(0);
                 g_menu_gap = 0.35f;
@@ -2164,7 +2237,7 @@ extern "C" void launcher_run(const char *root) {
                 ImGui::Spacing();
 
                 pthread_mutex_lock(&g_lock);
-                std::string src = g_src, job = g_job, job_hint = g_job_hint;
+                std::string src = g_src, job = g_job, job_hint = g_job_hint, found = g_found;
                 bool failed = g_job_failed;
                 pthread_mutex_unlock(&g_lock);
                 bool ready = status.empty() && !busy;  // (set up: the window offers to delete them)
@@ -2182,9 +2255,11 @@ extern "C" void launcher_run(const char *root) {
                     dl->AddLine(ImVec2(x, cy), ImVec2(x + u * 0.35f, cy + u * 0.35f), g, fs * 0.11f);
                     dl->AddLine(ImVec2(x + u * 0.35f, cy + u * 0.35f), ImVec2(x + u, cy - u * 0.4f), g, fs * 0.11f);
                 };
-                std::string src_d = "The folder with your own extracted game files (exefs/romfs) of The Legend of Zelda: Skyward "
-                                    "Sword HD for Nintendo Switch. The game isn't included with SkywardRecomp.";
-                if (!src.empty()) src_d += "\n\nChosen: " + src;
+                std::string src_d = "The folder with your own copy of The Legend of Zelda: Skyward Sword HD for Nintendo Switch: "
+                                    "the extracted game files (exefs/romfs), or the game's .nsp package. Version 1.0.0 and "
+                                    "1.0.1 are supported; for 1.0.1, keep the base game's .nsp and its update .nsp in this folder "
+                                    "(or choose the update below). The game isn't included with SkywardRecomp.";
+                if (!src.empty()) src_d += "\n\nChosen: " + src + (found.empty() ? "" : "\n\n" + found);
                 // the step that's running / its result, under the rows and in the Set up row's explanation
                 const std::string &job_line = job;
                 std::string ex_d = "Copies the game files SkywardRecomp needs and recompiles the game from them. This only "
@@ -2206,6 +2281,22 @@ extern "C" void launcher_run(const char *root) {
                         SDL_ShowOpenFolderDialog(picked, NULL, win, NULL, false);
                     check_left_of_value(src_v);
                     first_row();
+                    {  // (only for 1.0.1 from a .nsp, and only when the update isn't in the game files folder)
+                        pthread_mutex_lock(&g_lock);
+                        std::string up = g_update_pick;
+                        pthread_mutex_unlock(&g_lock);
+                        std::string ud = "Optional, for version 1.0.1: the update .nsp (\"[01002DA013484800][v65536]\") of the game. "
+                                         "SkywardRecomp applies it over the base game's .nsp, so the game files become 1.0.1. It is "
+                                         "found by itself when it's in the game files folder; choose it here if it's somewhere else. "
+                                         "Leave this empty for version 1.0.0.";
+                        if (!up.empty()) ud += "\n\nChosen: " + up;
+                        static const SDL_DialogFileFilter nsp_f[] = {{"Switch package", "nsp"}, {"All files", "*"}};
+                        std::string uv = up.empty() ? "Choose..." : "Selected";
+                        if (busy) opt_disable_next();
+                        if (opt_action("Update 1.0.1 (optional .nsp)", uv.c_str(), ud.c_str(), true))
+                            SDL_ShowOpenFileDialog(picked_update, NULL, win, nsp_f, 2, NULL, false);
+                        check_left_of_value(uv);
+                    }
                     {  // (only a .nsp needs it; found by itself when it's next to the .nsp or where yuzu / Ryujinx keep it)
                         pthread_mutex_lock(&g_lock);
                         std::string kp = g_keys_pick;

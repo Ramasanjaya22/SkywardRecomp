@@ -85,6 +85,11 @@ jobs:
           build/test-simd-rounding
       - name: Game address table tests
         run: python3 tools/test_game_addresses.py
+      - name: Update (1.0.1) RomFS merge tests
+        run: |
+          python3 -m venv build/ci-venv
+          build/ci-venv/bin/python -m pip install -q cryptography
+          build/ci-venv/bin/python tools/test_extract_update.py
       - name: Randomizer room shuffle ledges
         run: python3 tools/test_room_ledges.py
       - name: Vulkan synchronization failure regression
@@ -163,6 +168,11 @@ jobs:
           build/test-active-pad
       - name: Game address table tests
         run: python3 tools/test_game_addresses.py
+      - name: Update (1.0.1) RomFS merge tests
+        run: |
+          python3 -m venv build/ci-venv
+          build/ci-venv/bin/python -m pip install -q cryptography
+          build/ci-venv/bin/python tools/test_extract_update.py
       - name: Vulkan synchronization failure regression
         run: python3 tools/test_vulkan_sync_errors.py
       - name: Shader translator instruction semantics
@@ -185,7 +195,7 @@ jobs:
           msystem: UCRT64
           update: true
           install: make git python
-          pacboy: clang:p lld:p binutils:p python:p sdl3:p ffmpeg:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
+          pacboy: clang:p lld:p binutils:p python:p python-cryptography:p sdl3:p ffmpeg:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
             vulkan-memory-allocator:p
       - name: App builds
         run: make -j"$(nproc)" build/skywardrecomp.exe
@@ -200,6 +210,8 @@ jobs:
         run: python3 tools/test_delete_guard.py
       - name: Game-file detection (the right .nsp among unrelated, update, DLC and damaged files)
         run: python3 tools/test_game_find.py
+      - name: Update (1.0.1) RomFS merge tests
+        run: python3 tools/test_extract_update.py
       - name: Data folder move (cut off at every step)
         run: python3 tools/test_data_move.py
       - name: Movie extractor lifecycle regression

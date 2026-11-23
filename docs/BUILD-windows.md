@@ -9,7 +9,7 @@ Run in PowerShell from the repo root:
     powershell -ExecutionPolicy Bypass -File tools\setup_windows.ps1
 
 This installs MSYS2 (UCRT64: clang, lld, make, SDL3, FFmpeg, Vulkan loader + headers, shaderc, Vulkan Memory
-Allocator, validation layers), Python 3.12 for the tools (`tools\venv`: unicorn, capstone, lz4) and switches the clone to LF line endings.
+Allocator, validation layers), Python 3.12 for the tools (`tools\venv`: unicorn, capstone, lz4, cryptography) and switches the clone to LF line endings.
 
 ## Build
 From an MSYS2 UCRT64 shell, or Git Bash with MSYS2 first on PATH:
@@ -17,6 +17,7 @@ From an MSYS2 UCRT64 shell, or Git Bash with MSYS2 first on PATH:
     export PATH="/c/msys64/ucrt64/bin:/c/msys64/usr/bin:$PATH"
     make gen        # once: recompile the game from extracted/exefs (your own game files; see the start screen)
     make -j         # -> build/skywardrecomp.exe and the game code library build/skywardgame.dll
+                    # (also creates/completes tools/venv: `make tools-venv`, cryptography for the extractor)
 
 Without `generated/` only the app is built: the start screen builds the game code itself when you set up the game
 files (as for players), given the generator and the compiler (`make gen-helper`, `tools/fetch_zig.sh`).

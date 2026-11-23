@@ -1,6 +1,6 @@
 # Setting up SkywardRecomp
 
-You supply your own, legally obtained copy of *The Legend of Zelda: Skyward Sword HD* (version 1.0.0). This project contains
+You supply your own, legally obtained copy of *The Legend of Zelda: Skyward Sword HD* (version 1.0.0, or 1.0.1 with its update package). This project contains
 no game files and no keys, and does not help you obtain them.
 
 ## 1. What you need
@@ -12,10 +12,10 @@ no game files and no keys, and does not help you obtain them.
 | GPU | Vulkan 1.3 driver |
 | Disk | about 12 GB free for the game files, plus about 2-3 GB for the compiler's work files |
 | RAM | 8 GB or more; the one-time compile runs several compiler processes at once, each needs roughly 0.5-1.5 GB |
-| Game | **either** the game's `.nsp` package (base game, v1.0.0) **or** its extracted `exefs` and `romfs` folders |
+| Game | **either** the game's `.nsp` package (base game v1.0.0, plus the v1.0.1 update `.nsp` if you want 1.0.1) **or** its extracted `exefs` and `romfs` folders (1.0.0 only) |
 | `prod.keys` | **only for the `.nsp`**: your own console's keys file. Not needed if you already have the extracted folders |
 
-The `.xci`, `.nca`, `.nsz` and `.xcz` formats and update / DLC `.nsp` files are not supported; extract the base game first.
+The `.xci`, `.nca`, `.nsz` and `.xcz` formats and DLC `.nsp` files are not supported. The 1.0.1 update `.nsp` (title `01002DA013484800`, v65536) is only used together with the base game's `.nsp` (it is a patch: the app applies it over the base game, so both are needed, in the same folder or below it, or choose the update in the window's **Update 1.0.1 (optional .nsp)** row); on its own it is skipped, with the reason shown.
 
 ## 2. Install and start
 
@@ -55,7 +55,7 @@ Every failure in the window says what happened, why and what to do. The same tex
 | "Those are game packages, not game files" | Only `.xci` / `.nca` / `.nsz` files were found. Use the base game's `.nsp` or its extracted folders. |
 | "The .nsp can't be opened without prod.keys" | Choose your `prod.keys` in the window, or put it next to the `.nsp`. |
 | Extraction failed (shows the last line of `extract.log`) | Usually keys that are too old for the game's firmware (dump them again from a console on the current firmware), or a damaged `.nsp` (copy it again). |
-| "Wrong version of the game" | Only v1.0.0 is supported, not a later update. |
+| "Wrong version of the game" | Only v1.0.0 and v1.0.1 are supported. For 1.0.1 choose the folder with the base `.nsp` **and** the 1.0.1 update `.nsp` (the extracted folders of 1.0.1 aren't supported: the update is a patch that only the `.nsp` route merges). Another update, or a different game, is refused with its build ID in the message. |
 | "Your game files are incomplete" | A copy that stopped partway. Copy the game files again. |
 | "The game code didn't build" | The window shows the step and the compiler's **first** error (the later ones follow from it). The full log is in the data folder's build folder. Re-running resumes: finished files are kept. If the first error says out of memory or "killed", close other programs; a Linux system kills compiler processes when RAM runs out. If it names an undefined `__ubsan_handle_*` symbol, you are on a release older than the fix: update. |
 | Linux: AppImage won't start | Install `fuse3`, or run it with `APPIMAGE_EXTRACT_AND_RUN=1`. |

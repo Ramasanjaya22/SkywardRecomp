@@ -113,6 +113,11 @@ jobs:
         run: python3 tools/test_build_cache.py
       - name: Game-files delete guard
         run: DEPS="/opt/sdl3" python3 tools/test_delete_guard.py
+      - name: Update (1.0.1) RomFS merge
+        run: |
+          python3 -m venv build/ci-venv
+          build/ci-venv/bin/python -m pip install -q cryptography
+          build/ci-venv/bin/python tools/test_extract_update.py
 
   windows:
     needs: [check, tests]
@@ -141,7 +146,7 @@ jobs:
           msystem: UCRT64
           update: true
           install: make git curl tar xz diffutils zip unzip
-          pacboy: clang:p lld:p binutils:p python:p sdl3:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
+          pacboy: clang:p lld:p binutils:p python:p python-cryptography:p sdl3:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
             vulkan-memory-allocator:p nasm:p
       - name: Tests on Windows (junctions, paths)
         run: |
@@ -149,6 +154,7 @@ jobs:
           python3 tools/test_build_cache.py
           python3 tools/test_gamebuild_resume.py
           python3 tools/test_delete_guard.py
+          python3 tools/test_extract_update.py
       - name: Deps cache
         id: deps
         uses: actions/cache/restore@v4
@@ -296,7 +302,7 @@ jobs:
             echo "* **Linux x86_64 / aarch64 (experimental):** \`*-linux-<arch>.AppImage\`. \`chmod +x\` it and run it."
             echo
             echo "Needs a GPU with Vulkan 1.3 and, on x86-64, a CPU with AVX2 / FMA (Windows 10 / 11 x64; Linux: glibc 2.35 or newer)."
-            echo "You need your own legally obtained copy of *The Legend of Zelda: Skyward Sword HD* (Switch)."
+            echo "You need your own legally obtained copy of *The Legend of Zelda: Skyward Sword HD* (Switch, v1.0.0 or v1.0.1)."
             echo "These downloads hold no game code or game files: the start screen builds the game code on your PC from"
             echo "your own files. Setup guide: docs/SETUP.md."
             echo

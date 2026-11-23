@@ -12,6 +12,10 @@ static const GameAddrs ga_v1_0_0 = {
 #include "game_addresses/patches_v1_0_0.h"
 #include "game_addresses/runtime_v1_0_0.h"
 };
+static const GameAddrs ga_v1_0_1 = {
+#include "game_addresses/patches_v1_0_1.h"
+#include "game_addresses/runtime_v1_0_1.h"
+};
 #undef GA_ADDR
 
 static const GameVersion versions[] = {
@@ -71,7 +75,7 @@ bool game_version_select(const char *game_dir, char *why, size_t why_size) {
     const GameVersion *v = game_version_by_build_id(id);
     if (!v) {
         snprintf(why, why_size, "these game files are an unsupported version of the game (main build ID "
-                 "%02X%02X%02X%02X%02X%02X%02X%02X): SkywardRecomp needs version 1.0.0",
+                 "%02X%02X%02X%02X%02X%02X%02X%02X): SkywardRecomp supports version 1.0.0 and the 1.0.1 update",
                  id[0], id[1], id[2], id[3], id[4], id[5], id[6], id[7]);
         return false;
     }
@@ -87,14 +91,26 @@ const GameVersion *game_version(void) { return g_version; }
 
 static const struct { uint64_t hash; uint8_t versions; } romfs_files[] = {
 #include "game_addresses/romfs_files.h"
-#if !defined(ROMFS_SS_FILES) || !defined(ROMFS_SS_BYTES)
+#if !defined(ROMFS_SS_VERSIONS)
 #error "stale romfs_files.h: run python3 tools/romfs_files.py"
 #endif
 };
 enum { ROMFS_ENTRIES = sizeof romfs_files / sizeof *romfs_files };
 
-int game_romfs_files(const GameVersion *v) { return v ? ROMFS_SS_FILES : 0; }
-uint64_t game_romfs_bytes(const GameVersion *v) { return v ? ROMFS_SS_BYTES : 0; }
+// Each version's file count and byte total (ROMFS_SS_VERSIONS: X(key, files, bytes) per versions.h entry).
+static const struct { const char *key; int files; uint64_t bytes; } romfs_totals[] = {
+#define X(key, files, bytes) {#key, files, bytes},
+    ROMFS_SS_VERSIONS
+#undef X
+};
+
+static int romfs_total(const GameVersion *v) {
+    for (size_t i = 0; v && i < sizeof romfs_totals / sizeof *romfs_totals; i++)
+        if (!strcmp(romfs_totals[i].key, v->key)) return (int)i;
+    return -1;
+}
+int game_romfs_files(const GameVersion *v) { int i = romfs_total(v); return i < 0 ? 0 : romfs_totals[i].files; }
+uint64_t game_romfs_bytes(const GameVersion *v) { int i = romfs_total(v); return i < 0 ? 0 : romfs_totals[i].bytes; }
 
 struct GameRomfsCheck {
     uint8_t version;              // romfs_files' bit for the version

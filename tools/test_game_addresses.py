@@ -56,6 +56,8 @@ for key in VERSIONS:
         assert list(runtime_values) == list(tables['v1_0_0'][1]), f'runtime_{key}.h names differ from v1_0_0'
 assert len({bid for _, bid in VERSIONS.values()}) == len(VERSIONS)
 assert version_for_build_id('D824D4B1BBD45D03668380D6D041BA4CA00A64FF') == 'v1_0_0'
+assert version_for_build_id('5441AF3C89F97E1D25A8CCF14C742BF82336D8A8') == 'v1_0_1'  # the update's main
+assert list(VERSIONS) == ['v1_0_0', 'v1_0_1']
 for bad in ('', 'ae16f71e002af8cb059a9a74c4d90f34ba984892', 'ae16f71e002af8cb', 'ae16f71e002af8cb059a9a74c4d90f34ba98489200000001', '00' * 20):
     try:
         version_for_build_id(bad)
@@ -106,6 +108,12 @@ if (argc == 3 && !strcmp(argv[1], "id")) {  // id <40 hex>: the version's table,
     if (!v) { puts("none"); return 0; }
     printf("%s\n", v->key);
     for (size_t i = 0; i < sizeof(GameAddrs) / 8; i++) printf("%llx\n", (unsigned long long)((const uint64_t *)v->addrs)[i]);
+    return 0;
+}
+if (argc == 3 && !strcmp(argv[1], "totals")) {  // totals <40 hex>: the version's RomFS file count and bytes
+    uint8_t id[20];
+    const GameVersion *v = hex(argv[2], id) ? game_version_by_build_id(id) : NULL;
+    printf("%d %llu\n", game_romfs_files(v), (unsigned long long)game_romfs_bytes(v));
     return 0;
 }
 if (argc == 3 && !strcmp(argv[1], "label")) {  // label <exefs folder>
@@ -169,7 +177,11 @@ def fake_game(name, bid, npdm=b'fixture npdm'):
     return d.parent
 g0 = fake_game('g0', VERSIONS['v1_0_0'][1])
 gx = fake_game('gx', '11' * 20)
+g1 = fake_game('g1', VERSIONS['v1_0_1'][1])
 assert native('label', g0/'exefs') == ['1.0.0']
+assert native('label', g1/'exefs') == ['1.0.1']
+assert native('select', g1)[:2] == ['1', 'v1_0_1']
+assert native('select', g0)[:2] == ['1', 'v1_0_0']
 assert native('label', gx/'exefs') == ['none']
 assert native('label', tmp/'missing') == ['none']
 assert native('id', 'ae16f71e002af8cb059a9a74c4d90f34ba984892') == ['none']  # LA's 1.0.0 is refused
@@ -180,13 +192,16 @@ assert native('select', tmp/'missing')[0] == '0'
 # ---- the RomFS file check (runtime/game_addresses/romfs_files.h, from tools/romfs_files.py): hashes only
 import romfs_files  # noqa: E402
 romfs_header = (TABLE_DIR/'romfs_files.h').read_text()
-entries = re.findall(r'^\{0x([0-9a-f]{16})ull, ([123])\},$', romfs_header, re.M)
+entries = re.findall(r'^\{0x([0-9a-f]{16})ull, ([0-9]+)\},$', romfs_header, re.M)
 hashes = [int(h, 16) for h, _ in entries]
 assert hashes == sorted(set(hashes)), 'romfs_files.h: not sorted, or a hash twice'
-want_files = int(re.search(r'^#define ROMFS_SS_FILES (\d+)$', romfs_header, re.M).group(1))
-assert len(entries) == want_files, 'romfs_files.h: entries'
-assert sum(int(m) & 1 for _, m in entries) == want_files, 'romfs_files.h: file count'
-assert not sum(int(m) >> 1 for _, m in entries), 'romfs_files.h: bit-1 entries'
+totals = re.findall(r'X\((v\d+_\d+_\d+), (\d+), (\d+)ull\)', romfs_header)
+assert [t[0] for t in totals] == list(VERSIONS), 'romfs_files.h: one total per version of versions.h'
+for bit, (key, files, size) in enumerate(totals):
+    assert sum(int(m) >> bit & 1 for _, m in entries) == int(files), f'romfs_files.h: {key} file count'
+    assert native('totals', VERSIONS[key][1]) == [files, size], f'{key}: native totals'
+assert not sum(int(m) >> len(totals) for _, m in entries), 'romfs_files.h: a bit of no version'
+assert native('totals', '00' * 20) == ['0', '0']  # (unknown version: no check)
 for rel, size in (('region_common/event/x.bfevfl', 2712), ('a', 0), ('b c/d.bin', 6232003695)):
     assert int(native('hash', rel, size)[0], 16) == romfs_files.entry_hash(rel, size), rel
 

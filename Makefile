@@ -139,7 +139,25 @@ PATHMAP  := -ffile-prefix-map=$(CURDIR)=. $(if $(filter windows,$(PLATFORM)),-ff
 RTFLAGS  := -O2 -g -fno-strict-aliasing -Wall -Wno-unused-function -Iruntime -Iruntime/nvn $(DEPINC) $(OSFLAGS) $(PATHMAP)
 CXXFLAGS := -O2 -g -std=c++17 -I$(IMGUI) -I$(IMGUI)/backends -Iruntime -Iruntime/nvn $(DEPINC) $(PATHMAP)
 
-all: $(EXE) $(if $(GEN_SRC),$(GAMELIB))
+all: $(EXE) $(if $(GEN_SRC),$(GAMELIB)) tools-venv
+
+# A source build runs tools/extract.py (the start screen's game package setup) and gen.py from tools/venv: keep it
+# complete, so the extractor never stops on a missing package (cryptography: the 1.0.1 update .nsp). Creates the venv
+# when missing; never fails the build (the start screen then says what to install).
+ifeq ($(PLATFORM),windows)
+TOOLS_PY ?= $(or $(wildcard $(HOME)/AppData/Local/Programs/Python/Python312/python.exe),python)
+else
+TOOLS_PY ?= python3
+endif
+TOOLS_PKGS := lz4 capstone unicorn cryptography
+tools-venv:
+	@[ "$${CI:-}" != true ] || exit 0; \
+	v=$$(ls tools/venv/Scripts/python.exe tools/venv/bin/python 2>/dev/null | head -1); \
+	[ -n "$$v" ] || { echo "tools-venv: creating tools/venv"; "$(TOOLS_PY)" -m venv tools/venv && \
+	    v=$$(ls tools/venv/Scripts/python.exe tools/venv/bin/python 2>/dev/null | head -1); } || true; \
+	[ -n "$$v" ] || { echo "tools-venv: no tools/venv and '$(TOOLS_PY)' cannot create it (see docs)"; exit 0; }; \
+	"$$v" -c 'import lz4, capstone, unicorn, cryptography' 2>/dev/null || \
+	    "$$v" -m pip install -q $(TOOLS_PKGS) || echo "tools-venv: pip install $(TOOLS_PKGS) failed (offline?)"
 
 $(B)/obj/%.o: $(GEN)/%.c runtime/cpu.h runtime/simd.h runtime/simd_fp.h
 	@mkdir -p $(dir $@)
@@ -372,7 +390,7 @@ appimages:
 smoketest:
 	tools/linux/smoketest.sh
 
-.PHONY: dmg all gen gen-helper gen-objs runtime-objs deps deps-windows app dist rando-helper appimage appimages smoketest test_texpack
+.PHONY: tools-venv dmg all gen gen-helper gen-objs runtime-objs deps deps-windows app dist rando-helper appimage appimages smoketest test_texpack
 
 build/test_shaders: tools/test_shaders.m runtime/nvn/maxwell/translate.c runtime/nvn/maxwell/shader.h
 	clang -O1 -fobjc-arc -framework Metal -framework Foundation -o $@ tools/test_shaders.m runtime/nvn/maxwell/translate.c

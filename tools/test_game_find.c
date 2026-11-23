@@ -181,9 +181,10 @@ int main(int argc, char **argv) {
     path_of(p, sizeof p, "C", ""); find(p, &g);
     CHECK(ends_with(g.nsp, "/C/z_skyward base.nsp"), "C: picked '%s' (update/DLC/other game/damaged must be skipped)", g.nsp);
     if (!g_legacy) {
-        CHECK(g.nnotes == 5, "C: 5 skipped candidates explained, got %d", g.nnotes);
+        CHECK(g.nnotes == 4, "C: 4 skipped candidates explained (the update is used, not skipped), got %d", g.nnotes);
+        CHECK(ends_with(g.update, "/C/a_update.nsp"), "C: the update package is picked with the base: '%s'", g.update);
         game_find_describe(&g, text, sizeof text);
-        CHECK(strstr(text, "a_update.nsp") && strstr(text, "update package"), "C: says the update was skipped:\n%s", text);
+        CHECK(strstr(text, "a_update.nsp") && strstr(text, "update package") && strstr(text, "applied over"), "C: says the update is applied:\n%s", text);
         CHECK(strstr(text, "d_broken.nsp") && strstr(text, "PFS0"), "C: says the broken file isn't a package:\n%s", text);
         CHECK(strstr(text, "e_cut.nsp") && strstr(text, "cut short"), "C: says the truncated file is cut short:\n%s", text);
     }
@@ -208,7 +209,7 @@ int main(int argc, char **argv) {
     path_of(p, sizeof p, "F", "garbage.nsp"); write_file(p, "", 0);
     path_of(p, sizeof p, "F", "nocontent.nsp"); pfs0(p, NOCA, 2, 0);
     path_of(p, sizeof p, "F", ""); find(p, &g);
-    CHECK(!g.nsp[0], "F: nothing valid, picked '%s'", g.nsp);
+    CHECK(!g.nsp[0] && !g.update[0], "F: nothing valid, picked '%s' + update '%s' (an update alone is no game)", g.nsp, g.update);
     if (!g_legacy) {
         game_find_describe(&g, text, sizeof text);
         CHECK(strstr(text, "update.nsp") && strstr(text, "garbage.nsp") && strstr(text, "nocontent.nsp"), "F: every file explained:\n%s", text);

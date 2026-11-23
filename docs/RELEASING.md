@@ -25,7 +25,7 @@ AppImages, checks the packages, and publishes them on a GitHub release with a `S
 | Job | What |
 |---|---|
 | `check` | tag == `LARECOMP_VERSION` at the commit (else it fails with the two values); the commit is on `main`; an existing tag points at this commit; the Makefile still has `-fno-sanitize=undefined` |
-| `tests` | `test_game_find.py`, `test_gamebuild_resume.py`, `test_build_cache.py`, `test_delete_guard.py` in the CI container |
+| `tests` | `test_game_find.py`, `test_gamebuild_resume.py`, `test_build_cache.py`, `test_delete_guard.py`, `test_extract_update.py` (the 1.0.1 update merge; in a venv with `cryptography`) in the CI container |
 | `windows` | the same tests under MSYS2 (real junctions), `make dist`, no-game-code scan, package smoke check |
 | `linux` (x86_64 + aarch64) | `make appimage`, no-game-code scan, package smoke check on the unpacked AppImage |
 | `publish` | only when all of the above passed: `SHA256SUMS`, generated notes, `gh release create` |
