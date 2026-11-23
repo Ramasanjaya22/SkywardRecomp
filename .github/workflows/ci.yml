@@ -39,7 +39,7 @@ jobs:
           clang -std=gnu11 -O1 tools/test_movie_extractor.c $(pkg-config --cflags --libs libavformat libavcodec libavutil libswscale) -pthread -o build/test-movie-extractor
           mkdir -p build/movie-test
           build/test-movie-extractor build/movie-test
-          python3 tools/test_movie_audio.py  # (skips without the ffmpeg command)
+          python3 tools/test_movie_audio.py  # (webm part skips without ffmpeg; synthetic formats always run)
       - name: Kernel condition-variable regression
         run: |
           clang -O2 -pthread tools/test_condvar.c -o build/test-condvar

@@ -108,14 +108,12 @@ static void movie_file(const char *name, const char *mime) {
 }
 
 int main(int argc, char **argv) {
-    assert(argc == 2);
     setvbuf(stdout, NULL, _IONBF, 0);
-    g_romfs_dir = argv[1];
+    g_romfs_dir = argc > 1 ? argv[1] : ".";  // usage: test [dir webm-name...]; no args = synthetic frames only
     enum AVSampleFormat fmts[] = {AV_SAMPLE_FMT_FLTP, AV_SAMPLE_FMT_FLT, AV_SAMPLE_FMT_S16, AV_SAMPLE_FMT_S16P,
                                   AV_SAMPLE_FMT_S32, AV_SAMPLE_FMT_S32P, AV_SAMPLE_FMT_DBL, AV_SAMPLE_FMT_DBLP};
     for (size_t i = 0; i < sizeof fmts / sizeof *fmts; i++) synthetic(fmts[i]);
-    movie_file("vorbis.webm", "audio/vorbis");
-    movie_file("opus.webm", "audio/opus");
+    for (int i = 2; i < argc; i++) movie_file(argv[i], strstr(argv[i], "opus") ? "audio/opus" : "audio/vorbis");
     movie_reset();
     puts("PASS: movie audio mime per codec and s16 output for every sample format");
 }
