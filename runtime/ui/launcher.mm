@@ -96,7 +96,7 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 // test build (a pre-release for a few players to try a fix) is test-<name>: the start screen says "Test build <name>",
 // and it previews LARECOMP_TEST_OF - the update check offers that release (or a later one) as soon as it's out, so its
 // players move to it.
-#define LARECOMP_VERSION "v0.8.1"
+#define LARECOMP_VERSION "v0.8.2"
 #define LARECOMP_TEST_OF "v0.8.0"
 extern "C" const char *larecomp_version(void) { return LARECOMP_VERSION; }  // (the shader caches' tag)
 
@@ -113,6 +113,7 @@ extern "C" const char *larecomp_version(void) { return LARECOMP_VERSION; }  // (
 #include "update_tags.h"  // tag_rank, tag_label
 
 static std::string g_update_tag;  // a newer release's tag (g_update_lock)
+static int g_update_state;        // 0 not asked yet, 1 asking, 2 asked (g_update_tag: the newer release, if any), 3 failed (g_update_lock)
 static pthread_mutex_t g_update_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void *update_thread(void *) {
@@ -135,7 +136,13 @@ static void *update_thread(void *) {
         const char *av[] = {curl.c_str(), "-fsSL", "--max-time", "15", "-H", "Accept: application/vnd.github+json",
                             "-A", "SkywardRecomp/" LARECOMP_VERSION, RELEASES_URL, NULL};
         PlatProc p = plat_spawn(av, out.c_str(), false);
-        if (!p || plat_proc_wait(p, true) != 0) { remove(out.c_str()); return NULL; }
+        if (!p || plat_proc_wait(p, true) != 0) {
+            remove(out.c_str());
+            pthread_mutex_lock(&g_update_lock);
+            g_update_state = 3;
+            pthread_mutex_unlock(&g_update_lock);
+            return NULL;
+        }
         if (FILE *f = fopen(out.c_str(), "rb")) {
             char buf[8192];
             size_t n;
@@ -157,8 +164,24 @@ static void *update_thread(void *) {
     if (!best.empty()) fprintf(stderr, "[launcher] update available: %s (this build %s)\n", best.c_str(), LARECOMP_VERSION);
     pthread_mutex_lock(&g_update_lock);
     g_update_tag = best;
+    g_update_state = 2;
     pthread_mutex_unlock(&g_update_lock);
     return NULL;
+}
+
+// The start screen's UPDATE row asks again (the window can stay open while a release comes out); one check at a time.
+static void start_update_check() {
+    pthread_mutex_lock(&g_update_lock);
+    bool go = g_update_state != 1;
+    if (go) g_update_state = 1;
+    pthread_mutex_unlock(&g_update_lock);
+    pthread_t t;
+    if (go && pthread_create(&t, NULL, update_thread, NULL) == 0) pthread_detach(t);
+    else if (go) {
+        pthread_mutex_lock(&g_update_lock);
+        g_update_state = 3;
+        pthread_mutex_unlock(&g_update_lock);
+    }
 }
 
 // ------------------------------------------------------------------ game files
@@ -1676,8 +1699,7 @@ extern "C" void launcher_run(const char *root) {
     static bool update_checked;  // (once per launch, not again after a "Title screen" reboot)
     if (!update_checked && !getenv("LARECOMP_NO_UPDATE_CHECK")) {
         update_checked = true;
-        pthread_t t;
-        if (pthread_create(&t, NULL, update_thread, NULL) == 0) pthread_detach(t);
+        start_update_check();
     }
     ui_window_init();
     SDL_Window *win = ui_window();
@@ -2100,6 +2122,20 @@ extern "C" void launcher_run(const char *root) {
                     ImGui::SetCursorPosX(x0);
                     if (g_refocus == SETUP) ImGui::SetKeyboardFocusHere(), g_refocus = MAIN;
                     if (menu_item("SET UP GAME FILES", !busy)) page = SETUP;
+                }
+                {  // a newer release: its row opens the release page; otherwise the row asks GitHub again
+                    pthread_mutex_lock(&g_update_lock);
+                    std::string upd = g_update_tag;
+                    int us = g_update_state;
+                    pthread_mutex_unlock(&g_update_lock);
+                    std::string ul = !upd.empty() ? "UPDATE TO " + tag_label(upd, false)
+                                   : us == 1 ? "CHECKING FOR UPDATES..." : us == 2 ? "UP TO DATE" : us == 3 ? "UPDATE CHECK FAILED"
+                                   : "CHECK FOR UPDATES";
+                    ImGui::SetCursorPosX(x0);
+                    if (menu_item(ul.c_str(), upd.empty() ? us != 1 : true)) {
+                        if (!upd.empty()) SDL_OpenURL((RELEASE_PAGE + upd).c_str());
+                        else start_update_check();
+                    }
                 }
                 ImGui::SetCursorPosX(x0);
                 if (menu_item("QUIT", true)) exit(0);
