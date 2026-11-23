@@ -12,7 +12,7 @@ permissions:
 jobs:
   deps:
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 90  # (a cold x86_64 run took over 45 min on 2026-11-23: the image build's apt step; the old limit cancelled it before the cache was saved)
     strategy:
       fail-fast: false
       matrix:
@@ -30,7 +30,7 @@ jobs:
       - name: Build deps
         if: steps.deps.outputs.cache-hit != 'true'
         run: |
-          podman build -q --arch ${{ matrix.podarch }} -t localhost/skywardrecomp-build:${{ matrix.podarch }} -f tools/linux/Containerfile tools/linux
+          podman build --arch ${{ matrix.podarch }} -t localhost/skywardrecomp-build:${{ matrix.podarch }} -f tools/linux/Containerfile tools/linux
           podman run --rm --arch ${{ matrix.podarch }} -v "$PWD:/src" -w /src localhost/skywardrecomp-build:${{ matrix.podarch }} tools/linux/build_deps.sh ${{ matrix.arch }}
       - uses: actions/cache/save@v4
         if: steps.deps.outputs.cache-hit != 'true' && hashFiles(format('build/linux/{0}/deps/lib/libshaderc_shared.so*', matrix.arch)) != ''
