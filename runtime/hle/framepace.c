@@ -67,9 +67,11 @@ float rt_frame_timestep(float game_value) {
     last = now;
     int t = rt_fps_target();
     if (t == FPS_AUTO) return game_value;
-    if (t > 0) return frame_step = 30.0f / (float)t;
     float s = (float)dt * 3e-8f;  // (ns -> 1/30 s)
-    return frame_step = s < 0.125f ? 0.125f : s > 1.0f ? 1.0f : s;
+    // A target the machine can't keep (frames slower than 1 s / target) must not play in slow motion: the world
+    // advances by the time that passed, never less than the target's step (Unlocked: 1/8, its floor).
+    float lo = t > 0 ? 30.0f / (float)t : 0.125f;
+    return frame_step = s < lo ? lo : s > 1.0f ? 1.0f : s;
 }
 
 // the frame period in ms the controller stores next (FRAME_TIMESTEP + 4): its readers add rate x period every frame,

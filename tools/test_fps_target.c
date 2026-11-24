@@ -44,6 +44,23 @@ int main(void) {
     CHECK(rt_frame_interval_avg(2.0f) < 1.5f);
     CHECK(NEAR(rt_frame_timestep(0.5f), 0.25f));
 
+    // A machine that can't reach the target: the world advances by the time that really passed (never less than the
+    // target's step, at most one 1/30 s step), else the game plays in slow motion (reported in game at 60 / 90 / 120).
+    g_settings.fps_target = FPS_60;
+    rt_frame_timestep(0.5f);
+    t_ns += 16666667ull;  // on target
+    CHECK(NEAR(rt_frame_timestep(0.5f), 0.5f));
+    t_ns += 25000000ull;  // a 25 ms frame: 0.75 of a 1/30 s step, not 0.5
+    CHECK(NEAR(rt_frame_timestep(0.5f), 0.75f));
+    CHECK(NEAR(rt_frame_period(16.666667f), 25.0f));
+    t_ns += 500000000ull;  // a stall: at most one step
+    CHECK(NEAR(rt_frame_timestep(0.5f), 1.0f));
+    g_settings.fps_target = FPS_120;
+    t_ns += 12000000ull;  // 12 ms where 8.3 was wanted: 0.36
+    CHECK(NEAR(rt_frame_timestep(0.5f), 0.36f));
+    t_ns += 5000000ull;  // faster than the target: the target's step is the floor (0.25)
+    CHECK(NEAR(rt_frame_timestep(0.5f), 0.25f));
+
     g_settings.fps_target = FPS_UNLOCKED;  // the time that passed, 1/8 to 1 step
     CHECK(rt_frame_interval_avg(2.0f) < 1.5f);
     rt_frame_timestep(0.5f);
