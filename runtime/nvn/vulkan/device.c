@@ -488,8 +488,12 @@ static void create_device(void) {
                                             .maintenance4 = VK_TRUE,
                                             .pNext = g_vk.custom_border ? (void *)&cbc : g_vk.divisor ? (void *)&div : NULL};
     VkPhysicalDeviceVulkan12Features f12 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
-                                            .timelineSemaphore = VK_TRUE, .shaderInt8 = VK_TRUE, .samplerMirrorClampToEdge = VK_TRUE,
-                                            .uniformAndStorageBuffer8BitAccess = VK_TRUE, .storageBuffer8BitAccess = VK_TRUE,
+                                            .timelineSemaphore = VK_TRUE, .samplerMirrorClampToEdge = VK_TRUE,
+                                            // no shader uses 8-bit types: ask only for what the driver has (Turnip on
+                                            // Adreno 830 lacks uniformAndStorageBuffer8BitAccess, #18)
+                                            .shaderInt8 = have12.shaderInt8,
+                                            .uniformAndStorageBuffer8BitAccess = have12.uniformAndStorageBuffer8BitAccess,
+                                            .storageBuffer8BitAccess = have12.storageBuffer8BitAccess,
                                             .scalarBlockLayout = VK_TRUE, .bufferDeviceAddress = g_vk.bda, .pNext = &f13};
     VkPhysicalDeviceVulkan11Features f11 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
                                             .storageBuffer16BitAccess = VK_TRUE, .pNext = &f12};
