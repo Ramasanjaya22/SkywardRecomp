@@ -13,6 +13,7 @@
 #include "../../settings.h"
 #include "../../ui/menu.h"
 #include "../rqueue.h"
+#include "pcache_policy.h"
 #include "vk.h"
 #include "record.h"
 #include "../output_scale.h"
@@ -306,12 +307,18 @@ static void pipeline_cache_tag(char *out, size_t n) {
     shader_cache_tag(out, n, gpu);
 }
 
-static void *pipeline_cache_saver(void *a) {  // every 3 minutes, when it grew
+static uint64_t pcache_saved_ns;  // when (SDL_GetTicksNS) the file was last written, or the cache loaded
+
+// Looks every 10 s (a thread of its own, never the game's or the render thread): the cache is written when it grew
+// 1 MB, or a minute after it first grew (pcache_policy.h), so a crash loses seconds of shader work, not minutes.
+static void *pipeline_cache_saver(void *a) {
     (void)a;
     for (;;) {
-        SDL_Delay(180000);
+        SDL_Delay(10000);
         if (rq_stopping()) break;  // (quitting: backend_quit saves it)
-        vk_pipeline_cache_save();
+        size_t sz = 0;
+        if (vkGetPipelineCacheData(g_vk.dev, g_vk.pcache, &sz, NULL) != VK_SUCCESS) continue;
+        if (pcache_should_save(sz, pcache_saved, (double)(SDL_GetTicksNS() - pcache_saved_ns) * 1e-9)) vk_pipeline_cache_save();
     }
     return NULL;
 }
@@ -589,7 +596,8 @@ static void create_device(void) {
     free(data);
     if (pc.initialDataSize) LOG("[vk] pipeline cache: loaded %zu bytes\n", pc.initialDataSize);
     pcache_saved = pc.initialDataSize;
-    pthread_t t;  // (kept every few minutes while it grows, not only at a clean exit)
+    pcache_saved_ns = SDL_GetTicksNS();
+    pthread_t t;  // (kept while it grows, not only at a clean exit)
     pthread_create(&t, NULL, pipeline_cache_saver, NULL);
     pthread_detach(t);
 }
@@ -606,6 +614,7 @@ void vk_pipeline_cache_save(void) {
             pipeline_cache_tag(tag, sizeof tag);
             if (!shader_cache_tag_ok(PCACHE_TAG, tag)) shader_cache_tag_write(PCACHE_TAG, tag);
             pcache_saved = sz;
+            pcache_saved_ns = SDL_GetTicksNS();
             LOG("[vk] pipeline cache: saved %zu bytes\n", sz);
         }
         free(data);
