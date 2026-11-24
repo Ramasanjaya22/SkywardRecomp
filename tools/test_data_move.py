@@ -181,6 +181,27 @@ with tempfile.TemporaryDirectory() as directory:
     check_in(home, 'switched back')
     print('start fresh: the old data stays; back to it as it is; never moved into a folder with data')
 
+    # pull (the launcher's "Move here" for the folder used before): the data in A moves into this install's folder B
+    for fresh_ini in (False, True):
+        a, b = S / f'pull_a{fresh_ini}', S / f'pull_b{fresh_ini}'
+        populate(a)
+        b.mkdir()
+        if fresh_ini:
+            (b / 'skywardrecomp.ini').write_text('[fresh]')  # (this start's own settings: not data)
+        wa = snapshot(a)
+        r = run('pull', a, extra_env={'LARECOMP_DATA_HOME': str(b)})
+        assert r['PULL'].startswith('ok'), r
+        assert snapshot(b) == wa and ours_left(a) == [] and not any((a / e).exists() for e in ENTRIES), r
+    c, d = S / 'pull_c', S / 'pull_d'
+    populate(c)
+    (d / 'save').mkdir(parents=True)
+    (d / 'save' / 'mine.sav').write_bytes(b'mine')
+    wc, wd = snapshot(c), snapshot(d)
+    r = run('pull', c, extra_env={'LARECOMP_DATA_HOME': str(d)})
+    assert r['PULL'].startswith('failed') and 'already has' in r['PULL'], r  # (never merged into other data)
+    assert snapshot(c) == wc and snapshot(d) == wd
+    print('pull: the old folder moves into an empty one (or one with only a fresh settings file); never into one with data')
+
     # a new version in another folder (Windows portable: the data folder is the program's): the last one is offered
     assert run('previous')['PREV'] == ''  # (this is the last one)
     new = {'LARECOMP_DATA_HOME': str(S / 'new_version')}

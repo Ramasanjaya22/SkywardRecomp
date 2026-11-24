@@ -1590,8 +1590,7 @@ static void data_folder_popup(float s) {
             if (ImGui::Button("Use existing data", bw)) use_it();
             ImGui::SameLine();
             if (ImGui::Button("Move here", bw)) {
-                stop_background_prep();
-                settings_save();
+                stop_background_prep();  // (no settings_save: it would write into the target; the old folder's settings win)
                 g_df = DF_MOVING, g_df_step = 0, g_df_frac = 0, g_df_result = 0;
                 pthread_t th;
                 if (pthread_create(&th, NULL, df_move_thread, NULL) == 0) pthread_detach(th);
@@ -1638,7 +1637,7 @@ static void data_folder_popup(float s) {
         else if (r == -1) g_df = DF_FAILED;
     } else {
         ImGui::TextColored(red, "%s", g_df_err);
-        ImGui::Text("Your data is still in %s", rt_data_root());
+        ImGui::Text("Your data is still in %s", g_df_prev ? t.path : rt_data_root());
         ImGui::Spacing();
         close = ImGui::Button("OK", bw) || esc;
     }

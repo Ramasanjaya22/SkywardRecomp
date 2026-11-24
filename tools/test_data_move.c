@@ -57,6 +57,9 @@ int main(int argc, char **argv) {
         if (argc > 3) g_stall = atoi(argv[3]);
         bool ok = rt_data_move(argv[2], progress, err, sizeof err);
         printf("MOVE %s %s\n", ok ? "ok" : "failed", err);
+    } else if (!strcmp(argv[1], "pull") && argc > 2) {
+        bool ok = rt_data_pull(argv[2], progress, err, sizeof err);
+        printf("PULL %s %s\n", ok ? "ok" : "failed", err);
     } else if (!strcmp(argv[1], "use") && argc > 2) {
         bool ok = rt_data_use(argv[2], err, sizeof err);
         printf("USE %s %s\n", ok ? "ok" : "failed", err);

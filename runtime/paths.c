@@ -830,6 +830,16 @@ bool rt_data_move(const char *to, void (*progress)(int step, double frac), char 
 }
 
 bool rt_data_pull(const char *from, void (*progress)(int step, double frac), char *err, size_t n) {
+    // a fresh settings file (this start wrote it) is no data: the source's settings win
+    bool only_ini = true;
+    char ini[1100];
+    join(ini, sizeof ini, g_root, "skywardrecomp.ini");
+    for (size_t i = 0; i < N_ENTRIES; i++) {
+        char e[1100];
+        join(e, sizeof e, g_root, DATA_ENTRIES[i]);
+        if (strcmp(DATA_ENTRIES[i], "skywardrecomp.ini") && (exists(e) || is_link(e))) only_ini = false;
+    }
+    if (only_ini && exists(ini) && !same_dir(from, g_root)) remove(ini);
     return move_data(from, g_root, progress, err, n);
 }
 
