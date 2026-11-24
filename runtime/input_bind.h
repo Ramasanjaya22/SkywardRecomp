@@ -63,6 +63,11 @@ int bind_pad_from_name(const char *name);
 
 // Button prompts (runtime/nvn/texpatch.c): the controller button now driving Switch input `slot` (BIND_A..)
 int bind_prompt_host(int slot);
+// The same input's key name while the keyboard / mouse is the last input (else NULL: the controller's label shows)
+const char *bind_prompt_key(int slot);
+// The keyboard / mouse was the last input (runtime/hle/input.c): a key, a mouse button or the wheel, or a few points of
+// motion, makes it so; a controller button or a stick past its deadzone makes it the controller again
+bool input_kbm_last(void);
 
 #ifdef __cplusplus
 }

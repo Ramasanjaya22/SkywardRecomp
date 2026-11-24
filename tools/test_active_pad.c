@@ -22,6 +22,7 @@ static uint64_t input_buttons_now(void);
 #include <assert.h>
 
 bool menu_is_open(void) { return false; }
+bool menu_input_captured(void) { return false; }  // (no overlay menu or name entry up: the keys and pad are the game's)
 Settings g_settings;
 KEvent *kernel_create_event_pair(uint32_t *w, uint32_t *r) { abort(); }
 KSharedMem *kernel_create_shared_memory(uint64_t size, void (*on_map)(KSharedMem *), uint32_t *handle) { abort(); }
@@ -111,7 +112,30 @@ int main(void) {
     assert(SDL_DetachVirtualJoystick(p1));
     pump();
     assert(input_active_pad() == 0 && !pad_buttons);
+
+    // the last input device (the prompts follow it): a key or the mouse takes it, a controller takes it back; a held key's
+    // repeat, a few points of mouse motion and a stick's drift don't
+    SDL_Event ev = {0};
+    assert(!input_kbm_last());  // (the controller first: the game's look)
+    ev.type = SDL_EVENT_KEY_DOWN, ev.key.repeat = true;
+    note_last_device(&ev); assert(!input_kbm_last());
+    ev.key.repeat = false;
+    note_last_device(&ev); assert(input_kbm_last());
+    ev.type = SDL_EVENT_GAMEPAD_AXIS_MOTION, ev.gaxis.value = 9000;
+    note_last_device(&ev); assert(input_kbm_last());  // (inside the 12000 deadzone: no change)
+    ev.gaxis.value = -20000;
+    note_last_device(&ev); assert(!input_kbm_last());
+    ev.type = SDL_EVENT_MOUSE_MOTION, ev.motion.xrel = 3, ev.motion.yrel = -2;
+    note_last_device(&ev); assert(!input_kbm_last());  // (5 points)
+    ev.motion.xrel = 1, ev.motion.yrel = 0;
+    note_last_device(&ev); assert(!input_kbm_last());  // (6 points: not past the threshold yet)
+    ev.motion.xrel = 1;
+    note_last_device(&ev); assert(input_kbm_last());  // (7 points)
+    ev.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+    note_last_device(&ev); assert(!input_kbm_last());
+    ev.type = SDL_EVENT_MOUSE_WHEEL;
+    note_last_device(&ev); assert(input_kbm_last());
     SDL_Quit();
-    puts("PASS: press / stick on port 2 takes the game's pad and holds stay held; drift and in-use guard; unplug fallback");
+    puts("PASS: press / stick on port 2 takes the game's pad and holds stay held; drift and in-use guard; unplug fallback; last input device");
     return 0;
 }

@@ -5,8 +5,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-enum { MS_CAM_WINDOW_MS = 50, MS_SLASH_WINDOW_MS = 100, MS_FLICK_MS = 70, MS_THRUST_MS = 60,
-       MS_MAX_DELTA = 200, MS_RING = 128 };  // all tunable (Task 7)
+// All tunable (Task 7). MS_NEUTRAL_MS: the stick rests at centre this long before a flick (two frames at 60 Hz).
+enum { MS_CAM_WINDOW_MS = 50, MS_SLASH_WINDOW_MS = 100, MS_NEUTRAL_MS = 33, MS_FLICK_MS = 70, MS_THRUST_MS = 60,
+       MS_MAX_DELTA = 200, MS_RING = 128, MS_CAM_FLOOR = 8000 };
 
 typedef struct { bool lmb, mmb, rmb, aim; } MouseBtns;  // aim = M4 held
 typedef struct { bool camera, combat; float sens; } MouseCfg;
@@ -27,7 +28,7 @@ typedef struct MouseSword {
     int32_t last_x, last_y;     // last slash direction, each -1/0/1, up = +y
     bool has_last;
     int32_t flick_x, flick_y;   // direction of the flick in flight, -1/0/1
-    uint64_t flick_until, thrust_until;
+    uint64_t flick_start, flick_until, thrust_until;  // the flick deflects from flick_start; before it the stick rests
     bool lmb, mmb;              // previous poll, for the press edges
 } MouseSword;
 
@@ -70,6 +71,18 @@ static inline void ms_sum(const MouseSword *m, uint64_t now, uint64_t window, ui
         *sx += s->dx;
         *sy += s->dy;
     }
+}
+
+// The mouse camera's floor: a slow mouse still reads as a real deflection. A stick shorter than MS_CAM_FLOOR scales up
+// along its own direction (the mouse's, when the stick is centred), so a stick pushed the other way is never flipped.
+static inline void ms_camera_floor(int32_t *rx, int32_t *ry, int32_t mx, int32_t my) {
+    float x = (float)*rx, y = (float)*ry;
+    if (x == 0 && y == 0) x = (float)mx, y = (float)my;
+    const float len = ms_len(x, y);
+    if (len <= 0 || len >= (float)MS_CAM_FLOOR) return;
+    const float k = (float)MS_CAM_FLOOR / len;
+    *rx = ms_i32(x * k);
+    *ry = ms_i32(y * k);
 }
 
 // One SDL motion event; each axis is clamped to +-MS_MAX_DELTA so a warp or a spike cannot fling the stick.
@@ -139,13 +152,17 @@ static inline MouseOut mouse_sword_step(MouseSword *m, MouseBtns b, MouseCfg c, 
         }
         m->flick_x = m->last_x;
         m->flick_y = m->last_y;
-        m->flick_until = now_ms + MS_FLICK_MS;
+        // The stick rests at centre first: a camera turn just before the press must not carry into the swing.
+        m->flick_start = now_ms + MS_NEUTRAL_MS;
+        m->flick_until = m->flick_start + MS_FLICK_MS;
     }
     if (now_ms < m->flick_until) {
-        int32_t mag = (m->flick_x && m->flick_y) ? MS_DIAG : MS_STICK;
-        o.rx = m->flick_x * mag;
-        o.ry = m->flick_y * mag;
-        o.no_cam = true;
+        if (now_ms >= m->flick_start) {
+            int32_t mag = (m->flick_x && m->flick_y) ? MS_DIAG : MS_STICK;
+            o.rx = m->flick_x * mag;
+            o.ry = m->flick_y * mag;
+        }
+        o.no_cam = true;  // resting and flicking alike: the camera must not add to either
     } else if (c.camera) {
         // px over MS_CAM_WINDOW_MS is a velocity; 2 px/ms is full deflection, so full = sum * 32767 / (window * 2).
         float sx, sy;

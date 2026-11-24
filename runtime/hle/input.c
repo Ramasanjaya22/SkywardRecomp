@@ -307,6 +307,25 @@ bool input_user_blocked(const SDL_Event *e) {
     }
 }
 
+// The last input device, for the prompts (texpatch.c, the overlays): a key, a mouse button or the wheel, or a few points
+// of mouse motion (counted as the cursor counts them), makes it the keyboard / mouse; a controller button or a stick past
+// the cursor's deadzone makes it the controller again. It starts as the controller: the game's own look.
+static _Atomic bool kbm_last;
+bool input_kbm_last(void) { return kbm_last; }
+static void note_last_device(const SDL_Event *e) {
+    static float nudge;  // (points the mouse moved since the last controller input)
+    switch (e->type) {
+    case SDL_EVENT_KEY_DOWN: if (!e->key.repeat) kbm_last = true; break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_WHEEL: kbm_last = true; break;
+    case SDL_EVENT_MOUSE_MOTION:
+        if ((nudge += fabsf(e->motion.xrel) + fabsf(e->motion.yrel)) > 6) kbm_last = true, nudge = 0;
+        break;
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN: kbm_last = false, nudge = 0; break;
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION: if (abs(e->gaxis.value) > 12000) kbm_last = false, nudge = 0; break;
+    default: break;
+    }
+}
+
 // The mouse cursor during play: hidden as soon as a controller (a button, a stick or trigger past a small deadzone) or
 // a key is used, shown again only when the mouse moves (a few points, so a bumped desk doesn't count), clicks or
 // scrolls. Every window mode and platform: SDL hides it over our window only. Main thread (the event loops: the
@@ -316,6 +335,7 @@ bool input_cursor_hidden(void) { return cursor_hidden; }
 void input_cursor_event(const SDL_Event *e) {
     static float moved;  // (points the mouse moved since the cursor was hidden)
     bool hide = false, show = false;
+    note_last_device(e);
     switch (e->type) {
     case SDL_EVENT_KEY_DOWN:  // (a modifier alone - Cmd / Alt for switching apps - isn't play)
         hide = !e->key.repeat && !(e->key.scancode >= SDL_SCANCODE_LCTRL && e->key.scancode <= SDL_SCANCODE_RGUI);
@@ -932,10 +952,7 @@ static void fill_state(Cpu *c) {
             const float sens = g_settings.free_cam_sens;
             rx = clamp_axis((int32_t)(rx * sens));
             ry = clamp_axis((int32_t)(ry * sens));
-            if (mouse_cam) {  // a slow mouse must still read as a real deflection: an axis it moves is at least 8000
-                if (mcam_x && abs(rx) < 8000) rx = mcam_x > 0 ? 8000 : -8000;
-                if (mcam_y && abs(ry) < 8000) ry = mcam_y > 0 ? 8000 : -8000;
-            }
+            if (mouse_cam) ms_camera_floor(&rx, &ry, mcam_x, mcam_y);  // a slow mouse still reads as a real deflection
         }
     } else {
         free_cam_on = true;  // re-enabling the setting starts with the camera active

@@ -10,6 +10,14 @@ static MouseOut step(MouseSword *m, MouseBtns b, uint64_t t) {
     return mouse_sword_step(m, b, c, t);
 }
 
+// An LMB press at t: the stick rests (no deflection, camera off) and the flick deflects MS_NEUTRAL_MS later.
+// Returns the output of the first flick step.
+static MouseOut flick_at(MouseSword *m, uint64_t t) {
+    MouseOut o = step(m, (MouseBtns){.lmb = true}, t);
+    assert(o.rx == 0 && o.ry == 0 && o.no_cam);
+    return step(m, (MouseBtns){.lmb = true}, t + MS_NEUTRAL_MS);
+}
+
 static void near(int32_t got, int32_t want) { assert(got >= want - 1 && got <= want + 1); }
 
 int main(void) {
@@ -56,15 +64,16 @@ int main(void) {
         assert(o.rx == 0 && o.ry == 0);
     }
 
-    // Slash: LMB press snaps the last MS_SLASH_WINDOW_MS of motion to 8 directions and holds it MS_FLICK_MS.
+    // Slash: LMB press snaps the last MS_SLASH_WINDOW_MS of motion to 8 directions. The stick rests MS_NEUTRAL_MS
+    // first, then the flick holds MS_FLICK_MS.
     {
         MouseSword m = {0};
         mouse_sword_motion(&m, 80, 0, 0);
-        o = step(&m, lmb, 50);
+        o = flick_at(&m, 50);
         assert(o.rx == 32767 && o.ry == 0 && o.no_cam);
-        o = step(&m, lmb, 50 + MS_FLICK_MS - 1);
+        o = step(&m, lmb, 50 + MS_NEUTRAL_MS + MS_FLICK_MS - 1);
         assert(o.no_cam);
-        o = step(&m, lmb, 50 + MS_FLICK_MS + 1);  // still held: no second flick
+        o = step(&m, lmb, 50 + MS_NEUTRAL_MS + MS_FLICK_MS + 1);  // still held: no second flick
         assert(!o.no_cam && o.rx == 0);
         o = step(&m, lmb, 400);
         assert(!o.no_cam && o.rx == 0 && o.ry == 0);
@@ -72,35 +81,49 @@ int main(void) {
     {
         MouseSword m = {0};
         mouse_sword_motion(&m, -80, 0, 0);
-        o = step(&m, lmb, 50);
+        o = flick_at(&m, 50);
         assert(o.rx == -32767 && o.ry == 0);
     }
     {
         MouseSword m = {0};
         mouse_sword_motion(&m, 0, 80, 0);
-        o = step(&m, lmb, 50);
+        o = flick_at(&m, 50);
         assert(o.rx == 0 && o.ry == -32767);
     }
     {
         MouseSword m = {0};
         mouse_sword_motion(&m, 70, -70, 0);
-        o = step(&m, lmb, 50);
+        o = flick_at(&m, 50);
         assert(o.rx == 23170 && o.ry == 23170);
+    }
+
+    // A camera turn just before the press does not carry into the swing: the stick rests first.
+    {
+        MouseSword m = {0};
+        mouse_sword_motion(&m, 10, 0, 0);
+        o = step(&m, none, 10);
+        assert(o.rx > 0);  // the camera is turning right
+        o = step(&m, lmb, 30);
+        assert(o.rx == 0 && o.ry == 0 && o.no_cam);
+        o = step(&m, lmb, 30 + MS_NEUTRAL_MS - 1);
+        assert(o.rx == 0 && o.no_cam);
+        o = step(&m, lmb, 30 + MS_NEUTRAL_MS);
+        assert(o.rx == 32767 && o.ry == 0 && o.no_cam);
     }
 
     // Click with no motion: vertical by default, then the last direction.
     {
         MouseSword m = {0};
-        o = step(&m, lmb, 50);
+        o = flick_at(&m, 50);
         assert(o.ry == 32767 && o.rx == 0 && o.no_cam);
     }
     {
         MouseSword m = {0};
         mouse_sword_motion(&m, 80, 0, 0);
-        o = step(&m, lmb, 50);
+        o = flick_at(&m, 50);
         assert(o.rx == 32767);
         o = step(&m, none, 200);
-        o = step(&m, lmb, 500);  // no motion in the window: reuse right
+        o = flick_at(&m, 500);  // no motion in the window: reuse right
         assert(o.rx == 32767 && o.ry == 0 && o.no_cam);
     }
 
@@ -178,12 +201,12 @@ int main(void) {
     {
         MouseSword m = {0};
         mouse_sword_motion(&m, 80, 0, 0);
-        o = step(&m, lmb, 50);
+        o = flick_at(&m, 50);
         assert(o.rx == 32767);
         mouse_sword_reset(&m);
         o = step(&m, none, 60);
         assert(!o.no_cam && o.rx == 0 && o.ry == 0);
-        o = step(&m, lmb, 1000);
+        o = flick_at(&m, 1000);
         assert(o.ry == 32767 && o.rx == 0);
     }
 
@@ -193,7 +216,7 @@ int main(void) {
         for (uint64_t t = 0; t < 200; t++) mouse_sword_motion(&m, 1, 0, t);
         o = step(&m, none, 199);
         near(o.rx, 16383);  // 50 px in the 50 ms window
-        o = step(&m, lmb, 199);  // 100 px in the 100 ms window: right
+        o = flick_at(&m, 199);  // 100 px in the 100 ms window: right
         assert(o.rx == 32767 && o.ry == 0 && o.no_cam);
     }
 
@@ -227,12 +250,13 @@ int main(void) {
     {
         MouseSword m = {0};
         mouse_sword_motion(&m, 80, 0, 40);
-        o = step(&m, lmb, 50);  // flick until 50 + MS_FLICK_MS
-        mouse_sword_motion(&m, 60, 0, 50 + MS_FLICK_MS - 10);  // follow-through inside the flick
-        o = step(&m, none, 50 + MS_FLICK_MS + 1);
+        o = flick_at(&m, 50);  // flick ends at end
+        const uint64_t end = 50 + MS_NEUTRAL_MS + MS_FLICK_MS;
+        mouse_sword_motion(&m, 60, 0, end - 10);  // follow-through inside the flick
+        o = step(&m, none, end + 1);
         assert(!o.no_cam && o.rx == 0 && o.ry == 0);
-        mouse_sword_motion(&m, 100, 0, 50 + MS_FLICK_MS + 5);
-        o = step(&m, none, 50 + MS_FLICK_MS + 10);
+        mouse_sword_motion(&m, 100, 0, end + 5);
+        o = step(&m, none, end + 10);
         assert(o.rx == 32767);
     }
     {
@@ -241,6 +265,35 @@ int main(void) {
         mouse_sword_motion(&m, 100, 0, MS_THRUST_MS - 10);
         o = step(&m, none, MS_THRUST_MS + 1);
         assert(o.rx == 0);
+    }
+
+    // The camera floor: a deflection shorter than MS_CAM_FLOOR scales up along its own direction (the mouse's when the
+    // stick is centred). Longer ones, and a centred stick with no mouse, pass unchanged.
+    {
+        int32_t x, y;
+        x = 1000, y = 0;
+        ms_camera_floor(&x, &y, 1, 0);
+        assert(x == MS_CAM_FLOOR && y == 0);
+        x = -1000, y = 0;  // the mouse pulls the other way: the stick keeps its own direction
+        ms_camera_floor(&x, &y, 5, 0);
+        assert(x == -MS_CAM_FLOOR && y == 0);
+        x = 0, y = 0;  // centred: the mouse's direction
+        ms_camera_floor(&x, &y, 0, -3);
+        assert(x == 0 && y == -MS_CAM_FLOOR);
+        x = 1000, y = 1000;
+        ms_camera_floor(&x, &y, 0, 0);
+        near(x, 5657);
+        near(y, 5657);
+        x = -3000, y = 4000;  // length 5000: scaled by 1.6
+        ms_camera_floor(&x, &y, 0, 0);
+        near(x, -4800);
+        near(y, 6400);
+        x = 30000, y = 0;
+        ms_camera_floor(&x, &y, 1, 0);
+        assert(x == 30000 && y == 0);
+        x = 0, y = 0;
+        ms_camera_floor(&x, &y, 0, 0);
+        assert(x == 0 && y == 0);
     }
     return 0;
 }

@@ -38,6 +38,7 @@
 extern "C" {
 #include "../hle.h"
 #include "../rando.h"
+#include "../input_bind.h"
 #include "../settings.h"
 uint64_t renderer_present_count(void);
 int kernel_data_regions(uint64_t *addr, uint64_t *size, int max);
@@ -1115,12 +1116,28 @@ static void shadow_text(ImDrawList *dl, ImFont *font, float fs, ImVec2 p, const 
     dl->AddText(font, fs, ImVec2(p.x + 1.6f * u, p.y + 1.6f * u), IM_COL32(40, 25, 5, 170), t);
     dl->AddText(font, fs, p, IM_COL32(255, 255, 255, 255), t);
 }
+// A prompt names its Switch button ("A", "ZR"): while the keyboard / mouse is the last input, the key bound to it instead
+static const char *prompt_btn(const char *btn) {
+    static const struct { const char *name; int slot; } names[] = {{"A", BIND_A}, {"B", BIND_B}, {"Y", BIND_Y}, {"ZR", BIND_ZR}};
+    for (auto &n : names) {
+        if (strcmp(btn, n.name)) continue;
+        const char *key = bind_prompt_key(n.slot);
+        return key ? key : btn;
+    }
+    return btn;
+}
+// The button's glyph width: round for one letter, a pill for a longer name ("ZR", or a key's "Shift")
+static float prompt_glyph_w(ImFont *font, float fs, const char *btn) {
+    if (strlen(btn) <= 1) return fs;
+    float pill = text_size(font, fs * 0.62f, btn).x + fs * 0.5f;
+    return pill > fs * 1.45f ? pill : fs * 1.45f;
+}
 static float prompt_width(ImFont *font, float fs, const char *btn, const char *label) {
-    float g = strlen(btn) > 1 ? fs * 1.45f : fs * 1.0f;
-    return g + 6 + text_size(font, fs, label).x;
+    return prompt_glyph_w(font, fs, prompt_btn(btn)) + 6 + text_size(font, fs, label).x;
 }
 static float draw_prompt(ImDrawList *dl, ImFont *font, float fs, ImVec2 p, const char *btn, const char *label, float u) {
-    float g = strlen(btn) > 1 ? fs * 1.45f : fs * 1.0f, r = fs * 0.5f;
+    btn = prompt_btn(btn);
+    float g = prompt_glyph_w(font, fs, btn), r = fs * 0.5f;
     ImVec2 c(p.x + g * 0.5f, p.y + fs * 0.55f);
     if (strlen(btn) > 1) {
         dl->AddRectFilled(ImVec2(p.x, c.y - r), ImVec2(p.x + g, c.y + r), IM_COL32(40, 25, 5, 120), r);
