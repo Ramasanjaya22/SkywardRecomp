@@ -22,7 +22,7 @@
 
 // From the Makefile: the flags the game code is compiled and linked with (as `make` builds it in a source checkout)
 #ifndef GAMELIB_CFLAGS
-#define GAMELIB_CFLAGS "-O1 -fno-strict-aliasing -fvisibility=hidden"
+#define GAMELIB_CFLAGS "-O2 -fwrapv -ffp-contract=off -fno-strict-aliasing -fvisibility=hidden"
 #endif
 #ifndef GAMELIB_SHARED
 #define GAMELIB_SHARED "-shared"
