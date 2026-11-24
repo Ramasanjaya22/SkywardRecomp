@@ -27,6 +27,7 @@ Settings g_settings = {
     .fullscreen = false,
     .volume = 1.0f,
     .free_cam_sens = 1.0f,
+    .mouse_sens = 1.0f,
     .reverb = true,
     .movie_audio = true,
     .rumble = true,
@@ -197,6 +198,9 @@ void settings_load(void) {
         else if (!strcmp(key, "free_cam")) g_settings.free_cam = atoi(val) != 0;
         else if (!strcmp(key, "zr_attack")) g_settings.zr_attack = atoi(val) != 0;
         else if (!strcmp(key, "free_cam_sens")) g_settings.free_cam_sens = (float)atof(val);
+        else if (!strcmp(key, "mouse_camera")) g_settings.mouse_camera = atoi(val) != 0;
+        else if (!strcmp(key, "mouse_combat")) g_settings.mouse_combat = atoi(val) != 0;
+        else if (!strcmp(key, "mouse_sens")) g_settings.mouse_sens = (float)atof(val);
         else if (!strcmp(key, "rumble")) g_settings.rumble = atoi(val) != 0;
         else if (!strcmp(key, "rumble_strength")) g_settings.rumble_strength = atoi(val);
         else if (!strcmp(key, "controller_light")) g_settings.controller_light = atoi(val) != 0;
@@ -262,6 +266,9 @@ void settings_load(void) {
     if (!isfinite(g_settings.free_cam_sens)) g_settings.free_cam_sens = 1.0f;  // a hand-edited nan/inf must not reach the ini
     if (g_settings.free_cam_sens < 0.25f) g_settings.free_cam_sens = 0.25f;
     if (g_settings.free_cam_sens > 2.0f) g_settings.free_cam_sens = 2.0f;
+    if (!isfinite(g_settings.mouse_sens)) g_settings.mouse_sens = 1.0f;
+    if (g_settings.mouse_sens < 0.25f) g_settings.mouse_sens = 0.25f;
+    if (g_settings.mouse_sens > 4.0f) g_settings.mouse_sens = 4.0f;
     if (g_settings.rumble_strength < 25 || g_settings.rumble_strength > 100) g_settings.rumble_strength = 100;
     LOG("[settings] loaded %s\n", SETTINGS_FILE);
 }
@@ -292,6 +299,8 @@ void settings_save(void) {
     fprintf(f, "free_cam = %d\n", g_settings.free_cam);
     fprintf(f, "zr_attack = %d\n", g_settings.zr_attack);
     fprintf(f, "free_cam_sens = %.2f\n", g_settings.free_cam_sens);
+    fprintf(f, "mouse_camera = %d\nmouse_combat = %d\nmouse_sens = %.2f\n", g_settings.mouse_camera, g_settings.mouse_combat,
+            g_settings.mouse_sens);
     fprintf(f, "rumble = %d\n", g_settings.rumble);
     fprintf(f, "rumble_strength = %d\n", g_settings.rumble_strength);
     fprintf(f, "controller_light = %d\n", g_settings.controller_light);

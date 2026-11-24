@@ -75,6 +75,14 @@ int main(int argc, char **argv) {
         settings_save();  // rewrite for the test to check
         return 0;
     }
+    if (argc == 5 && !strcmp(argv[1], "mouse")) {  // keyboard+mouse: camera / combat toggles and clamped sensitivity
+        settings_load();
+        assert(g_settings.mouse_camera == (atoi(argv[2]) != 0));
+        assert(g_settings.mouse_combat == (atoi(argv[3]) != 0));
+        assert(fabsf(g_settings.mouse_sens - (float)atof(argv[4])) < 0.005f);
+        settings_save();  // rewrite for the test to check
+        return 0;
+    }
     if (argc == 3 && !strcmp(argv[1], "rando-options")) {  // the New seed options (an opaque seed ID), kept as saved
         settings_load();
         assert(!strcmp(g_settings.rando_options, argv[2]));

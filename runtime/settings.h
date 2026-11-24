@@ -51,6 +51,9 @@ typedef struct {
     bool free_cam;       // free camera without holding L
     bool zr_attack;      // a ZR tap jabs with the sword (runtime/hle/zr_tap.h)
     float free_cam_sens; /* camera-only right-stick scale, 0.25..2.0 */
+    bool mouse_camera;   // the mouse turns the camera (runtime/hle/mouse_sword.h)
+    bool mouse_combat;   // the mouse swings / aims the sword
+    float mouse_sens;    // mouse sensitivity, 0.25..4.0
     bool rumble;         // controller vibration from the game (runtime/hle/input.c)
     int rumble_strength; // its intensity, percent (25 / 50 / 75 / 100)
     bool controller_light; // the controller's light bar shows Link's health (runtime/led.h, hle/input.c)

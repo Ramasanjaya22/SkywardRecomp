@@ -44,6 +44,25 @@ with tempfile.TemporaryDirectory() as directory:
         for line in ('free_cam = ' + enabled, 'free_cam_sens = ' + sens):
             assert line + '\n' in saved, (lines, saved)
         count += 1
+    # keyboard+mouse: both toggles default off and round-trip; sensitivity clamps to 0.25..4.0, nan -> 1.0
+    for lines, camera, combat, sens in [
+        ([], '0', '0', '1.00'),
+        (['mouse_camera = 1', 'mouse_combat = 1'], '1', '1', '1.00'),
+        (['mouse_camera = 1'], '1', '0', '1.00'),
+        (['mouse_combat = 1'], '0', '1', '1.00'),
+        (['mouse_sens = 1.50'], '0', '0', '1.50'),
+        (['mouse_sens = 5.0'], '0', '0', '4.00'),
+        (['mouse_sens = 0.01'], '0', '0', '0.25'),
+        (['mouse_sens = nan'], '0', '0', '1.00'),
+    ]:
+        ini = directory / 'test.ini'
+        ini.write_text('\n'.join(lines) + '\n')
+        subprocess.run([str(exe), 'mouse', camera, combat, sens], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)), check=True,
+                       capture_output=True)
+        saved = ini.read_text()
+        for line in ('mouse_camera = ' + camera, 'mouse_combat = ' + combat, 'mouse_sens = ' + sens):
+            assert line + '\n' in saved, (lines, saved)
+        count += 1
     # ZR sword jab: the toggle round-trips and stays off unless the file asks for it
     for lines, enabled in [(['zr_attack = 1'], '1'), (['zr_attack = 0'], '0'), ([], '0'), (['zr_attack = 2'], '1')]:
         ini = directory / 'test.ini'
