@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
+#include "hotsample.h"
+
 typedef struct { void *(*entry)(void *); void *argument; } GuestThreadStart;
 static unsigned __stdcall guest_thread_trampoline(void *argument) {
     GuestThreadStart start = *(GuestThreadStart *)argument;
@@ -26,6 +28,7 @@ static uintptr_t guest_thread_create(void *(*entry)(void *), void *argument, uns
     uintptr_t handle = _beginthreadex(NULL, reserve, guest_thread_trampoline, start,
                                     STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
     if (!handle) free(start);
+    else hotsample_thread(handle);  // (LARECOMP_HOTLIST_OUT: runtime/hotsample.c)
     return handle;
 }
 

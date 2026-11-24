@@ -122,6 +122,8 @@ typedef struct {
     bool ao_taps;          // the AO blur's taps follow rscale[65].y (ao_grid_fix)
     bool shadow_tap[2];    // the shadow map's texel size (x, y) is read: shadow_taps
     bool ao_pass;          // the AO pass: white while rscale[65].z > 0 (ao_grid_fix)
+    uint32_t cur_pc;       // the instruction being translated (byte offset)
+    const uint8_t *labels; // branch targets by instruction index (a block starts at each): track_bindless stops there
 } Ctx;
 
 static uint64_t bits(uint64_t w, int lo, int n) { return (w >> lo) & ((n == 64) ? ~0ull : ((1ull << n) - 1)); }
@@ -536,6 +538,73 @@ static int tex_slot(Ctx *c, uint32_t index, int type, bool shadow, bool array) {
     return s;
 }
 
+// How many consecutive registers an instruction writes from its destination field: loads wider than 32 bits (size field
+// 5 = 64, 6 = 128), attribute loads, texture fetches (one per mask bit); 1 for the rest. TEXS / TLDS also write a second
+// pair at bit 28 (track_bindless). shortcut: 64-bit float and conversion ops are not listed (a handle never goes through
+// them) - add them when a shader shows one between the LDC and the TEX.B.
+static int dest_span(uint64_t w) {
+    uint64_t top = w & 0xfff8000000000000ull;
+    int size = (int)bits(w, 48, 3);
+    if (top == 0xef90000000000000ull || top == 0xef40000000000000ull || top == 0xef48000000000000ull ||
+        ((top == 0xeed0000000000000ull || top == 0xeed8000000000000ull) && !bits(w, 51, 1)))  // LDC, LDL, LDS, LDG
+        return size == 5 ? 2 : size >= 6 ? 4 : 1;
+    if (top == 0xefd8000000000000ull) return 1 + (int)bits(w, 47, 2);                            // LD attribute
+    if ((w & 0xfc38000000000000ull) == 0xc038000000000000ull || top == 0xdeb8000000000000ull ||  // TEX, TEX.B
+        top == 0xdf48000000000000ull) {                                                          // TXQ
+        int n = 0;
+        for (int m = (int)bits(w, 31, 4); m; m >>= 1) n += m & 1;
+        return n > 1 ? n : 1;
+    }
+    if ((w & 0xf600000000000000ull) == 0xd000000000000000ull || (w & 0xf600000000000000ull) == 0xd200000000000000ull)
+        return 2;  // TEXS, TLDS
+    return 1;
+}
+
+// The constant buffer word a bindless handle comes from: walks back from instruction `i` inside its basic block to the
+// last write of `reg`; true only when that is an unguarded LDC.32 c[idx][RZ + off] (a handle chosen at run time, or
+// computed, stays untracked; so does one a multi-register writer (dest_span) covers).
+static bool track_bindless(Ctx *c, size_t i, int reg, uint32_t *cbuf, uint32_t *offset) {
+    const uint64_t *code = (const uint64_t *)c->code;
+    for (size_t k = i; k > 1;) {
+        if (c->labels && c->labels[k]) return false;  // a block starts here: other paths reach the TEX.B
+        if (--k % 4 == 0) continue;                   // (scheduling word)
+        uint64_t w = code[k];
+        int d = (int)bits(w, 0, 8);
+        bool ldc = (w & 0xfff8000000000000ull) == 0xef90000000000000ull;
+        int span = dest_span(w), d2 = (int)bits(w, 28, 8);
+        uint64_t t6 = w & 0xf600000000000000ull;
+        bool texs = t6 == 0xd000000000000000ull || t6 == 0xd200000000000000ull;
+        bool hit = (d != RZ && reg >= d && reg < d + span) || (texs && d2 != RZ && reg >= d2 && reg < d2 + 2);
+        if (!hit) continue;
+        if (!ldc || span != 1 || d != reg || bits(w, 48, 3) != 4 || bits(w, 8, 8) != RZ || bits(w, 16, 4) != 7) return false;  // (guard PT, not negated)
+        *cbuf = (uint32_t)bits(w, 36, 5);
+        *offset = (uint32_t)bits(w, 20, 16);
+        return true;
+    }
+    return false;
+}
+
+// A texture whose handle is the word at c[cbuf][offset] (TEX.B): one slot per word. Not in tex_slot's index table.
+static int tex_slot_bindless(Ctx *c, uint32_t cbuf, uint32_t offset, int type, bool shadow, bool array) {
+    for (int s = 0; s < c->info->ntex; s++) {
+        ShaderTexture *t = &c->info->tex[s];
+        if (!t->bindless || t->bindless_cbuf != cbuf || t->bindless_offset != offset) continue;
+        if (t->type != type || t->shadow != shadow) fail(c, "texture c%u[%#x] used as two types", cbuf, offset);
+        return s;
+    }
+    int s = c->info->ntex++;
+    if (s >= 31) { fail(c, "too many textures"); return 0; }
+    c->tex_weak[s] = false;
+    ShaderTexture *t = &c->info->tex[s];
+    t->bindless = true;
+    t->bindless_cbuf = cbuf;
+    t->bindless_offset = offset;
+    t->type = (uint8_t)type;
+    t->shadow = shadow;
+    t->is_array = array;
+    return s;
+}
+
 static const char *tex_type_name(int t) {
     switch (t) {
     case TEXTYPE_1D: return "1d";
@@ -823,17 +892,22 @@ static void emit_texs(Ctx *c, uint64_t w, bool fetch) {
 static void emit_tex(Ctx *c, uint64_t w, bool bindless) {
     int d = (int)bits(w, 0, 8), a = (int)bits(w, 8, 8), b = (int)bits(w, 20, 8);
     uint32_t index = bindless ? 0 : (uint32_t)bits(w, 36, 13);
+    uint32_t bl_cbuf = 0, bl_off = 0;
     int target = (int)bits(w, 29, 2);
     bool array = bits(w, 28, 1), dc = bits(w, 50, 1), aoffi = bindless ? bits(w, 36, 1) : bits(w, 54, 1);
     uint32_t mask = (uint32_t)bits(w, 31, 4);
     int lod_mode = bindless ? (int)bits(w, 37, 3) : (int)bits(w, 55, 3);  // 0 none, 1 lz, 2 lb, 3 ll, 6 lba, 7 lla
-    if (bindless) { fail(c, "bindless tex"); return; }
+    if (bindless) {  // Vulkan only: the handle is the first meta register, the other operands follow it
+        if (!c->glsl) { fail(c, "bindless tex"); return; }
+        if (!track_bindless(c, c->cur_pc / 8, b, &bl_cbuf, &bl_off)) { fail(c, "bindless tex (untracked)"); return; }
+        b++;
+    }
     int type = target == 0 ? (array ? TEXTYPE_1D_ARRAY : TEXTYPE_1D)
              : target == 1 ? (array ? TEXTYPE_2D_ARRAY : TEXTYPE_2D)
              : target == 2 ? TEXTYPE_3D
                            : (array ? TEXTYPE_CUBE_ARRAY : TEXTYPE_CUBE);
     int ncoord = target == 0 ? 1 : target == 1 ? 2 : 3;
-    int slot = tex_slot(c, index, type, dc, array);
+    int slot = bindless ? tex_slot_bindless(c, bl_cbuf, bl_off, type, dc, array) : tex_slot(c, index, type, dc, array);
     if (c->glsl) {  // same register layout as below
         char cs[3][40], lay[96], lodv[48], offv[96], drv[48], gcall[4096];
         const char *co[3], *layp = NULL, *lodp = NULL, *offp = NULL, *drp = NULL;
@@ -990,6 +1064,7 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
     int d = (int)bits(w, 0, 8), a = (int)bits(w, 8, 8);
     int pr = (int)bits(w, 16, 3);
     bool prn = bits(w, 19, 1);
+    c->cur_pc = pc;
     uint16_t op13 = (uint16_t)(w >> 51);  // top 13 bits
     // predicate guard. SSY/PBK/PCNT/PRET take no predicate: those bits are zero in the encoding,
     // which would otherwise read as @P0.
@@ -1556,7 +1631,13 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         // bits 37-38: 2 .U64 / 3 .S64 shift the full 64 bits (width 64), else 32. The immediate is 6 bits (20-25:
         // bits 37-38 of the 19-bit B immediate are the width field). .CC / .X / .HI (47-49) aren't modelled.
         bool right = (w >> 56) == 0x5c || (w >> 57) == (0x38 >> 1);
-        if (bits(w, 47, 3)) { fail(c, "shf cc/x/hi"); return; }
+        if (bits(w, 47, 3)) {
+            if (getenv("LARECOMP_SHF_LOG"))  // data only: the rejected word (docs/debug-hooks.md)
+                fprintf(stderr, "[shf] stage %d pc %#x bits47-49 %llu word %016llx\n", c->stage, pc,
+                        (unsigned long long)bits(w, 47, 3), (unsigned long long)w);
+            fail(c, "shf cc/x/hi");
+            return;
+        }
         char shb[16];
         const char *sh = ((w >> 60) == 3) ? (sprintf(shb, "%uu", (unsigned)bits(w, 20, 6)), shb) : R((int)bits(w, 20, 8));
         const char *hi = R((int)bits(w, 39, 8));
@@ -2373,11 +2454,25 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
     static int annotate = -1;
     if (annotate < 0) annotate = getenv("LARECOMP_SAVE_MSL") != NULL;
     c->branchy = any_branch;
+    c->labels = label;
+    c->code = code;
     for (size_t i = 0; i < end && !c->fail; i++) {
         if (i % 4 == 0) continue;
         uint32_t pc = (uint32_t)(i * 8);
         if (any_branch && label[i]) sp(&c->body, "  case %uu:\n", pc);
         if (annotate) sp(&c->body, "    // pc %x: %016llx\n", pc, (unsigned long long)((const uint64_t *)code)[i]);
+        {   // LARECOMP_BINDLESS_LOG=1: data only, each TEX.B word and the words just before it (docs/debug-hooks.md)
+            static int blog = -1;
+            if (blog < 0) blog = getenv("LARECOMP_BINDLESS_LOG") ? 24 : 0;
+            if (blog > 0 && (((const uint64_t *)code)[i] & 0xfff8000000000000ull) == 0xdeb8000000000000ull) {
+                blog--;
+                fprintf(stderr, "[bindless] stage %d pc %#x word %016llx before:", stage, pc,
+                        (unsigned long long)((const uint64_t *)code)[i]);
+                for (size_t k = i; k-- > 0 && k + 12 >= i;)
+                    if (k % 4) fprintf(stderr, " %llx@%llx", (unsigned long long)((const uint64_t *)code)[k], (unsigned long long)(k * 8));
+                fprintf(stderr, "\n");
+            }
+        }
         emit_insn(c, ((const uint64_t *)code)[i], pc);
         light_tiles_fix(c, (const uint64_t *)code, end, pc);
         if (dbg && pc == maxwell_dbg_pc) {
@@ -2389,6 +2484,7 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
         info->num_insts++;
     }
     free(label);
+    c->labels = NULL;
     // (MSL: more textures than sampler slots take a slot table, at a buffer index the vertex stage's streams use)
     if (!c->glsl && stage == STAGE_VERTEX && info->ntex > MSL_MAX_SAMPLERS)
         fail(c, "%d textures in a vertex shader (Metal: %d samplers)", info->ntex, MSL_MAX_SAMPLERS);
