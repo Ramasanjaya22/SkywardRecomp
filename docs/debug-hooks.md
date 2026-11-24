@@ -249,6 +249,8 @@ The per-GPU default switches are explained, with the GPUs they were tested on, i
 | `LARECOMP_GPUPROF_AT` | `frame,frame,...` | Log a GPU pass profile of those frames. |
 | `LARECOMP_LOG_SKIPS` | 0 / 1 | Log skipped draws and dispatches and why. |
 | `LARECOMP_VK_DEVLOST_TRACE` | 0 / 1 | Log the steps before a device lost. |
+| `LARECOMP_VK_JITTER` | 0 / 1 | Jitter the scene camera by a sub-pixel each frame (`runtime/nvn/temporal.h`), when the game renders below the output size. For a temporal upscaler that accumulates frames; none reads it yet, so alone it shimmers. The Y sign follows the window origin (`temporal_jitter_camera`): `tools/test_temporal.py` checks the math, the game does not. |
+| `LARECOMP_VK_MOTION` | 0 / 1 | Motion vectors: the last world draw's camera and depth, reprojected into post image 5 (`motion_run`, `runtime/nvn/vulkan/exec.c`). Nothing reads image 5 yet. Logs `[motion]` lines on each change: `reset: <reason>`, or `running`. The Y sign and the reset rules are not checked in game. |
 | `LARECOMP_WRITE_TRACKING` | 0 | Linux: turn off write tracking of guest memory. |
 
 ## Frame pacing and performance

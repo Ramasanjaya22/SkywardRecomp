@@ -311,6 +311,26 @@ static const char *builtin_src(const char *name, int *stage) {
                "  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
                "}\n";
     }
+    // Motion vectors for the temporal upscaler (exec.c motion_run; mirrors temporal_motion_px and temporal_depth_ndc in
+    // runtime/nvn/temporal.c): previous minus current, in pixels of the image. Push constants: m = the camera's M as the C
+    // side writes it (row-major, so v * m is M v), view = the viewport (x, y, w, h), dz = (near, far, depth_minus_one, the
+    // y sign). The stored depth is read at the same pixel, so the depth buffer must be the image's size.
+    if (!strcmp(name, "motion.frag")) {
+        *stage = STAGE_FRAGMENT;
+        return "#version 450\n"
+               "layout(location = 0) out vec2 o;\n"
+               "layout(set = 0, binding = 0) uniform sampler2D dep;\n"
+               "layout(push_constant) uniform P { mat4 m; vec4 view; vec4 dz; } p;\n"
+               "void main() {\n"
+               "  vec2 px = gl_FragCoord.xy - p.view.xy;\n"
+               "  float t = (texelFetch(dep, ivec2(gl_FragCoord.xy), 0).r - p.dz.x) / (p.dz.y - p.dz.x);\n"
+               "  float z = p.dz.z > 0.5 ? 2.0 * t - 1.0 : t;\n"
+               "  vec4 c = vec4(2.0 * px.x / p.view.z - 1.0, p.dz.w * (2.0 * px.y / p.view.w - 1.0), z, 1.0) * p.m;\n"
+               "  float w = abs(c.w) < 1e-9 ? 1e-9 : c.w;\n"
+               "  vec2 prev = vec2((c.x / w + 1.0) * p.view.z / 2.0, (p.dz.w * (c.y / w) + 1.0) * p.view.w / 2.0);\n"
+               "  o = prev - px;\n"
+               "}\n";
+    }
     // SMAA 1x (third_party/smaa, runtime/nvn/smaa_data.c): the reference SMAA.hlsl in its GLSL mode, High preset,
     // with an entry point per pass. a = SMAA_RT_METRICS (1 / size, size). The vertex-stage offset helpers run per
     // pixel here. Luma edges (t0 = colour) -> blending weights (t0 = edges, t1 = area, t2 = search) -> neighbourhood

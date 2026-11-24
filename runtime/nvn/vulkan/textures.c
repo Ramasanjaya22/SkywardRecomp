@@ -547,6 +547,8 @@ void backend_texture_destroyed(NvnTexture *t) {
         extern void vk_alias_texture_destroyed(NvnTexture *t);  // (exec.c copy aliases: a source's contents handed over)
         vk_alias_texture_destroyed(t);
         live_remove(b);
+        extern void motion_forget(TexBackend *b);  // (exec.c: a motion capture of this image is dropped)
+        motion_forget(b);
         destroy_image(b);
         free(b->pending_rgba);
         if (b->pack) { texpack_packs_dds_free((TexPackDds *)b->pack); free(b->pack); }
