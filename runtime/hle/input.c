@@ -16,6 +16,7 @@
 #include "../settings.h"
 #include "../input_bind.h"
 #include "zr_tap.h"
+#include "mouse_sword.h"
 #include "../rumble.h"
 #include "../led.h"
 #include "../ui/menu.h"
@@ -33,6 +34,23 @@ static uint8_t keys_down[SDL_SCANCODE_COUNT];
 static SDL_Gamepad *pad;
 static _Atomic int64_t sampling;
 static bool host_test;  // scripted runs must not vibrate the user's controller
+
+// Mouse as a sword (mouse_sword.h): SDL events (UI thread) feed it, fill_state (game thread) steps it; one lock for both.
+// A click shorter than a poll would never be seen, so a press is latched until the next step.
+static pthread_mutex_t mouse_lock = PTHREAD_MUTEX_INITIALIZER;
+static MouseSword mouse;
+static MouseBtns mouse_btns;
+static bool mouse_lmb_latch, mouse_mmb_latch;
+static void mouse_clear(void) {
+    pthread_mutex_lock(&mouse_lock);
+    mouse_btns = (MouseBtns){0};
+    mouse_lmb_latch = mouse_mmb_latch = false;
+    mouse_sword_reset(&mouse);
+    pthread_mutex_unlock(&mouse_lock);
+}
+extern bool menu_input_captured(void);  // runtime/ui/menu.mm
+// The window grabs the mouse (relative mode) while it steers the game; the device loops follow this.
+bool input_mouse_captured(void) { return (g_settings.mouse_camera || g_settings.mouse_combat) && !menu_input_captured(); }
 
 // Guest IPC threads publish values; only the UI thread touches SDL's pad.
 // The lock also makes paired value snapshots consistent with permission/reset.
@@ -238,6 +256,7 @@ void input_reset(void) {
     rumble_clear();
     memset(keys_down, 0, sizeof keys_down);
     recompute_keyboard();
+    mouse_clear();
 }
 
 volatile int g_debug_frame_request;  // F9: dump the next frame's passes (build/pass_*.png) + draw log
@@ -303,6 +322,7 @@ void input_cursor_event(const SDL_Event *e) {
     case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_WHEEL: show = true; break;
     default: break;
     }
+    if (input_mouse_captured()) show = false;  // the mouse is the sword, not a pointer
     if (hide && !cursor_hidden) {
         SDL_HideCursor();
         cursor_hidden = true, moved = 0;
@@ -426,6 +446,26 @@ void input_handle_event(const SDL_Event *e) {
         note_press(now & ~before, before & ~now);
         break;
     }
+    case SDL_EVENT_MOUSE_MOTION:
+        pthread_mutex_lock(&mouse_lock);
+        mouse_sword_motion(&mouse, e->motion.xrel, e->motion.yrel, SDL_GetTicks());
+        pthread_mutex_unlock(&mouse_lock);
+        break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_BUTTON_UP: {
+        bool d = e->button.down;
+        pthread_mutex_lock(&mouse_lock);
+        switch (e->button.button) {
+        case SDL_BUTTON_LEFT: mouse_btns.lmb = d; mouse_lmb_latch |= d; break;
+        case SDL_BUTTON_MIDDLE: mouse_btns.mmb = d; mouse_mmb_latch |= d; break;
+        case SDL_BUTTON_RIGHT: mouse_btns.rmb = d; break;
+        case SDL_BUTTON_X1: mouse_btns.aim = d; break;
+        }
+        pthread_mutex_unlock(&mouse_lock);
+        break;
+    }
+    case SDL_EVENT_WINDOW_FOCUS_LOST:  // (a button released elsewhere would stay held)
+        mouse_clear();
+        break;
     case SDL_EVENT_GAMEPAD_ADDED:
         open_pad(e->gdevice.which);
         break;
@@ -713,7 +753,7 @@ void input_frame(uint64_t frame) {
     script_ry = ry;
 }
 
-extern bool menu_input_captured(void);  // runtime/ui/menu.mm: overlay menu or name entry up (it has the keys / pad)
+// (menu_input_captured, declared at the top: the overlay menu or name entry is up and has the keys / pad)
 
 // Buttons held right now (keyboard, gamepad, test script), independent of whether the game polls (movies).
 uint64_t input_buttons_now(void) { return (menu_input_captured() ? 0 : key_buttons | pad_buttons) | script_buttons; }
@@ -762,7 +802,30 @@ static void fill_state(Cpu *c) {
             if (getenv("LARECOMP_INPUT")) LOG("[input] short press %#llx\n", (unsigned long long)t);
         } else if (f > tap_frame) tap = 0;
     }
+    MouseOut mo = {0};  // the mouse as sword / camera (zero while a menu is up)
+    if (!menu) {
+        pthread_mutex_lock(&mouse_lock);
+        MouseBtns mb = mouse_btns;
+        mb.lmb |= mouse_lmb_latch, mb.mmb |= mouse_mmb_latch;
+        mouse_lmb_latch = mouse_mmb_latch = false;
+        MouseCfg mc = {g_settings.mouse_camera, g_settings.mouse_combat, g_settings.mouse_sens};
+        uint64_t now = SDL_GetTicks();
+        mo = mouse_sword_step(&mouse, mb, mc, now);
+        static bool thrust_was;
+        static uint64_t flick_seen;
+        if (getenv("LARECOMP_INPUT")) {
+            if (mo.rstick_click && !thrust_was) LOG("[mouse] thrust\n");
+            if (mouse.flick_until != flick_seen && now < mouse.flick_until) LOG("[mouse] slash dir=(%d,%d)\n", (int)mouse.flick_x, (int)mouse.flick_y);
+        }
+        thrust_was = mo.rstick_click, flick_seen = mouse.flick_until;
+        if (mc.combat && mb.aim) mo.zl = true;  // (aiming is assumed to need ZL: unverified, Task 7)
+        pthread_mutex_unlock(&mouse_lock);
+    }
     uint64_t b = menu ? script_buttons : held | tap | script_buttons;
+    if (mo.zl) b |= 1ull << BTN_ZL;
+    if (mo.r) b |= 1ull << BTN_R;
+    if (mo.rstick_click) b |= 1ull << BTN_RSTICK;
+    if (mo.use_item) b |= 1ull << BTN_Y;
     {   // injected Plus: held for ~10 presented frames (the game polls several times per frame)
         extern uint64_t renderer_present_count(void);
         static uint64_t until;
@@ -770,7 +833,7 @@ static void fill_state(Cpu *c) {
         if (renderer_present_count() < until) b |= 1ull << BTN_PLUS;
     }
     int32_t lx = clamp_axis((menu ? 0 : key_lx + pad_lx) + script_lx), ly = clamp_axis((menu ? 0 : key_ly + pad_ly) + script_ly);
-    int32_t rx = clamp_axis((menu ? 0 : key_rx + pad_rx) + script_rx), ry = clamp_axis((menu ? 0 : key_ry + pad_ry) + script_ry);
+    int32_t rx = clamp_axis((menu ? 0 : key_rx + pad_rx) + script_rx + mo.rx), ry = clamp_axis((menu ? 0 : key_ry + pad_ry) + script_ry + mo.ry);
     extern bool mirror_input(void);  // mirror mode, the world on screen (runtime/hle/mirror.c): left and right swap
     bool mirrored = !menu && mirror_input();
     if (mirrored) {
@@ -850,7 +913,7 @@ static void fill_state(Cpu *c) {
         const bool zr_held = (b >> BTN_ZR) & 1;
         if (hold_off) b &= ~(1ull << BTN_L);  // held L: withhold it so the stick swings the sword
         // Camera off or those buttons held: only skip synthesis, vanilla L + right stick still works.
-        const bool synth_off = !free_cam_on || hold_off || r_held || zl_held || zr_held;
+        const bool synth_off = !free_cam_on || hold_off || r_held || zl_held || zr_held || mo.no_cam;
         if (!synth_off && (abs(rx) > 8000 || abs(ry) > 8000)) {
             b |= 1ull << BTN_L;
             const float sens = g_settings.free_cam_sens;
