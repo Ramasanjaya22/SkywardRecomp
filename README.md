@@ -18,8 +18,8 @@ Switch's `prod.keys`, or a folder with its `exefs` and `romfs`.
 - **RecompLauncher:** install SkywardRecomp there and pick your copy (and `prod.keys` for an `.nsp`). It builds the
   game code once and keeps it up to date; its setup is in [`recomplauncher.json`](recomplauncher.json).
 - **By hand:** download the Windows zip from [Releases](https://github.com/Ramasanjaya22/SkywardRecomp/releases),
-  unzip it somewhere you can write to, run `skywardrecomp.exe` and choose your copy on the start screen (put
-  `prod.keys` next to the `.nsp`).
+  unzip it somewhere you can write to, run `skywardrecomp.exe` and choose your copy (and `prod.keys` for an `.nsp`)
+  on the start screen.
 - **Scripts:** `skywardrecomp --prepare --game=<folder or .nsp> --keys=<prod.keys>` sets it up without a window
   (`progress <0..1> <step>` lines on stdout), then `skywardrecomp --play` starts the game.
 
