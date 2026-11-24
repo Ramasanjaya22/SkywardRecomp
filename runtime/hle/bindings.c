@@ -107,6 +107,7 @@ void bind_reset(int dev) {
 void bind_apply_kbm_preset(void) {
     memcpy(g_bind_key, k_kbm_key, sizeof g_bind_key);
     g_settings.mouse_camera = g_settings.mouse_combat = g_settings.free_cam = true;
+    settings_save();
     LOG("[input] keyboard bindings set to the Keyboard + Mouse preset\n");
     result(5, BIND_DEV_KEY, -1, -1);
 }
