@@ -131,9 +131,18 @@ with tempfile.TemporaryDirectory() as directory:
     else:
         print('file in use: Windows only')
 
+    # a file held open under the second folder (a seed's saves): refused, the first folder (already swapped) put back
+    if os.name == 'nt':
+        before = files(data, 'save') | files(data, 'rando')
+        with open(data / SEED, 'rb'):
+            ok, why = ok_of(run('restore', name)[0], 'RESTORE')
+        assert not ok and why, 'restore with a seed file open should fail'
+        assert files(data, 'save') | files(data, 'rando') == before, 'rollback left the saves changed'
+        assert not list(data.rglob('*.restoring')) and not list(data.rglob('*.replaced'))
+        print('restore with a seed file in use: refused, both folders back as they were')
+
     # retention: 21 backups -> the newest 20
     shutil.rmtree(data / 'backups')
-    names = []
     for _ in range(21):
         ok, why = ok_of(run('create')[0], 'CREATE')
         assert ok, why
@@ -141,4 +150,13 @@ with tempfile.TemporaryDirectory() as directory:
     assert len(lst) == 20, len(lst)
     assert [x[1] for x in lst] == sorted((x[1] for x in lst), reverse=True) and len({x[1] for x in lst}) == 20
     print('retention: 21 backups made, the newest 20 kept, newest first')
+
+    # at the cap, restoring the oldest: the auto backup must not prune the backup being read
+    oldest = lst[-1][1]
+    put(data, SAVE, os.urandom(SIZE))
+    ok, why = ok_of(run('restore', oldest)[0], 'RESTORE')
+    assert ok, why
+    assert (data / 'backups' / oldest).is_dir() and (data / SAVE).read_bytes() == a, 'oldest backup lost'
+    assert len(backups()) == 20, len(backups())
+    print('restore of the oldest backup at the cap: restored, the backup is still there, 20 kept')
     print(f'{plat}: save backups ok')

@@ -113,11 +113,14 @@ int save_backup_list(const char *root, SaveBackup *out, int max) {
     return n;
 }
 
-static void prune(const char *root) {
+// The oldest past the newest SAVE_BACKUP_KEEP removed; `keep` (the one a restore/import reads from) never.
+static void prune(const char *root, const char *keep) {
     static SaveBackup all[256];
     int n = save_backup_list(root, all, 256);
-    for (int i = SAVE_BACKUP_KEEP; i < n; i++) {
+    for (int i = n - 1; i >= 0 && n > SAVE_BACKUP_KEEP; i--) {
         char p[1100];
+        if (keep && !strcmp(all[i].name, keep)) continue;
+        n--;
         snprintf(p, sizeof p, "%s/backups/%s", root, all[i].name);
         plat_remove_tree(p);
     }
@@ -149,7 +152,7 @@ static bool create(const char *root, bool autom, char *name_out, size_t n, char 
         return fail(why, cap, "Couldn't finish the backup (%s).", strerror(errno));
     }
     if (n) snprintf(name_out, n, "%s", name);
-    prune(root);
+    if (!autom) prune(root, NULL);  // (an auto one is pruned after the swap: its source may be the oldest)
     return true;
 }
 
@@ -216,7 +219,9 @@ bool save_backup_restore(const char *root, const char *name, char *why, size_t c
     int count = is_dir(src) ? find_units(src, units) : 0;
     if (!count) return fail(why, cap, "The backup %s has no saves in it.", name);
     if (!create(root, true, NULL, 0, why, cap)) return false;  // (what is there now, kept)
-    return swap_in(root, src, units, count, why, cap);
+    bool ok = swap_in(root, src, units, count, why, cap);
+    prune(root, name);
+    return ok;
 }
 
 static bool is_save_file(const char *n) {
@@ -293,5 +298,8 @@ bool save_backup_import(const char *root, const char *src_dir, char *why, size_t
     }
     bool ok = create(root, true, NULL, 0, why, cap) && swap_in(root, from, units, count, why, cap);
     if (from == stage) plat_remove_tree(stage);
+    const char *base = strrchr(src_dir, '/'), *base2 = strrchr(src_dir, '\\');
+    base = base2 > base ? base2 : base;
+    prune(root, base ? base + 1 : src_dir);  // (a backup folder picked from backups/ stays)
     return ok;
 }
