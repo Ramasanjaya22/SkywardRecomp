@@ -25,6 +25,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"  // (SetKeyOwner)
 #include "option_rows.h"
+#include "extract_current.h"
 #include "osk.h"
 #include "pad_nav.h"
 #ifdef __APPLE__
@@ -645,6 +646,34 @@ static bool extract_nsp(const std::string &nsp, const std::string &update) {
     return true;
 }
 
+// extracted/ already holds this package's files (same .nsp name and size, update or not, a romfs.bin of the full size):
+// extraction rewrites 7+ GB, so it isn't done again. A different package, an interrupted run or damaged files fail it.
+static bool extraction_kept(const std::string &nsp, const std::string &update) {
+    if (!check_copied_files(g_root).empty() || !file_exists(g_root + "/romfs.bin")) return false;
+    auto text = [](const std::string &path) {
+        std::string t;
+        if (FILE *f = fopen(path.c_str(), "rb")) {
+            char b[8192];
+            size_t n;
+            while ((n = fread(b, 1, sizeof b, f)) > 0) t.append(b, n);
+            fclose(f);
+        }
+        return t;
+    };
+    const std::string &pkg = update.empty() ? nsp : update;  // (the manifest names the package extracted last)
+    struct stat ps, rs;
+    if (stat(pkg.c_str(), &ps) != 0 || stat((g_root + "/romfs.bin").c_str(), &rs) != 0) return false;
+    size_t slash = pkg.find_last_of("/\\");
+    std::string name = slash == std::string::npos ? pkg : pkg.substr(slash + 1);
+    std::string manifest = text(g_root + "/extraction-manifest.json"), index = text(g_root + "/index.json");
+    bool ok = !manifest.empty() && !index.empty() &&
+              extraction_current(manifest.c_str(), index.c_str(), (unsigned long long)rs.st_size, name.c_str(),
+                                 (unsigned long long)ps.st_size, !update.empty());
+    fprintf(stderr, "[launcher] extracted game files for %s: %s\n", name.c_str(),
+            ok ? "up to date, kept" : "missing or different, extracting");
+    return ok;
+}
+
 static void *extract_thread(void *) {
     stop_background_prep();
     std::string src;
@@ -678,7 +707,7 @@ static void *extract_thread(void *) {
         goto done;
     }
     if (!nsp.empty() && (exefs.empty() || romfs.empty())) {  // a game package: extract it in place
-        if (!extract_nsp(nsp, update)) goto done;
+        if (!extraction_kept(nsp, update) && !extract_nsp(nsp, update)) goto done;
         if (!build_id_ok(g_root + "/exefs")) { set_failure(FAIL_VERSION); goto done; }
         g_copy_skipped = true;  // (nothing was copied: the build's bar is the whole progress)
         pthread_mutex_lock(&g_lock);
