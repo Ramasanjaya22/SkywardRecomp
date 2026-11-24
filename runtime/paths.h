@@ -47,6 +47,8 @@ void rt_data_target(const char *picked, RtDataTarget *t);
 // folder and removes the unfinished copy (or, after the switch, finishes removing the old one). progress: step 0
 // copying, 1 checking, 2 removing the old copy. false: err says why; the data stays where it was.
 bool rt_data_move(const char *to, void (*progress)(int step, double frac), char *err, size_t n);
+// The same, the other way: the data in `from` (the folder used before) moved into this install's data folder.
+bool rt_data_pull(const char *from, void (*progress)(int step, double frac), char *err, size_t n);
 // Only the switch: from the next start the data folder is `to` (created if needed), as it is. The old one is kept.
 bool rt_data_use(const char *to, char *err, size_t n);
 // Windows: the data folder last used (%LOCALAPPDATA%\SkywardRecomp\data_root.txt) when it isn't this one and still

@@ -187,6 +187,9 @@ with tempfile.TemporaryDirectory() as directory:
     for _ in range(2):  # (an empty folder's start doesn't forget it)
         prev = run('previous', extra_env=new)['PREV']
         assert (Path(prev) == home) if os.name == 'nt' else prev == '', prev
+    populate(S / 'new_version')  # (this folder has data too: alternating between two installs is not asked again)
+    assert run('previous', extra_env=new)['PREV'] == ''
+    shutil.rmtree(S / 'new_version')
     home.rename(S / 'home_gone')
     assert run('previous', extra_env=new)['PREV'] == ''
     print('a new folder: the data folder used before is offered while it holds data' if os.name == 'nt' else

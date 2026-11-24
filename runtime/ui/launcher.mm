@@ -1534,7 +1534,7 @@ static void SDLCALL picked_saves(void *, const char *const *files, int) {
 static void choose_data_folder(void) { SDL_ShowOpenFolderDialog(picked_data, NULL, g_launcher_win, NULL, false); }
 static void df_progress(int step, double f) { g_df_step = step, g_df_frac = (float)f; }
 static void *df_move_thread(void *) {
-    g_df_result = rt_data_move(g_df_t.path, df_progress, g_df_err, sizeof g_df_err) ? 1 : -1;
+    g_df_result = (g_df_prev ? rt_data_pull : rt_data_move)(g_df_t.path, df_progress, g_df_err, sizeof g_df_err) ? 1 : -1;
     return NULL;
 }
 static void df_restart(void) {
@@ -1585,8 +1585,18 @@ static void data_folder_popup(float s) {
             close = ImGui::Button("OK", bw) || esc;
         } else if (t.has_data && g_df_prev) {
             ImGui::Text("Use existing data in this folder (saves, game files, build cache)?");
+            ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "Use keeps your data in %s. Don't delete that folder.", t.path);
             ImGui::Spacing();
             if (ImGui::Button("Use existing data", bw)) use_it();
+            ImGui::SameLine();
+            if (ImGui::Button("Move here", bw)) {
+                stop_background_prep();
+                settings_save();
+                g_df = DF_MOVING, g_df_step = 0, g_df_frac = 0, g_df_result = 0;
+                pthread_t th;
+                if (pthread_create(&th, NULL, df_move_thread, NULL) == 0) pthread_detach(th);
+                else snprintf(g_df_err, sizeof g_df_err, "Couldn't start the move."), g_df = DF_FAILED;
+            }
             ImGui::SameLine();
             ImGui::SetItemDefaultFocus();
             close = ImGui::Button("Start fresh", bw) || esc;

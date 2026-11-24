@@ -251,7 +251,7 @@ static void remember(const char *root) {
 bool rt_previous_data_root(char *out, size_t n) {
     char f[1100];
     return !rt_data_root_fixed() && recall_file(f, sizeof f) && read_line(f, out, n) && is_dir(out) && holds_data(out) &&
-           !same_dir(out, g_root);
+           !same_dir(out, g_root) && !holds_data(g_root);  // (not when this folder has data: alternating installs)
 }
 
 bool rt_data_root_early(char *out, size_t n) {
@@ -773,10 +773,10 @@ bool rt_data_use(const char *to, char *err, size_t n) {
     return true;
 }
 
-bool rt_data_move(const char *to, void (*progress)(int step, double frac), char *err, size_t n) {
+static bool move_data(const char *src, const char *to, void (*progress)(int step, double frac), char *err, size_t n) {
     err[0] = 0;
     char from[1024], p[1100], q[1100], abs_to[1100];
-    snprintf(from, sizeof from, "%s", g_root);
+    snprintf(from, sizeof from, "%s", src);
     if (!prepare_target(to, err, n)) return false;
     if (!resolve(to, abs_to, sizeof abs_to) || overlap(abs_to, from)) {
         snprintf(err, n, "That folder is inside the data folder.");
@@ -823,6 +823,14 @@ bool rt_data_move(const char *to, void (*progress)(int step, double frac), char 
     remember(abs_to);
     finish_moves(abs_to, progress);  // (the old copy; interrupted, the next start finishes it)
     return true;
+}
+
+bool rt_data_move(const char *to, void (*progress)(int step, double frac), char *err, size_t n) {
+    return move_data(g_root, to, progress, err, n);
+}
+
+bool rt_data_pull(const char *from, void (*progress)(int step, double frac), char *err, size_t n) {
+    return move_data(from, g_root, progress, err, n);
 }
 
 void rt_paths_restart(void) {
