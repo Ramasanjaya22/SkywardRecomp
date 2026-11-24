@@ -1175,8 +1175,11 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         frames = 0;
         last_fps_time = now;
     }
-    static double mem_at = 60.0;  // (memory in steady state: a minute in, then every 10 minutes)
-    if (now >= mem_at) { vk_log_memory("playing"); mem_at = now + 600.0; }
+    // (memory in steady state: a minute in, then every 10 minutes; LARECOMP_VK_MEMLOG=<seconds>: that interval, to see
+    // what a heavy render scale holds per heap)
+    static double mem_at = 60.0, mem_iv = -1;
+    if (mem_iv < 0) { const char *e = getenv("LARECOMP_VK_MEMLOG"); mem_iv = e && atof(e) >= 1 ? atof(e) : 600.0; if (mem_iv < 600.0) mem_at = mem_iv; }
+    if (now >= mem_at) { vk_log_memory("playing"); mem_at = now + mem_iv; }
 }
 
 // The game thread's side of a present: the frame counters and the per-frame hooks (input, pacing, test hooks).
