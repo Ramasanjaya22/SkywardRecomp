@@ -278,10 +278,17 @@ void shader_first_visit(const char *what, uint64_t a, uint64_t b, uint64_t id) {
 // ------------------------------------------------------------------ index of the game files' shaders
 // Every shader in the player's game files, by code hash: the BNSH containers (nn::gfx shader files) in the shader
 // archives (*.bfsha), the effects (*.ptcl) and the UI archives (*.arc). Only locations are kept (file, offset).
+#ifdef _WIN32
+#define FSEEK64 _fseeki64
+#else
+#define FSEEK64 fseeko
+#endif
 typedef struct { uint64_t hash; uint32_t file, off, size, const_offset, const_size; } IdxEnt;
 static IdxEnt *idx_tab;
 static size_t idx_cap, idx_n;
-typedef struct { char *path; uint8_t *mem; } IdxSrc;  // a game file, or (the main module's read-only data) memory
+// A game file, or (the main module's read-only data) memory. base: the file's start in path (a file inside the RomFS
+// image romfs.bin); fh: the source whose open handle reads it (sources in one image share one)
+typedef struct { char *path; uint8_t *mem; uint64_t base; int fh; } IdxSrc;
 static IdxSrc *idx_files;
 static int idx_nfiles;
 
@@ -375,6 +382,25 @@ static void idx_bnsh(const uint8_t *d, size_t n, size_t b, uint32_t file) {
     }
 }
 
+static bool idx_ext(const char *name, size_t l) {  // a shader archive, effect or UI archive
+    return (l > 5 && (!strcmp(name + l - 5, "bfsha") || !strcmp(name + l - 5, ".ptcl"))) ||
+           (l > 4 && !strcmp(name + l - 4, ".arc"));
+}
+
+// The BNSH containers in d[0..n), one game file at base in path
+static void idx_buf(const uint8_t *d, size_t n, const char *path, uint64_t base, int fh) {
+    uint32_t file = (uint32_t)idx_nfiles;
+    bool any = false;
+    off_reset();
+    for (size_t i = 0; i + 8 <= n; i += 8)  // (containers are aligned)
+        if (!memcmp(d + i, "BNSH\0\0\0\0", 8)) { any = true; idx_bnsh(d, n, i, file); }
+    if (any) {
+        idx_files = realloc(idx_files, sizeof *idx_files * (size_t)(idx_nfiles + 1));
+        idx_files[idx_nfiles] = (IdxSrc){strdup(path), NULL, base, fh < 0 ? idx_nfiles : fh};
+        idx_nfiles++;
+    }
+}
+
 static void idx_file(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return;
@@ -382,18 +408,40 @@ static void idx_file(const char *path) {
     long n = ftell(f);
     fseek(f, 0, SEEK_SET);
     uint8_t *d = n > 0 && n < 0x7FFFFFFF ? malloc((size_t)n) : NULL;
-    if (d && fread(d, 1, (size_t)n, f) == (size_t)n) {
-        uint32_t file = (uint32_t)idx_nfiles;
-        bool any = false;
-        off_reset();
-        for (size_t i = 0; i + 8 <= (size_t)n; i += 8)  // (containers are aligned)
-            if (!memcmp(d + i, "BNSH\0\0\0\0", 8)) { any = true; idx_bnsh(d, (size_t)n, i, file); }
-        if (any) {
-            idx_files = realloc(idx_files, sizeof *idx_files * (size_t)(idx_nfiles + 1));
-            idx_files[idx_nfiles++] = (IdxSrc){strdup(path), NULL};
-        }
-    }
+    if (d && fread(d, 1, (size_t)n, f) == (size_t)n) idx_buf(d, (size_t)n, path, 0, -1);
     free(d);
+    fclose(f);
+}
+
+// A RomFS image (romfs.bin: an .nsp setup has no romfs/ folder, the image is the game files): the same files, found
+// through its file table (header: ..., file table offset / size at 0x38 / 0x40, data offset at 0x48)
+static void idx_image(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return;
+    uint64_t h[10];
+    uint8_t *meta = NULL, *d = NULL;
+    size_t cap = 0;
+    int fh = -1;  // (the first source found in the image)
+    if (fread(h, 1, sizeof h, f) != sizeof h || h[0] != sizeof h || !h[8] || h[8] > (64u << 20)) goto done;
+    if (!(meta = malloc(h[8])) || FSEEK64(f, (int64_t)h[7], SEEK_SET) || fread(meta, 1, h[8], f) != h[8]) goto done;
+    for (uint64_t o = 0; o + 0x20 <= h[8];) {  // entry: parent, next, data offset, size, ..., name length, name
+        uint64_t data = rd64(meta, o + 8), size = rd64(meta, o + 0x10);
+        uint32_t nl = rd32(meta, o + 0x1C);
+        if (nl > h[8] - o - 0x20) break;
+        char name[256];
+        snprintf(name, sizeof name, "%.*s", (int)nl, (const char *)meta + o + 0x20);
+        o += 0x20 + ((nl + 3) & ~3u);
+        if (!idx_ext(name, strlen(name)) || !size || size >= 0x7FFFFFFF) continue;
+        if (size > cap) free(d), d = malloc(cap = size);
+        if (!d) { cap = 0; continue; }
+        if (FSEEK64(f, (int64_t)(h[9] + data), SEEK_SET) || fread(d, 1, size, f) != size) continue;
+        int before = idx_nfiles;
+        idx_buf(d, size, path, h[9] + data, fh);
+        if (fh < 0 && idx_nfiles > before) fh = before;
+    }
+done:
+    free(d);
+    free(meta);
     fclose(f);
 }
 
@@ -422,7 +470,8 @@ static void idx_nso(const char *path) {
                 if (!memcmp(seg + i, "BNSH\0\0\0\0", 8)) { any = true; idx_bnsh(seg, size, i, file); }
             if (any) {
                 idx_files = realloc(idx_files, sizeof *idx_files * (size_t)(idx_nfiles + 1));
-                idx_files[idx_nfiles++] = (IdxSrc){NULL, seg};
+                idx_files[idx_nfiles] = (IdxSrc){NULL, seg, 0, idx_nfiles};
+                idx_nfiles++;
             } else free(seg);
         }
     }
@@ -438,9 +487,7 @@ static void idx_dir(const char *dir, int depth) {
         if (e->d_name[0] == '.') continue;
         char p[1024];
         snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
-        size_t l = strlen(e->d_name);
-        const char *ext = l > 5 ? e->d_name + l - 5 : "";
-        if (!strcmp(ext, "bfsha") || !strcmp(ext, ".ptcl") || (l > 4 && !strcmp(e->d_name + l - 4, ".arc"))) idx_file(p);
+        if (idx_ext(e->d_name, strlen(e->d_name))) idx_file(p);
         else {
             struct stat sb;
             if (stat(p, &sb) == 0 && S_ISDIR(sb.st_mode)) idx_dir(p, depth + 1);
@@ -449,14 +496,30 @@ static void idx_dir(const char *dir, int depth) {
     closedir(dd);
 }
 
+// The game files' shaders: romfs (the romfs folder) and exefs/main next to it
+static void idx_game(const char *romfs) {
+    idx_dir(romfs, 0);
+    if (!idx_nfiles) {  // (no romfs/ folder: <game files>/romfs.bin)
+        char image[1100];
+        snprintf(image, sizeof image, "%s.bin", romfs);
+        idx_image(image);
+    }
+    char main_nso[1100];  // (<game files>/exefs/main, next to romfs/; cut by name: romfs/.. fails without romfs/)
+    size_t rl = strlen(romfs);
+    if (rl >= 6 && !strcmp(romfs + rl - 6, "/romfs")) snprintf(main_nso, sizeof main_nso, "%.*s/exefs/main", (int)(rl - 6), romfs);
+    else snprintf(main_nso, sizeof main_nso, "%s/../exefs/main", romfs);
+    idx_nso(main_nso);
+}
+
 // The shader's code (+ its constants), read from the game files; NULL: not there
 static uint8_t *blob_read(const IdxEnt *e, ShaderBlob *b, FILE **files) {
     uint8_t *d = calloc(1, (size_t)e->size + 0x100);  // (zero padding past the constants)
     if (idx_files[e->file].mem) memcpy(d, idx_files[e->file].mem + e->off, e->size);
     else {
-        FILE **f = &files[e->file];
-        if (!*f && !(*f = fopen(idx_files[e->file].path, "rb"))) { free(d); return NULL; }
-        if (fseek(*f, (long)e->off, SEEK_SET) || fread(d, 1, e->size, *f) != e->size) { free(d); return NULL; }
+        const IdxSrc *src = &idx_files[e->file];
+        FILE **f = &files[src->fh];
+        if (!*f && !(*f = fopen(src->path, "rb"))) { free(d); return NULL; }
+        if (FSEEK64(*f, (int64_t)(src->base + e->off), SEEK_SET) || fread(d, 1, e->size, *f) != e->size) { free(d); return NULL; }
     }
     *b = (ShaderBlob){d, e->size, NULL, e->const_offset, e->const_size};
     return d;
@@ -570,12 +633,7 @@ static bool prep_run_locked(const char *romfs, void (*progress)(int done, int to
     for (char *p = list; *p; p++) total += *p == '\n';
     for (char *p = seen; p && *p; p++) total += *p == '\n';
     if (progress) progress(0, total + 1);
-    if (!idx_n) {
-        idx_dir(romfs, 0);
-        char main_nso[1100];  // (<game files>/exefs/main, next to romfs/)
-        snprintf(main_nso, sizeof main_nso, "%s/../exefs/main", romfs);
-        idx_nso(main_nso);
-    }
+    if (!idx_n) idx_game(romfs);
     double t_idx = ms_now() - t0;
     if (idx_n) {  // (the player's list of other game files - none yet, or an update: only what this game has)
         uint64_t game = idx_game_id();
