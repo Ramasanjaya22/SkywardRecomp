@@ -52,6 +52,8 @@ bool rt_data_use(const char *to, char *err, size_t n);
 // Windows: the data folder last used (%LOCALAPPDATA%\SkywardRecomp\data_root.txt) when it isn't this one and still
 // holds skywardrecomp.ini or extracted/ (a new version unpacked elsewhere). Other platforms: always false.
 bool rt_previous_data_root(char *out, size_t n);
+// A file or folder copied as it is (never hard-linked): the copy rt_data_move uses. false: err says why.
+bool rt_copy_tree(const char *src, const char *dst, char *err, size_t n);
 // Start again (the same command line, from the starting folder): after a switch. Returns only on failure.
 void rt_paths_restart(void);
 

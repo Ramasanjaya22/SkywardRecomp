@@ -109,7 +109,7 @@ bool rt_dev_mode(void) { return g_dev; }
 #define NOTE_FROM ".skywardrecomp_move_from"        // in a move's destination: the old folder, still to be emptied
 #define MARK_PARTIAL ".skywardrecomp_incomplete"    // in a move's destination until its copy was checked
 // What a data folder holds (and a move takes along). Logs stay where they are.
-static const char *const DATA_ENTRIES[] = {"save", "rando", "skywardrecomp.ini", "fonts", "gamecontrollerdb.txt", "cache",
+static const char *const DATA_ENTRIES[] = {"save", "rando", "skywardrecomp.ini", "fonts", "gamecontrollerdb.txt", "cache", "backups",
                                            "extracted"};
 #define N_ENTRIES (sizeof DATA_ENTRIES / sizeof *DATA_ENTRIES)
 static char g_home[1024];  // the platform's folder (where POINTER_FILE lives)
@@ -592,6 +592,7 @@ typedef struct {
     char *err;
     size_t errn;
     char *buf, *buf2;
+    bool no_links;  // (always copy: a backup must not share bytes with a file the game writes in place)
 } Move;
 
 static void moved(Move *m, unsigned long long n) {
@@ -622,9 +623,9 @@ static bool copy_file(Move *m, const char *s, const char *d, const struct stat *
     static const char *no_links;  // (tests: LARECOMP_MOVE_NO_LINKS=1 copies as if to another drive)
     if (!no_links) no_links = getenv("LARECOMP_MOVE_NO_LINKS") ? "1" : "";
 #ifdef _WIN32
-    if (!*no_links && CreateHardLinkA(d, s, NULL)) { moved(m, st->st_size); return true; }  // (same volume: a second
+    if (!m->no_links && !*no_links && CreateHardLinkA(d, s, NULL)) { moved(m, st->st_size); return true; }  // (same volume: a second
 #else                                                                                       //  name, no copy)
-    if (!*no_links && link(s, d) == 0) { moved(m, st->st_size); return true; }
+    if (!m->no_links && !*no_links && link(s, d) == 0) { moved(m, st->st_size); return true; }
 #endif
     FILE *in = fopen(s, "rb"), *out = in ? fopen(d, "wb") : NULL;
     bool ok = in && out;
@@ -672,6 +673,15 @@ static bool copy_tree(Move *m, const char *s, const char *d) {
         ok = copy_tree(m, cs, cd);
     }
     closedir(dir);
+    return ok;
+}
+
+bool rt_copy_tree(const char *src, const char *dst, char *err, size_t n) {
+    err[0] = 0;
+    Move m = {NULL, 0, 0, 0, err, n, malloc(MOVE_BUF), NULL, true};
+    bool ok = m.buf && copy_tree(&m, src, dst);
+    if (!m.buf) snprintf(err, n, "Out of memory");
+    free(m.buf);
     return ok;
 }
 

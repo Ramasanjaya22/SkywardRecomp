@@ -40,6 +40,7 @@ extern "C" {
 #include <libswscale/swscale.h>
 #include "platform.h"
 #include "paths.h"
+#include "save_backup.h"
 #include "gamebuild.h"
 #include "build_cache.h"
 #include "game_addresses.h"
@@ -1521,6 +1522,15 @@ static void SDLCALL picked_data(void *, const char *const *files, int) {
     g_df_pick = files[0];
     pthread_mutex_unlock(&g_lock);
 }
+// Save data (runtime/save_backup.h): backups, restore, import. A save folder picked to import comes from the dialog's thread.
+static std::string g_sb_pick, g_sb_confirm;  // (g_sb_pick: g_lock; g_sb_confirm: the backup a restore waits for a yes on)
+static void SDLCALL picked_saves(void *, const char *const *files, int) {
+    if (!files || !files[0]) return;
+    pthread_mutex_lock(&g_lock);
+    g_sb_pick = files[0];
+    pthread_mutex_unlock(&g_lock);
+}
+
 static void choose_data_folder(void) { SDL_ShowOpenFolderDialog(picked_data, NULL, g_launcher_win, NULL, false); }
 static void df_progress(int step, double f) { g_df_step = step, g_df_frac = (float)f; }
 static void *df_move_thread(void *) {
@@ -2414,6 +2424,54 @@ extern "C" void launcher_run(const char *root) {
                         g_build_cache_changed = true;
                         if (build_cache_clear(g_root.c_str(), why, sizeof why)) set_job("Build cache cleared.");
                         else set_job("Could not clear the build cache.", true, why);
+                    }
+                }
+                if (!busy) {
+                    opt_section("Save data");
+                    char why[512] = "", made[64] = "";
+                    std::string picked_dir;
+                    pthread_mutex_lock(&g_lock);
+                    picked_dir.swap(g_sb_pick);
+                    pthread_mutex_unlock(&g_lock);
+                    if (!picked_dir.empty()) {
+                        if (save_backup_import(rt_data_root(), picked_dir.c_str(), why, sizeof why)) set_job("Save data imported.");
+                        else set_job("Could not import the save data.", true, why);
+                    }
+                    if (opt_action("Back up now", "", "Copies your saves (and each randomizer seed's) to the backups "
+                                   "folder. The newest 20 are kept.", true)) {
+                        if (save_backup_create(rt_data_root(), made, sizeof made, why, sizeof why)) set_job("Saves backed up.");
+                        else set_job("Could not back up the saves.", true, why);
+                    }
+                    if (opt_action("Import save...", "", "Takes saves from a folder: a backup folder, or one with a save "
+                                   "file (savedata0.bin, or zelda.sav from an emulator or a Switch). Your current saves are "
+                                   "backed up first.", true))
+                        SDL_ShowOpenFolderDialog(picked_saves, NULL, g_launcher_win, NULL, false);
+                    static SaveBackup list[SAVE_BACKUP_KEEP];
+                    int nb = save_backup_list(rt_data_root(), list, SAVE_BACKUP_KEEP);
+                    for (int i = 0; i < nb; i++) {
+                        char when[48], size[32];
+                        time_t t = (time_t)list[i].when;
+                        strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S", localtime(&t));
+                        snprintf(size, sizeof size, "%.1f MB", list[i].bytes / 1e6);
+                        std::string label = std::string("Restore ") + when + (strstr(list[i].name, "-auto") ? " (auto)" : "");
+                        bool asking = g_sb_confirm == list[i].name;
+                        if (opt_action(asking ? "Yes, restore it" : label.c_str(), size, asking ? "Replaces your current saves "
+                                       "with this backup. They are backed up first." : "Puts the saves of this backup back. "
+                                       "Your current saves are backed up first.", true)) {
+                            if (!asking) g_sb_confirm = list[i].name;
+                            else {
+                                g_sb_confirm.clear();
+                                if (save_backup_restore(rt_data_root(), list[i].name, why, sizeof why)) set_job("Saves restored.");
+                                else set_job("Could not restore the saves.", true, why);
+                                break;
+                            }
+                        }
+                    }
+                    if (!g_sb_confirm.empty() && opt_action("Cancel", "", "Keeps your current saves.", true)) g_sb_confirm.clear();
+                    if (opt_action("Open backups folder", "", "Shows the folder the backups are kept in.", true)) {
+                        std::string dir = std::string(rt_data_root()) + "/backups";
+                        mkdir(dir.c_str(), 0755);
+                        SDL_OpenURL(("file:///" + dir).c_str());
                     }
                 }
                 if (!job_line.empty()) {  // the current step / result
