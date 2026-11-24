@@ -49,8 +49,24 @@ static void mouse_clear(void) {
     pthread_mutex_unlock(&mouse_lock);
 }
 extern bool menu_input_captured(void);  // runtime/ui/menu.mm
-// The window grabs the mouse (relative mode) while it steers the game; the device loops follow this.
-bool input_mouse_captured(void) { return (g_settings.mouse_camera || g_settings.mouse_combat) && !menu_input_captured(); }
+// Scripted test runs ignore the user's own input (a key or stick touched while a test drives Link spoils it):
+// LARECOMP_NO_USER_INPUT=1, on by default whenever LARECOMP_INPUT / LARECOMP_DOORJUMP_TEST / LARECOMP_PLACE is set
+// (or LARECOMP_HOST_INPUT / LARECOMP_BIND_TEST; LARECOMP_NO_USER_INPUT=0 lets it through again).
+static bool scripted_run(void) {
+    static int on = -1;
+    if (on < 0) {
+        const char *v = getenv("LARECOMP_NO_USER_INPUT");
+        on = v ? atoi(v) != 0 : (getenv("LARECOMP_INPUT") || getenv("LARECOMP_DOORJUMP_TEST") || getenv("LARECOMP_PLACE") ||
+                                 getenv("LARECOMP_HOST_INPUT") || getenv("LARECOMP_BIND_TEST"));
+        if (on) LOG("[input] scripted run: keyboard, mouse and controllers ignored\n");
+    }
+    return on;
+}
+// The window grabs the mouse (relative mode) while it steers the game; the device loops follow this. Scripted runs
+// never grab the user's mouse (their pushed mouse: events still reach the handlers).
+bool input_mouse_captured(void) {
+    return (g_settings.mouse_camera || g_settings.mouse_combat) && !menu_input_captured() && !scripted_run();
+}
 
 // Guest IPC threads publish values; only the UI thread touches SDL's pad.
 // The lock also makes paired value snapshots consistent with permission/reset.
@@ -274,18 +290,9 @@ static bool test_event(const SDL_Event *e) {
     }
 }
 
-// Scripted test runs ignore the user's own input (a key or stick touched while a test drives Link spoils it):
-// LARECOMP_NO_USER_INPUT=1, on by default whenever LARECOMP_INPUT / LARECOMP_DOORJUMP_TEST / LARECOMP_PLACE is set
-// (or LARECOMP_HOST_INPUT / LARECOMP_BIND_TEST; LARECOMP_NO_USER_INPUT=0 lets it through again).
+// Scripted test runs (scripted_run, above) ignore the user's keyboard, mouse and controllers.
 bool input_user_blocked(const SDL_Event *e) {
-    static int on = -1;
-    if (on < 0) {
-        const char *v = getenv("LARECOMP_NO_USER_INPUT");
-        on = v ? atoi(v) != 0 : (getenv("LARECOMP_INPUT") || getenv("LARECOMP_DOORJUMP_TEST") || getenv("LARECOMP_PLACE") ||
-                                 getenv("LARECOMP_HOST_INPUT") || getenv("LARECOMP_BIND_TEST"));
-        if (on) LOG("[input] scripted run: keyboard, mouse and controllers ignored\n");
-    }
-    if (!on) return false;
+    if (!scripted_run()) return false;
     if (test_event(e)) return false;  // (LARECOMP_HOST_INPUT type: / sdlkey: / sdlpad: - the test's own presses)
     switch (e->type) {
     case SDL_EVENT_KEY_DOWN: case SDL_EVENT_KEY_UP: case SDL_EVENT_TEXT_INPUT: case SDL_EVENT_TEXT_EDITING:
@@ -833,7 +840,11 @@ static void fill_state(Cpu *c) {
         if (renderer_present_count() < until) b |= 1ull << BTN_PLUS;
     }
     int32_t lx = clamp_axis((menu ? 0 : key_lx + pad_lx) + script_lx), ly = clamp_axis((menu ? 0 : key_ly + pad_ly) + script_ly);
-    int32_t rx = clamp_axis((menu ? 0 : key_rx + pad_rx) + script_rx + mo.rx), ry = clamp_axis((menu ? 0 : key_ry + pad_ry) + script_ry + mo.ry);
+    // The mouse's camera velocity is a camera only through Free Camera's synthesized L (added in that block below, or
+    // dropped): on its own it is a raw right stick, a sword swing. Flick / aim output (no_cam) passes as it is.
+    const int32_t mcam_x = mo.no_cam ? 0 : mo.rx, mcam_y = mo.no_cam ? 0 : mo.ry;
+    const int32_t msword_x = mo.no_cam ? mo.rx : 0, msword_y = mo.no_cam ? mo.ry : 0;
+    int32_t rx = clamp_axis((menu ? 0 : key_rx + pad_rx) + script_rx + msword_x), ry = clamp_axis((menu ? 0 : key_ry + pad_ry) + script_ry + msword_y);
     extern bool mirror_input(void);  // mirror mode, the world on screen (runtime/hle/mirror.c): left and right swap
     bool mirrored = !menu && mirror_input();
     if (mirrored) {
@@ -914,11 +925,17 @@ static void fill_state(Cpu *c) {
         if (hold_off) b &= ~(1ull << BTN_L);  // held L: withhold it so the stick swings the sword
         // Camera off or those buttons held: only skip synthesis, vanilla L + right stick still works.
         const bool synth_off = !free_cam_on || hold_off || r_held || zl_held || zr_held || mo.no_cam;
-        if (!synth_off && (abs(rx) > 8000 || abs(ry) > 8000)) {
+        const bool mouse_cam = !synth_off && (mcam_x || mcam_y);  // the mouse turns the camera at any speed (no 8000 gate)
+        if (mouse_cam) rx = clamp_axis(rx + mcam_x), ry = clamp_axis(ry + mcam_y);
+        if (!synth_off && (mouse_cam || abs(rx) > 8000 || abs(ry) > 8000)) {
             b |= 1ull << BTN_L;
             const float sens = g_settings.free_cam_sens;
             rx = clamp_axis((int32_t)(rx * sens));
             ry = clamp_axis((int32_t)(ry * sens));
+            if (mouse_cam) {  // a slow mouse must still read as a real deflection: an axis it moves is at least 8000
+                if (mcam_x && abs(rx) < 8000) rx = mcam_x > 0 ? 8000 : -8000;
+                if (mcam_y && abs(ry) < 8000) ry = mcam_y > 0 ? 8000 : -8000;
+            }
         }
     } else {
         free_cam_on = true;  // re-enabling the setting starts with the camera active

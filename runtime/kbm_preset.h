@@ -1,5 +1,5 @@
 // The "Keyboard + Mouse" key preset (bind_apply_kbm_preset, runtime/hle/bindings.c): the keyboard slots it sets, by
-// SDL_Scancode. PROVISIONAL, unverified in game (spec: docs/superpowers/specs/2026-11-24-kbm-input-design.md, "Button map");
+// SDL_Scancode. PROVISIONAL: a first guess, not yet verified in game;
 // if the game turns out to want a different layout, only this table changes. 0 = unbound.
 #pragma once
 #include <SDL3/SDL_scancode.h>

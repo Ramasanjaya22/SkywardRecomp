@@ -1347,7 +1347,7 @@ void backend_clear_window(void) {
 static void mouse_mode_sync(void) {  // relative mouse mode while the mouse steers the game (runtime/hle/input.c)
     static bool rel;
     bool want = input_mouse_captured();
-    if (want != rel) rel = want, SDL_SetWindowRelativeMouseMode(window, want);
+    if (want != rel && SDL_SetWindowRelativeMouseMode(window, want)) rel = want;  // (a failed call retries next poll)
 }
 
 int ui_run(void) {
