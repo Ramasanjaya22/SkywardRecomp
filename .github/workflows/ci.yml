@@ -108,6 +108,7 @@ jobs:
           python3 tools/test_shader_rec.py
           python3 tools/test_shadow_map.py
           python3 tools/test_zr_tap.py
+          python3 tools/test_mouse_sword.py
           make test_texpack
       # (the same programs as vertex / fragment / compute GLSL -> glslc -> spirv-val, Vulkan 1.3; the shipped shader
       # list is only hashes of the game's shaders, so these synthetic programs stand in for it)
