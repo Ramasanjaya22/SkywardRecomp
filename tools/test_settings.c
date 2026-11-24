@@ -62,6 +62,12 @@ int main(int argc, char **argv) {
         settings_save();  // rewrite for the test to check
         return 0;
     }
+    if (argc == 3 && !strcmp(argv[1], "fps")) {  // the frame rate setting (FPS_*)
+        settings_load();
+        assert(g_settings.fps_target == atoi(argv[2]));
+        settings_save();  // rewrite for the test to check
+        return 0;
+    }
     if (argc == 4 && !strcmp(argv[1], "free-cam")) {  // free camera: persisted toggle and clamped right-stick scale
         settings_load();
         assert(g_settings.free_cam == (atoi(argv[2]) != 0));

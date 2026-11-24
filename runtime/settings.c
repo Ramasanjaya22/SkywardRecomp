@@ -165,6 +165,11 @@ void settings_load(void) {
         else if (!strcmp(key, "reverb")) g_settings.reverb = atoi(val) != 0;
         else if (!strcmp(key, "movie_audio")) g_settings.movie_audio = atoi(val) != 0;
         else if (!strcmp(key, "show_fps")) g_settings.show_fps = atoi(val) != 0;
+        else if (!strcmp(key, "fps")) {  // (auto, 30, 60, 90, 120, unlocked: anything else is auto)
+            int n = atoi(val);
+            g_settings.fps_target = !strcmp(val, "unlocked") ? FPS_UNLOCKED
+                                  : n == 30 || n == 60 || n == 90 || n == 120 ? n : FPS_AUTO;
+        }
         else if (!strcmp(key, "anisotropy")) {  // (0, 2, 4, 8, 16: other values round down)
             int n = atoi(val);
             g_settings.anisotropy = n >= 16 ? 16 : n >= 8 ? 8 : n >= 4 ? 4 : n >= 2 ? 2 : 0;
@@ -271,6 +276,8 @@ void settings_save(void) {
     fprintf(f, "reverb = %d\n", g_settings.reverb);
     fprintf(f, "movie_audio = %d\n", g_settings.movie_audio);
     fprintf(f, "show_fps = %d\n", g_settings.show_fps);
+    if (g_settings.fps_target > 0) fprintf(f, "fps = %d\n", g_settings.fps_target);
+    else fprintf(f, "fps = %s\n", g_settings.fps_target == FPS_UNLOCKED ? "unlocked" : "auto");
     fprintf(f, "anisotropy = %d\n", g_settings.anisotropy);
     fprintf(f, "lod_bias = %.2f\n", g_settings.lod_bias);
     fprintf(f, "upscaler = %s\n", g_settings.upscaler_auto ? "auto" : g_settings.upscaler == UPSCALE_METALFX ? "metalfx" :

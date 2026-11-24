@@ -8,6 +8,7 @@
 
 #include "../game_addresses.h"
 #include "../rt.h"
+#include "../settings.h"
 #include "pace.h"
 #include "slowframe.h"
 
@@ -130,6 +131,24 @@ static void hold_cadence(bool held) {
     v_exit = __atomic_load_n(&g_vsync_count, __ATOMIC_ACQUIRE);
 }
 
+// The frame rate setting (not Auto: rt_fps_target, runtime/hle/framepace.c - the game's timestep follows the target):
+// paced by time, not vsyncs - a frame that started 1 s / the target after the last one's exit at the soonest, a slow
+// one at once (never a wait for a second vsync); Unlocked, no wait. (The wait counts as blocked: idle.)
+static void fps_cadence(int fps) {
+    static uint64_t last_exit;
+    uint64_t t0 = plat_now_ns();
+    if (fps > 0 && last_exit) {
+        uint64_t at = last_exit + 1000000000ull / (uint64_t)fps;
+        if (at > t0) plat_sleep_until_ns(at), g_blocked_ns += plat_now_ns() - t0;
+    }
+    last_exit = plat_now_ns();
+}
+
+bool pace_fast(int refresh_hz) {
+    int t = rt_fps_target();
+    return t == FPS_UNLOCKED || t > (refresh_hz > 0 ? refresh_hz : 60);
+}
+
 static float median60(const float *v) {
     float s[60];
     memcpy(s, v, sizeof s);
@@ -201,6 +220,13 @@ static uint64_t pace_scene(void) {
 
 void pace_frame(void) {
     spike_test();
+    int fps = rt_fps_target();
+    if (fps != FPS_AUTO) {  // (the game no longer picks 60 / 30 itself: nothing to hold)
+        pace_slow = false;
+        hold_30(false);
+        fps_cadence(fps);
+        return;
+    }
     static int on = -1;
     if (on < 0) { const char *e = getenv("LARECOMP_PACE"); on = !e || atoi(e) != 0; }
     static uint64_t last, last_wait;

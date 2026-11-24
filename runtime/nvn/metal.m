@@ -1468,7 +1468,16 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
             if (n++ < 20) LOG("[metal] present of frame %llu without an image (texture %p backend %p)\n", (unsigned long long)frame, t, b);
         }
         [cb addCompletedHandler:^(id<MTLCommandBuffer> done) { (void)done; __atomic_sub_fetch(&g_presents_inflight, 1, __ATOMIC_RELAXED); }];
-        if (deadline) [cb presentDrawable:drawable atTime:CACurrentMediaTime() + 1.0 / 60.0];
+        // the frame rate setting (pace.c paces to it): over the display's refresh, or Unlocked, the vsync would hold the
+        // frames at the refresh rate and slow the game (its timestep is the target's), so it goes off (tears); the
+        // deadline is the target's frame (Unlocked: none to give)
+        int fps = rt_fps_target();
+        const SDL_DisplayMode *dm = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
+        static int sync = -1;
+        if (sync < 0) sync = layer.displaySyncEnabled;
+        BOOL want_sync = sync && !pace_fast(dm ? (int)(dm->refresh_rate + 0.5f) : 0);
+        if (layer.displaySyncEnabled != want_sync) layer.displaySyncEnabled = want_sync;
+        if (deadline && fps != FPS_UNLOCKED) [cb presentDrawable:drawable atTime:CACurrentMediaTime() + 1.0 / (fps > 60 ? fps : 60)];
         else [cb presentDrawable:drawable];
         [cb commit];
         if (shot_tex) {

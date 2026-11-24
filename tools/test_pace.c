@@ -32,6 +32,8 @@ bool world_on_screen(void) { return true; }
 const char *game_level_name(void) { return "Field"; }
 uint64_t game_camera_zone(void) { return zone; }
 void slow_frame_present(uint64_t now, uint64_t gcpu) { (void)now, (void)gcpu; }
+static int fps_target;  // (framepace.c: the frame rate setting, FPS_*; 0 = Auto, the game's own 60 / 30)
+int rt_fps_target(void) { return fps_target; }
 
 // ---- cases
 // cpu: the game thread's CPU time; wait: its waits that count as busy (for the render thread, the GPU's previous
@@ -202,10 +204,41 @@ static int run(const Case *c) {
     return ok;
 }
 
+// The frame rate setting (not Auto): pace_frame paces by time, 1 s / the target from one frame's exit to the next
+// (Unlocked: no wait), whatever the vsyncs and the game's present interval. The game thread works cpu ms a frame.
+typedef struct { const char *name; int fps; double cpu, want_ms; } FpsCase;
+static const FpsCase fps_cases[] = {
+    {"fps 60: 5 ms frames, 16.67 ms apart", 60, 5, 1000.0 / 60},
+    {"fps 60: 20 ms frames, 20 ms apart (not a second vsync)", 60, 20, 20},
+    {"fps 30: 5 ms frames, 33.33 ms apart", 30, 5, 1000.0 / 30},
+    {"fps 90: 5 ms frames, 11.11 ms apart", 90, 5, 1000.0 / 90},
+    {"fps 120: 5 ms frames, 8.33 ms apart (the game asking for interval 2 too)", 120, 5, 1000.0 / 120},
+    {"fps unlocked: 5 ms frames, 5 ms apart", -1, 5, 5},
+};
+
+static int run_fps(const FpsCase *c) {
+    fps_target = c->fps;
+    g_present_interval = c->fps == 120 ? 2 : 1;
+    vsyncs();
+    int n = 0, slow = 0;
+    uint64_t first = 0;
+    for (int i = 0; i < 600; i++) {
+        t_ns += (uint64_t)(c->cpu * 1e6), vsyncs();
+        pace_frame();
+        slow += pace_is_slow();
+        if (i == 99) first = t_ns;  // (from the 100th frame on: past the first frame)
+        if (i >= 100) n++;
+    }
+    double ms = (t_ns - first) / 1e6 / n;
+    int ok = ms > c->want_ms - 0.05 && ms < c->want_ms + 0.05 && !slow;
+    printf("%s\n  %s: %.2f ms a frame (want %.2f), %d held\n", c->name, ok ? "ok" : "FAILED", ms, c->want_ms, slow);
+    return ok;
+}
+
 int main(int argc, char **argv) {
-    int ncases = (int)(sizeof cases / sizeof *cases);
-    if (argc < 2) { printf("%d\n", ncases); return 0; }  // (the runner: each case in its own process - pace.c's state)
+    int ncases = (int)(sizeof cases / sizeof *cases), nfps = (int)(sizeof fps_cases / sizeof *fps_cases);
+    if (argc < 2) { printf("%d\n", ncases + nfps); return 0; }  // (the runner: each case in its own process - pace.c's state)
     int i = atoi(argv[1]);
-    if (i < 0 || i >= ncases) return 2;
-    return run(&cases[i]) ? 0 : 1;
+    if (i < 0 || i >= ncases + nfps) return 2;
+    return (i < ncases ? run(&cases[i]) : run_fps(&fps_cases[i - ncases])) ? 0 : 1;
 }

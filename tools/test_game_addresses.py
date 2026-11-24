@@ -40,7 +40,7 @@ parser.add_argument('--seeds', type=Path)
 args = parser.parse_args()
 
 # ---- every version: the same names, one header each, distinct non-zero values
-SS_NAMES = set()  # names with a verified SS value; every other name must be 0
+SS_NAMES = {'FRAME_CTRL_INTERVAL_SITE', 'FRAME_TIMESTEP'}  # names with a verified SS value; every other name must be 0
 assert list(VERSIONS)[0] == 'v1_0_0'
 tables = {}
 for key in VERSIONS:
@@ -77,7 +77,9 @@ sys.modules.pop('patches', None)
 select_version('v1_0_0')
 import patches  # noqa: E402
 patch_values, runtime_values = tables['v1_0_0']
-assert not patches.PATCHES and not patches.HOOKS, 'SS has no LA patches or hooks (tools/patches.py clears both)'
+frame_ctrl = patch_values['FRAME_CTRL_INTERVAL_SITE']  # (SS's own: the frame rate setting's two sites, nothing of LA's)
+assert frame_ctrl and set(patches.PATCHES) == {frame_ctrl, frame_ctrl + 0x64} and not patches.HOOKS, \
+    'SS patches only its frame controller (tools/patches.py clears LA\'s patches and hooks)'
 assert addr_text('f_@HAS_ITEM@(c);') == f'f_{ADDRESS.HAS_ITEM:x}(c);'
 try:
     addr_text('@UNKNOWN_ADDRESS@')

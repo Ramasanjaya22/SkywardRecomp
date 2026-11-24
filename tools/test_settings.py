@@ -53,6 +53,17 @@ with tempfile.TemporaryDirectory() as directory:
         saved = ini.read_text()
         assert 'zr_attack = ' + enabled + '\n' in saved, (lines, saved)
         count += 1
+    # Frame rate: each value round-trips; none or an unknown one is Auto (the game's own 60 / 30)
+    for lines, fps, saved_as in [(['fps = 30'], '30', '30'), (['fps = 60'], '60', '60'), (['fps = 90'], '90', '90'),
+                                 (['fps = 120'], '120', '120'), (['fps = unlocked'], '-1', 'unlocked'),
+                                 (['fps = auto'], '0', 'auto'), ([], '0', 'auto'), (['fps = 45'], '0', 'auto')]:
+        ini = directory / 'test.ini'
+        ini.write_text('\n'.join(lines) + '\n')
+        subprocess.run([str(exe), 'fps', fps], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)), check=True,
+                       capture_output=True)
+        saved = ini.read_text()
+        assert 'fps = ' + saved_as + '\n' in saved, (lines, saved)
+        count += 1
     for newline in ['\n', '\r\n']:
         for setting, locale, code in cases:
             for seed in ['Regression seed', '']:

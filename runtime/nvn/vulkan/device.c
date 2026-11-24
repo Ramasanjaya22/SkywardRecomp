@@ -614,6 +614,14 @@ void vk_pipeline_cache_save(void) {
 }
 
 // ================================================================== swapchain
+// the frame rate setting runs faster than the display (pace_fast): no FIFO, whose vsync wait would hold the frames at
+// the refresh rate and slow the game (its timestep is the target's); the swapchain's choice, to recreate on a change
+static bool sc_fast;
+static bool frames_fast(void) {
+    const SDL_DisplayMode *dm = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
+    return pace_fast(dm ? (int)(dm->refresh_rate + 0.5f) : 0);
+}
+
 static VkPresentModeKHR present_mode(void) {
     // MAILBOX by default: the game paces itself (vi.c's emulated 60 Hz vsync), and with FIFO every submission
     // queued behind the one waiting for a window image, so the game's fence waits followed the presentation engine:
@@ -627,7 +635,9 @@ static VkPresentModeKHR present_mode(void) {
     VkPresentModeKHR m[16];
     if (n > 16) n = 16;
     vkGetPhysicalDeviceSurfacePresentModesKHR(g_vk.phys, g_vk.surface, &n, m);
+    sc_fast = frames_fast();
     for (uint32_t i = 0; i < n; i++) if (m[i] == want) return want;
+    for (uint32_t i = 0; i < n && sc_fast && !e; i++) if (m[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) return m[i];  // (no mailbox)
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 
@@ -736,7 +746,7 @@ bool vk_frame_begin(const float clear[4]) {
     // The last present (the recorder's, record.c) must be done before the swapchain is used again - acquire and present
     // on the same swapchain are not allowed at the same time - and it may have asked for a new swapchain
     WAITING(rec_wait_presents(rec_presents_queued()));
-    if (rec_present_recreate()) recreate_swapchain();
+    if (rec_present_recreate() || (g_vk.swapchain && frames_fast() != sc_fast)) recreate_swapchain();
     if (!g_vk.swapchain || (uint32_t)w != g_vk.sc_extent.width || (uint32_t)h != g_vk.sc_extent.height) recreate_swapchain();
     if (!g_vk.swapchain) return false;
     static int trace = -1;

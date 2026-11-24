@@ -13,7 +13,9 @@
 //   LARECOMP_FORCE_STEPS=<n> (test) always n
 #include <stdlib.h>
 
+#include "../game_addresses.h"
 #include "../hle.h"
+#include "../settings.h"
 
 extern volatile uint64_t g_vsync_count;  // runtime/hle/vi.c
 uint64_t g_frame_steps_late;             // (stats) frames that advanced more than one step
@@ -42,4 +44,28 @@ uint32_t rt_frame_steps(uint32_t interval) {
     if (steps > (uint64_t)max_steps) steps = (uint64_t)max_steps;
     if (steps > 1) g_frame_steps_late++;
     return (uint32_t)steps;
+}
+
+// The frame rate setting (Settings.fps_target). SS HD's frame controller (tools/patches.py FRAME_CTRL_INTERVAL_SITE)
+// averages its last 10 frames' time in vsyncs: 1.5 or more picks present interval 2 and a world timestep of 1.0 (in
+// 1/30 s), else interval 1 and 0.5 (its FRAME_TIMESTEP global). With a target, the average reads as 2 (30) or 1 (the
+// rest: the game never drops itself to 30), and the timestep is the target's frame time - or, Unlocked, the time that
+// really passed since the last frame (1/8 to 1 step: a stall doesn't jump the world ahead). runtime/nvn/pace.c paces
+// the frames to the target. Auto, or a game version without the site: the game's own values.
+int rt_fps_target(void) { return g_ga && GA(FRAME_CTRL_INTERVAL_SITE) ? g_settings.fps_target : FPS_AUTO; }
+
+float rt_frame_interval_avg(float game_avg) {
+    int t = rt_fps_target();
+    return t == FPS_AUTO ? game_avg : t == FPS_30 ? 2.0f : 1.0f;
+}
+
+float rt_frame_timestep(float game_value) {
+    static uint64_t last;
+    uint64_t now = plat_now_ns(), dt = last ? now - last : 16666667ull;
+    last = now;
+    int t = rt_fps_target();
+    if (t == FPS_AUTO) return game_value;
+    if (t > 0) return 30.0f / (float)t;
+    float s = (float)dt * 3e-8f;  // (ns -> 1/30 s)
+    return s < 0.125f ? 0.125f : s > 1.0f ? 1.0f : s;
 }

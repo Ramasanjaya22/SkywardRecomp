@@ -60,6 +60,8 @@ jobs:
         run: python3 tools/test_widescreen_guard.py
       - name: Frame pacing (simulated frames, hitches and slow machines)
         run: python3 tools/test_pace.py
+      - name: Frame rate setting (the timestep and interval the frame controller is handed)
+        run: python3 tools/test_fps_target.py
       - name: Controller light colours
         run: |
           clang -std=gnu11 -O1 tools/test_led.c -lm -o build/test-led
@@ -160,6 +162,8 @@ jobs:
         run: python3 tools/test_widescreen_guard.py
       - name: Frame pacing (simulated frames, hitches and slow machines)
         run: python3 tools/test_pace.py
+      - name: Frame rate setting (the timestep and interval the frame controller is handed)
+        run: python3 tools/test_fps_target.py
       - name: Controller light colours
         run: |
           clang -std=gnu11 -O1 tools/test_led.c -lm -o build/test-led

@@ -418,6 +418,18 @@ static void tab_display(void) {
         g_want_fullscreen_apply.store(true);
     }
     opt_toggle("Show FPS", &g_settings.show_fps, false, "Shows the frame rate in the top right corner.");
+    {   // display order -> FPS_* (settings.h)
+        static const char *fps[] = {"Auto", "30", "60", "90", "120", "Unlocked"};
+        static const int fps_value[] = {FPS_AUTO, FPS_30, FPS_60, FPS_90, FPS_120, FPS_UNLOCKED};
+        enum { NFPS = 6 };  // (4: no 90 / 120 / Unlocked in the menu; the ini still takes them)
+        int fi = 0;
+        for (int i = 0; i < NFPS; i++) if (fps_value[i] == g_settings.fps_target) fi = i;
+        if (opt_choice("Frame rate", &fi, fps, NFPS, 0,
+                       "Auto: the game's own choice (60, or 30 when frames don't fit). 30 / 60: held there. 90 / 120: "
+                       "faster than the Switch, for high refresh displays. Unlocked: as fast as your PC runs. Over your "
+                       "display's refresh rate the image can tear. At 60-120, a PC that can't keep up runs the game slower.", false))
+            g_settings.fps_target = fps_value[fi];
+    }
     opt_toggle("Free camera look", &g_settings.free_cam, false, "Move the camera with the right stick without holding L. Tap L to switch it on/off for this session.");
     if (g_settings.free_cam)
         opt_slider("Free camera sensitivity", &g_settings.free_cam_sens, 0.25f, 2.0f, 0.05f, 1.0f, "%.2f", "Camera-only right-stick speed.");
