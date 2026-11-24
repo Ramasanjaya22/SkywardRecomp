@@ -326,7 +326,8 @@ class Module:
             if (w & 0x7F80001F) == 0x7100001F:
                 cmp = a
                 break
-            if self.lift(a).kind != 'op':
+            # (SkywardRecomp) 'asm': an FP load lifted for AArch64 hosts (main+7c6404: ldr s1,[x9]), #19
+            if self.lift(a).kind not in ('op', 'asm'):
                 return None
             a -= 4
         if cmp is None:

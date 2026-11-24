@@ -125,6 +125,8 @@ jobs:
       - name: FP/SIMD lowering vs a CPU emulator (a sample)
         run: |
           /opt/venv/bin/python tools/test_simd.py --encodings 3000 --cases 4 --jobs "$(nproc)"
+      - name: Jump tables resolve with either SIMD lowering
+        run: /opt/venv/bin/python tools/test_jump_table.py
 
   macos:
     runs-on: macos-15  # (GitHub-hosted Apple Silicon; free for public repositories)
