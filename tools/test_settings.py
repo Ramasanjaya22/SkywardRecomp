@@ -64,6 +64,16 @@ with tempfile.TemporaryDirectory() as directory:
         saved = ini.read_text()
         assert 'fps = ' + saved_as + '\n' in saved, (lines, saved)
         count += 1
+    # Screen filter: each key round-trips (Vivid = 4); none or an unknown one is Off
+    for lines, index, saved_as in [(['screen_filter = grayscale'], '3', 'grayscale'), (['screen_filter = vivid'], '4', 'vivid'),
+                                   (['screen_filter = gameboy'], '1', 'gameboy'), ([], '0', 'off'), (['screen_filter = neon'], '0', 'off')]:
+        ini = directory / 'test.ini'
+        ini.write_text('\n'.join(lines) + '\n')
+        subprocess.run([str(exe), 'screen-filter', index], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)), check=True,
+                       capture_output=True)
+        saved = ini.read_text()
+        assert 'screen_filter = ' + saved_as + '\n' in saved, (lines, saved)
+        count += 1
     for newline in ['\n', '\r\n']:
         for setting, locale, code in cases:
             for seed in ['Regression seed', '']:

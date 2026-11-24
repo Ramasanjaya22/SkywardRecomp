@@ -100,7 +100,7 @@ typedef struct {
 } Settings;
 
 
-enum { N_ENEMY_COLOUR_MODES = 3, N_SCREEN_FILTERS = 4 };
+enum { N_ENEMY_COLOUR_MODES = 3, N_SCREEN_FILTERS = 5 };
 extern const char *const g_screen_filters[N_SCREEN_FILTERS];  // (the menu's names)
 extern const char *const g_enemy_colour_modes[N_ENEMY_COLOUR_MODES];  // (the menu's names)
 
