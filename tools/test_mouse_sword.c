@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <math.h>
 #include <stdio.h>
 #include "hle/mouse_sword.h"
 
@@ -184,6 +185,42 @@ int main(void) {
         assert(!o.no_cam && o.rx == 0 && o.ry == 0);
         o = step(&m, lmb, 1000);
         assert(o.ry == 32767 && o.rx == 0);
+    }
+
+    // A 1 kHz mouse (1 px/ms for 200 ms): the ring must hold every window, camera and slash alike.
+    {
+        MouseSword m = {0};
+        for (uint64_t t = 0; t < 200; t++) mouse_sword_motion(&m, 1, 0, t);
+        o = step(&m, none, 199);
+        near(o.rx, 16383);  // 50 px in the 50 ms window
+        o = step(&m, lmb, 199);  // 100 px in the 100 ms window: right
+        assert(o.rx == 32767 && o.ry == 0 && o.no_cam);
+    }
+
+    // A NaN or infinite sens (a bad ini) must not reach the int cast or poison the aim position.
+    {
+        const float bad[2] = {NAN, INFINITY};
+        for (int i = 0; i < 2; i++) {
+            MouseCfg c = {true, true, bad[i]};
+            MouseSword m = {0};
+            o = mouse_sword_step(&m, none, c, 0);  // no motion
+            assert(o.rx == 0 && o.ry == 0);
+            mouse_sword_motion(&m, 100, -100, 1);
+            o = mouse_sword_step(&m, none, c, 2);  // camera
+            assert(o.rx >= -32767 && o.rx <= 32767 && o.ry >= -32767 && o.ry <= 32767);
+            o = mouse_sword_step(&m, aim, c, 3);  // aim, no motion
+            assert(o.rx == 0 && o.ry == 0);
+            mouse_sword_motion(&m, 150, 150, 4);
+            o = mouse_sword_step(&m, aim, c, 5);  // aim with motion
+            assert(o.rx >= -32767 && o.rx <= 32767 && o.ry >= -32767 && o.ry <= 32767);
+            o = mouse_sword_step(&m, none, c, 6);  // released: recovers
+            assert(o.rx == 0 && o.ry == 0 && !o.no_cam);
+            MouseCfg ok = {true, true, 1.0f};
+            o = mouse_sword_step(&m, aim, ok, 7);
+            mouse_sword_motion(&m, 150, 0, 7);
+            o = mouse_sword_step(&m, aim, ok, 8);
+            near(o.rx, 16383);  // aim works again with a sane sens
+        }
     }
     return 0;
 }

@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 enum { MS_CAM_WINDOW_MS = 50, MS_SLASH_WINDOW_MS = 100, MS_FLICK_MS = 70, MS_THRUST_MS = 60,
-       MS_MAX_DELTA = 200, MS_RING = 32 };  // all tunable (Task 7)
+       MS_MAX_DELTA = 200, MS_RING = 128 };  // all tunable (Task 7)
 
 typedef struct { bool lmb, mmb, rmb, aim; } MouseBtns;  // aim = M4 held
 typedef struct { bool camera, combat; float sens; } MouseCfg;
@@ -37,7 +37,8 @@ static inline void mouse_sword_reset(MouseSword *m) { *m = (MouseSword){0}; }
 
 static inline float ms_abs(float v) { return v < 0 ? -v : v; }
 static inline float ms_clampf(float v, float lim) { return v > lim ? lim : v < -lim ? -lim : v; }
-static inline int32_t ms_i32(float v) {  // clamp to the stick range, round to nearest
+static inline int32_t ms_i32(float v) {  // clamp to the stick range, round to nearest; NaN -> 0
+    if (v != v) return 0;
     v = ms_clampf(v, (float)MS_STICK);
     return (int32_t)(v < 0 ? v - 0.5f : v + 0.5f);
 }
@@ -84,7 +85,8 @@ static inline void mouse_sword_motion(MouseSword *m, float dx, float dy, uint64_
             return;
         }
     }
-    // shortcut: more than MS_RING distinct-ms samples inside a window drop the oldest, fine at <= 1 kHz mice
+    // Samples in one ms merge, so a window holds at most one per ms: MS_RING must stay >= MS_SLASH_WINDOW_MS.
+    // Only a non-monotonic now_ms (a clock that steps back) could still push the ring past that and drop the oldest.
     m->ring[m->head] = (MouseSample){now_ms, dx, dy};
     m->head = (m->head + 1) % MS_RING;
     if (m->count < MS_RING) m->count++;
@@ -92,6 +94,8 @@ static inline void mouse_sword_motion(MouseSword *m, float dx, float dy, uint64_
 
 static inline MouseOut mouse_sword_step(MouseSword *m, MouseBtns b, MouseCfg c, uint64_t now_ms) {
     MouseOut o = {0};
+    // A bad sens (NaN, negative, inf from a hand-edited ini) must not reach the int cast: NaN/negative -> 0, cap at 8.
+    c.sens = c.sens > 0 ? (c.sens > 8.0f ? 8.0f : c.sens) : 0;
     if (!c.combat) b = (MouseBtns){0};  // also lets the edge state fall back so a re-enable starts clean
     bool lmb_edge = b.lmb && !m->lmb, mmb_edge = b.mmb && !m->mmb;
     m->lmb = b.lmb;
