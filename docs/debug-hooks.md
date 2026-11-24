@@ -143,7 +143,7 @@ Use it with `LARECOMP_INPUT` (to get into a save) and `LARECOMP_SAVE_DIR` (so th
 | `LARECOMP_WEATHER_HARM` | 1 | Lightning shocks Link, as the randomizer option will. |
 | `LARECOMP_WEATHER_PUSH` | 1 | Blizzard wind pushes Link, as the randomizer option will. |
 | `LARECOMP_MENU_AT` | frame | Open the overlay menu at that frame. |
-| `LARECOMP_MENU_TAB` | tab number | The tab the overlay menu opens on. |
+| `LARECOMP_MENU_TAB` | tab number | The tab the overlay menu opens on (0 Video, 1 Audio, 6 Gameplay, 8 Controls, 9 Quit, 10 Saves). |
 | `LARECOMP_FONT` | font file | Use this file for the system fonts the game asks for (.ttf, .otf, .ttc, .bfttf). |
 
 ## Logging and diagnostics
