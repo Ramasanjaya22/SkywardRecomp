@@ -26,6 +26,7 @@ uint64_t plat_now_ns(void) { return t_ns; }
 void plat_sleep_until_ns(uint64_t t) { if (t > t_ns) t_ns = t; vsyncs(); }
 uint64_t plat_thread_cpu_ns(void) { return cpu_ns; }
 uint64_t rq_render_cpu_ns(void) { return 0; }
+int perfstat_frame(float b, float g, float r, float c, float u) { (void)b, (void)g, (void)r, (void)c, (void)u; return 0; }  // ([perf] summary: not under test)
 int64_t pace_gpu_ns(void) { return (int64_t)gpu_total_ns; }
 int game_in_play(void) { return 1; }
 bool world_on_screen(void) { return true; }

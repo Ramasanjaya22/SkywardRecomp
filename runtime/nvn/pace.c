@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "../game_addresses.h"
+#include "../perfstat.h"
 #include "../rt.h"
 #include "../settings.h"
 #include "pace.h"
@@ -294,6 +295,7 @@ void pace_frame(void) {
     static uint64_t last_rq;
     uint64_t rqw = g_rq_wait_ns - last_rq;
     last_rq = g_rq_wait_ns;
+    perfstat_frame((float)busy, (float)(busy - rqw / 1e6), (float)(rqw / 1e6), (float)(rc / 1e6), (float)gpu_ms);  // [perf]
     if (log) {  // (plus this thread's CPU time per frame and the render thread's: work, independent of waits; and where
                 // this thread's frame went in the renderer's frontend - rqueue.h)
         extern __thread uint64_t g_rq_lock_ns, g_submit_ns, g_gpu_wait_ns, g_present_ns, g_hooks_ns;
