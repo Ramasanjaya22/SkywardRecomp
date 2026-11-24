@@ -89,7 +89,7 @@ typedef struct {
     CosColour leaves, grass;  // the overworld's foliage, runtime/nvn/recolour_seasons.c
     CosColour sand;           // the beaches, the desert, the sandy south (recolour_seasons.c)
     int enemy_colours;        // 0 Off, 1 Random per seed, 2 Random every load (runtime/nvn/recolour_enemies.c)
-    int screen_filter;        // 0 Off, 1 Game Boy, 2 Game Boy Color, 3 Grayscale (runtime/nvn/screen_filter.h)
+    int screen_filter;        // 0 Off, 1 Game Boy, 2 Game Boy Color, 3 Grayscale, 4 Vivid (runtime/nvn/screen_filter.h)
     // speedrun (Gameplay tab; runtime/hle/run_timer.c, runtime/livesplit.c)
     bool timer;            // the in-game run timer in the corner (game time: level loads don't count)
     int timer_pos;         // TIMER_POS_*: which bottom corner it sits in
