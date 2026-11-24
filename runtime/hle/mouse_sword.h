@@ -60,12 +60,13 @@ static inline void ms_snap(float sx, float sy, int32_t *ox, int32_t *oy) {
     *oy = ax <= 0.4142f * ay ? gy : ay <= 0.4142f * ax ? 0 : gy;
 }
 
-static inline void ms_sum(const MouseSword *m, uint64_t now, uint64_t window, float *sx, float *sy) {
+// Motion of the last window ms, leaving out samples older than since.
+static inline void ms_sum(const MouseSword *m, uint64_t now, uint64_t window, uint64_t since, float *sx, float *sy) {
     *sx = *sy = 0;
     for (uint32_t i = 0; i < m->count; i++) {
         const MouseSample *s = &m->ring[(m->head + MS_RING - 1 - i) % MS_RING];
         if (s->ms > now) continue;
-        if (now - s->ms >= window) break;  // older ones are older still
+        if (now - s->ms >= window || s->ms < since) break;  // older ones are older still
         *sx += s->dx;
         *sy += s->dy;
     }
@@ -127,7 +128,7 @@ static inline MouseOut mouse_sword_step(MouseSword *m, MouseBtns b, MouseCfg c, 
 
     if (lmb_edge) {
         float sx, sy;
-        ms_sum(m, now_ms, MS_SLASH_WINDOW_MS, &sx, &sy);
+        ms_sum(m, now_ms, MS_SLASH_WINDOW_MS, 0, &sx, &sy);
         if (sx * sx + sy * sy >= 16.0f) {  // under 4 px counts as no motion: reuse the last direction
             ms_snap(sx, sy, &m->last_x, &m->last_y);
             m->has_last = true;
@@ -148,7 +149,9 @@ static inline MouseOut mouse_sword_step(MouseSword *m, MouseBtns b, MouseCfg c, 
     } else if (c.camera) {
         // px over MS_CAM_WINDOW_MS is a velocity; 2 px/ms is full deflection, so full = sum * 32767 / (window * 2).
         float sx, sy;
-        ms_sum(m, now_ms, MS_CAM_WINDOW_MS, &sx, &sy);
+        // Motion until a flick or thrust ended was that gesture, not a turn: counted, it lurches the camera after it.
+        const uint64_t since = m->flick_until > m->thrust_until ? m->flick_until : m->thrust_until;
+        ms_sum(m, now_ms, MS_CAM_WINDOW_MS, since, &sx, &sy);
         const float k = c.sens * (float)MS_STICK / (MS_CAM_WINDOW_MS * 2.0f);
         o.rx = ms_i32(sx * k);
         o.ry = ms_i32(-sy * k);

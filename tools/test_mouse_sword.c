@@ -222,5 +222,25 @@ int main(void) {
             near(o.rx, 16383);  // aim works again with a sane sens
         }
     }
+
+    // After a flick or thrust the camera leaves out the motion made until it ended: no lurch, later motion counts.
+    {
+        MouseSword m = {0};
+        mouse_sword_motion(&m, 80, 0, 40);
+        o = step(&m, lmb, 50);  // flick until 50 + MS_FLICK_MS
+        mouse_sword_motion(&m, 60, 0, 50 + MS_FLICK_MS - 10);  // follow-through inside the flick
+        o = step(&m, none, 50 + MS_FLICK_MS + 1);
+        assert(!o.no_cam && o.rx == 0 && o.ry == 0);
+        mouse_sword_motion(&m, 100, 0, 50 + MS_FLICK_MS + 5);
+        o = step(&m, none, 50 + MS_FLICK_MS + 10);
+        assert(o.rx == 32767);
+    }
+    {
+        MouseSword m = {0};
+        o = step(&m, mmb, 0);  // thrust until MS_THRUST_MS
+        mouse_sword_motion(&m, 100, 0, MS_THRUST_MS - 10);
+        o = step(&m, none, MS_THRUST_MS + 1);
+        assert(o.rx == 0);
+    }
     return 0;
 }
