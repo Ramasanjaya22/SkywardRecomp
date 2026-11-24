@@ -54,11 +54,27 @@ int main(void) {
     t_ns += 1000000ull;  // 1 ms: at least 1/8
     CHECK(NEAR(rt_frame_timestep(0.5f), 0.125f));
 
+    // the period (ms) the same compare picks: the frame time of the target (its readers add rate x period a frame)
+    g_settings.fps_target = FPS_AUTO;
+    CHECK(NEAR(rt_frame_period(16.666667f), 16.666667f));
+    static const int targets[] = {FPS_30, FPS_60, FPS_90, FPS_120};
+    for (int i = 0; i < 4; i++) {
+        g_settings.fps_target = targets[i];
+        rt_frame_timestep(0.5f);
+        CHECK(NEAR(rt_frame_period(16.666667f), 1000.0f / targets[i]));
+    }
+    g_settings.fps_target = FPS_UNLOCKED;
+    rt_frame_timestep(0.5f);
+    t_ns += 10000000ull;  // 10 ms
+    rt_frame_timestep(0.5f);
+    CHECK(NEAR(rt_frame_period(16.666667f), 10.0f));
+
     g_settings.fps_target = FPS_120;  // a version without the controller site: Auto
     ga.FRAME_CTRL_INTERVAL_SITE = 0;
     CHECK(rt_fps_target() == FPS_AUTO);
     CHECK(NEAR(rt_frame_interval_avg(2.0f), 2.0f));
     CHECK(NEAR(rt_frame_timestep(1.0f), 1.0f));
+    CHECK(NEAR(rt_frame_period(16.666667f), 16.666667f));
     g_ga = NULL;  // no version selected yet
     CHECK(rt_fps_target() == FPS_AUTO);
 

@@ -133,12 +133,13 @@ static void hold_cadence(bool held) {
 
 // The frame rate setting (not Auto: rt_fps_target, runtime/hle/framepace.c - the game's timestep follows the target):
 // paced by time, not vsyncs - a frame that started 1 s / the target after the last one's exit at the soonest, a slow
-// one at once (never a wait for a second vsync); Unlocked, no wait. (The wait counts as blocked: idle.)
+// one at once (never a wait for a second vsync); Unlocked, at most 240 (its timestep's 1/8 floor: faster frames would
+// run the world fast). (The wait counts as blocked: idle.)
 static void fps_cadence(int fps) {
     static uint64_t last_exit;
     uint64_t t0 = plat_now_ns();
-    if (fps > 0 && last_exit) {
-        uint64_t at = last_exit + 1000000000ull / (uint64_t)fps;
+    if (last_exit) {
+        uint64_t at = last_exit + 1000000000ull / (uint64_t)(fps > 0 ? fps : 240);
         if (at > t0) plat_sleep_until_ns(at), g_blocked_ns += plat_now_ns() - t0;
     }
     last_exit = plat_now_ns();

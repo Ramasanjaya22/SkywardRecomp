@@ -78,7 +78,7 @@ select_version('v1_0_0')
 import patches  # noqa: E402
 patch_values, runtime_values = tables['v1_0_0']
 frame_ctrl = patch_values['FRAME_CTRL_INTERVAL_SITE']  # (SS's own: the frame rate setting's two sites, nothing of LA's)
-assert frame_ctrl and set(patches.PATCHES) == {frame_ctrl, frame_ctrl + 0x64} and not patches.HOOKS, \
+assert frame_ctrl and set(patches.PATCHES) == {frame_ctrl, frame_ctrl + 0x64, frame_ctrl + 0x88} and not patches.HOOKS, \
     'SS patches only its frame controller (tools/patches.py clears LA\'s patches and hooks)'
 assert addr_text('f_@HAS_ITEM@(c);') == f'f_{ADDRESS.HAS_ITEM:x}(c);'
 try:

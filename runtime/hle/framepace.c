@@ -59,13 +59,19 @@ float rt_frame_interval_avg(float game_avg) {
     return t == FPS_AUTO ? game_avg : t == FPS_30 ? 2.0f : 1.0f;
 }
 
+static float frame_step = 1.0f;  // (the last timestep handed out: the period follows it)
+
 float rt_frame_timestep(float game_value) {
     static uint64_t last;
     uint64_t now = plat_now_ns(), dt = last ? now - last : 16666667ull;
     last = now;
     int t = rt_fps_target();
     if (t == FPS_AUTO) return game_value;
-    if (t > 0) return 30.0f / (float)t;
+    if (t > 0) return frame_step = 30.0f / (float)t;
     float s = (float)dt * 3e-8f;  // (ns -> 1/30 s)
-    return s < 0.125f ? 0.125f : s > 1.0f ? 1.0f : s;
+    return frame_step = s < 0.125f ? 0.125f : s > 1.0f ? 1.0f : s;
 }
+
+// the frame period in ms the controller stores next (FRAME_TIMESTEP + 4): its readers add rate x period every frame,
+// so it is the timestep's time (1/30 s units)
+float rt_frame_period(float game_ms) { return rt_fps_target() == FPS_AUTO ? game_ms : frame_step * (1000.0f / 30); }

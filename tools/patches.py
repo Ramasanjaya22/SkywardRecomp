@@ -954,7 +954,8 @@ HOOKS.clear()
 # SS HD's frame controller (runtime/hle/framepace.c, the frame rate setting): `fdiv s0, s0, s1` is its 10-frame
 # average in vsyncs (1.5 or more: present interval 2, a 1.0 timestep and a 33.33 ms period; else 1, 0.5, 16.67 - the
 # same flags pick all three), and `str s0, [x8, #0xd38]` 0x64 on stores the timestep (1/30 s units) to FRAME_TIMESTEP;
-# s0 then feeds the game's accumulator, so both get the setting's value. Auto: the game's own values.
+# s0 then feeds the game's accumulator, so both get the setting's value; the period follows (_frame_period). Auto: the
+# game's own values.
 FRAME_CTRL_INTERVAL_SITE = A.FRAME_CTRL_INTERVAL_SITE
 
 
@@ -970,19 +971,34 @@ def _frame_avg(gen, a):
             f'  /* {a:#x}: fdiv s0, s0, s1 (frame controller average) */')
 
 
+def _x8_page(gen, a):
+    adrp = _word(gen, a)
+    assert adrp & 0x9f00001f == 0x90000008, hex(adrp)  # adrp x8, FRAME_TIMESTEP's page
+    off = ((adrp >> 5 & 0x7ffff) << 2 | adrp >> 29 & 3) << 12
+    return (a & ~0xfff) + (off - (1 << 33) if off & 1 << 32 else off)
+
+
 def _frame_timestep(gen, a):
     w = _word(gen, a)
     assert w == 0xbd0d3900, hex(w)  # str s0, [x8, #0xd38]
-    adrp = _word(gen, a - 0x10)
-    assert adrp & 0x9f00001f == 0x90000008, hex(adrp)  # adrp x8, FRAME_TIMESTEP's page
-    off = ((adrp >> 5 & 0x7ffff) << 2 | adrp >> 29 & 3) << 12
-    page = ((a - 0x10) & ~0xfff) + (off - (1 << 33) if off & 1 << 32 else off)
-    assert page + 0xd38 == A.FRAME_TIMESTEP, hex(page)
+    assert _x8_page(gen, a - 0x10) + 0xd38 == A.FRAME_TIMESTEP
     return ('{ extern float rt_frame_timestep(float); float o; memcpy(&o, &c->v[0], 4); float f = rt_frame_timestep(o); '
             'c->v[0] = 0; memcpy(&c->v[0], &f, 4); memcpy((void *)(uintptr_t)(c->x[8] + 0xd38), &f, 4); }'
             f'  /* {a:#x}: str s0, [x8, #0xd38] (frame timestep) */')
 
 
+# 0x88 on, `str s1, [x8, #0xd3c]` stores the period in ms (x8 reloaded by the same adrp 0x8 before): its readers add
+# rate x period every frame, so it follows the timestep too
+def _frame_period(gen, a):
+    w = _word(gen, a)
+    assert w == 0xbd0d3d01, hex(w)  # str s1, [x8, #0xd3c]
+    assert _x8_page(gen, a - 0x8) + 0xd3c == A.FRAME_TIMESTEP + 4
+    return ('{ extern float rt_frame_period(float); float o; memcpy(&o, &c->v[1], 4); float f = rt_frame_period(o); '
+            'c->v[1] = 0; memcpy(&c->v[1], &f, 4); memcpy((void *)(uintptr_t)(c->x[8] + 0xd3c), &f, 4); }'
+            f'  /* {a:#x}: str s1, [x8, #0xd3c] (frame period) */')
+
+
 if FRAME_CTRL_INTERVAL_SITE:  # (0: a version without the site - the setting stays Auto, framepace.c)
     PATCHES[FRAME_CTRL_INTERVAL_SITE] = _frame_avg
     PATCHES[FRAME_CTRL_INTERVAL_SITE + 0x64] = _frame_timestep
+    PATCHES[FRAME_CTRL_INTERVAL_SITE + 0x88] = _frame_period

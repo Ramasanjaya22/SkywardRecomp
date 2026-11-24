@@ -214,6 +214,7 @@ static const FpsCase fps_cases[] = {
     {"fps 90: 5 ms frames, 11.11 ms apart", 90, 5, 1000.0 / 90},
     {"fps 120: 5 ms frames, 8.33 ms apart (the game asking for interval 2 too)", 120, 5, 1000.0 / 120},
     {"fps unlocked: 5 ms frames, 5 ms apart", -1, 5, 5},
+    {"fps unlocked: 1 ms frames, capped at 240 (the timestep's 1/8 floor)", -1, 1, 1000.0 / 240},
 };
 
 static int run_fps(const FpsCase *c) {
