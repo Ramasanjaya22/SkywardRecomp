@@ -171,6 +171,8 @@ All of these write to the log (`skywardrecomp.log` in the data folder, or the ru
 | `LARECOMP_SKIP_FSHASH` | `hash,hash,...` (hex) | Drop draws that use these fragment shaders, to find which draw makes what. |
 | `LARECOMP_DUMP_SHADERS` | 1 | Write each program's game shader code to `build/shaders/` (Metal). |
 | `LARECOMP_SAVE_MSL` | 1 | Write translated shaders to `build/msl/` (Metal) or `build/glsl/` (Vulkan), with the source pc as comments. |
+| `LARECOMP_SHF_LOG` | 1 | Print a `[shf]` line to stderr for each shader the translator rejects at a funnel shift (SHF) with bits 47-49 set: `stage` (STAGE_* in `shader.h`), `pc`, `bits47-49` (that 3-bit value, bit 47 lowest) and the raw instruction `word`. The translator stops at the first reject, so one line per shader. Data only: the translation is unchanged. |
+| `LARECOMP_BINDLESS_LOG` | 1 | Print a `[bindless]` line to stderr for the first 24 TEX.B (bindless texture) instructions the translator meets: `stage`, `pc`, the TEX.B `word`, and the words just before it as `word@byteoffset` (what wrote the handle register). Data only. `tools/perf_sweep.py run` passes it through, so a room sweep collects samples without playing. |
 | `LARECOMP_HLE_SKIP` | text | Turn off the host replacement of game functions whose name contains this text. |
 
 ## Rendering (shared)
@@ -269,6 +271,13 @@ The per-GPU default switches are explained, with the GPUs they were tested on, i
 | `LARECOMP_PCORE` | 0 | Linux / Windows: no pinning to performance cores. |
 | `LARECOMP_PCORE_GUEST` | 0 | Linux: let game threads run on all cores. |
 | `LARECOMP_THREAD_QOS` | 0 | macOS: don't raise game threads' QoS class. |
+
+To compare two builds, copy `build/` (exe plus game library) to `build_a/` and `build_b/` and run
+`python tools/perf_sweep.py ab build_a/skywardrecomp.exe build_b/skywardrecomp.exe [rooms] [rounds]`. It runs one
+warm-up of each (thrown away), then A,B,A,B on the first rooms of `build/sweep_targets.json` with a fresh save each run,
+and `build/sweep/ab.txt` gets the median of the per-run minimum fps per room. A room that was still compiling shaders
+in a run is left out of that run. Run a build against a copy of itself first: that spread is the noise floor, and a
+change smaller than it is not a result.
 
 ## Game-code build
 

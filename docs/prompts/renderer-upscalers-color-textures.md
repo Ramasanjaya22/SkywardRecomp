@@ -123,7 +123,7 @@ Ukur dulu, baru perbaiki. Cari penyebab per gejala:
 
 ## Status (akhir sesi langkah 1)
 
-Langkah 1 sebagian selesai. Belum di-commit.
+Langkah 1 sebagian selesai. Sudah di-commit di `ae399860`.
 
 - Selesai: `runtime/nvn/temporal.c` dan `temporal.h` (Halton, jumlah fase, jitter kamera, rumus motion vector, deteksi cut
   kamera). Tes game-free `tools/test_temporal.py` masuk langkah CI Linux dan lolos lokal di Windows. `make -j8 runtime-objs`
@@ -143,3 +143,27 @@ Langkah 1 sebagian selesai. Belum di-commit.
 - Belum terverifikasi (butuh game atau RenderDoc): tanda sumbu Y jitter dan motion; apakah `st.rt.color[0]` sama dengan
   gambar yang diproses post; apakah UBO kamera minimal 320 byte di game; pipeline `motion.frag` di driver GPU; resolusi
   dinamis (motion hanya mencakup alokasi, bukan isi); sampler depth di driver.
+
+## Status langkah 5 (2026-11-24; hanya counter diagnostik, belum ada perbaikan perilaku)
+
+Belum di-commit: counter `xw_*` di `runtime/nvn/vulkan/exec.c` (jumlah draw dan dispatch yang di-skip per pesan kegagalan translasi, dicetak di `renderer_stats`) dan penghitung `builds_running` (build yang sedang berjalan, dicetak di baris `[hitch]` dan di `renderer_stats` sebagai `builds N running`). Log `[shf]` (`LARECOMP_SHF_LOG=1`, `runtime/nvn/maxwell/translate.c:1559`, data saja) juga belum di-commit.
+
+- Hilang (R3): fuzz `tools/test_translate.sh 2000 8 both`, REF=HEAD: exit 0; 0 gagal compile dan 0 gagal validasi GLSL; 646 gagal translasi dari 2000 program (323 per 1000): `shf cc/x/hi` 234 (117 per 1000), `bindless tex` 84, `ipa idx` 83, `tlds info` 50, `csetp test` 45, `prmt mode` 30. Urutan R3 hanya cocok untuk dua teratas.
+- Semantik SHF `.CC/.X/.HI` belum punya sumber yang bisa dipakai, jadi belum diimplementasi. Pencarian web hanya menemukan salinan dokumen Nintendo SDK di situs pihak ketiga; tidak dibuka dan tidak dipakai (kemungkinan proprietary, lisensinya belum jelas).
+- Fuzz MSL, REF=cbc41fca (rilis awal, 2000 program): 0 perbedaan. `652e234` (REF default) tidak ada di clone ini.
+- Angka R3 di `TASKS.md` (21–28 kegagalan per batch; `shf cc/x/hi` 10–13 per 1000) belum bisa direproduksi. Berkas bukti `build/ck_translate_fuzz.log` tidak ada di checkout ini.
+- Pop-in: baris `[hitch]` (`exec.c:948–950`) memuat dua angka. `compiles %d pending` membaca `stat_compiles`: build yang sudah selesai (naik di `exec.c:1934`, `2516`, `5189`) sejak `renderer_stats` terakhir, yang mengosongkannya di `exec.c:1115`. Labelnya menyesatkan; belum diubah. `%d builds running` membaca `builds_running` (`exec.c:63`): `build_begin` (`exec.c:1072`) menaikkannya dan `build_end` (`exec.c:1081`) menurunkannya di setiap jalur. Baris `[hitch]` hanya keluar untuk frame di atas 50 ms saat `LARECOMP_VK_PROF` aktif. `builds_check` (`exec.c:1088`) mencatat `[shader] still building after N s` sekali per build yang lewat 10 detik. Prewarm belum dibuat.
+- Goyang: `anisotropy` 16 (`runtime/settings.c:37`). `lod_bias` dijepit ke −2..0 (`runtime/settings.c:172`); inisialisasi default (`settings.c:37`) tidak mengisinya, jadi 0. Belum ada perubahan.
+- Upload: `vk_full_barrier` di `vk_upload_cmd` (`exec.c:417`) sudah ada di HEAD, bukan perubahan sesi ini. Ring transient (`exec.c:706–740`) dan `rec_CmdCopyBufferToImage` (`record.c:1005`) dibaca tanpa temuan. Belum diuji di GPU.
+- Deteksi perubahan tekstur (`runtime/nvn/vulkan/textures.c:749–790`): bila OS memberi pelacakan tulis halaman (`exec.c:4686`) dan CPU tidak menulis halaman tekstur sejak cek terakhir, tekstur dilewati tanpa di-hash, kecuali saat hash penuh berkala (tiap ≥120 frame, bila budget 4 MB per frame cukup). `vk_pages_changed` mengembalikan −1 (tidak tahu) bila alamat di luar heap, tanpa pelacakan, atau halaman ditandai ditulis GPU; tekstur itu lalu dicek dengan hash sampel, atau hash penuh bila dinamis atau belum pernah diunggah. `LARECOMP_VK_TEX_WATCH=0` mematikan pelacakan halaman. Hash sampel default `tex_hash_sample` (4096 titik; ≤64 KB di-hash penuh); `LARECOMP_TEX_FASTHASH=0` memakai `fnv_sample`. Staleness maksimum belum diukur.
+- Build dan tes, 2026-11-24: `make -W runtime/nvn/vulkan/exec.c runtime-objs` lolos tanpa warning dari exec.c, juga setelah `builds_running` ditambahkan ke `[hitch]` dan `renderer_stats`. Build lewat ccache: `make "CC=ccache clang" -W runtime/nvn/vulkan/exec.c runtime-objs`, dengan `USERPROFILE` dan `LOCALAPPDATA` diset di shell MSYS2 (shell login tidak membawanya). `tools/test_translate_ops.sh`: 34 kasus, 0 gagal. `tools/test_spirv_val.sh`: 103 shader, 0 gagal. Peringatan lama di log build: `chamber.c:32` (`g_entrance`), `enemy_random.c:55` (`g_nno2d`), `device.c:957` (`g_frame_counter`).
+- Belum diverifikasi: RenderDoc, uji di game, prewarm, dan pengukuran GPU. Kriteria penerimaan nomor 2 belum terpenuhi: `draws skipped` di game belum diukur, dan fuzz masih melaporkan kategori SHF dan bindless.
+- Log SHF `[shf]` (data saja, 2026-11-24): `translate.c` hanya menambah satu `fprintf` di jalur reject, aktif saat `LARECOMP_SHF_LOG` diset. Build `make "CC=ccache clang" -W runtime/nvn/maxwell/translate.c runtime-objs`: exit 0, tanpa warning. Fuzz `REF=HEAD tools/test_translate.sh 2000 8 both` tanpa log: 0 perbedaan MSL dari 2000 program, 646 gagal GLSL dan 234 `shf cc/x/hi`, sama seperti sebelumnya. Fuzz `glsl` dengan log: 234 baris `[shf]` untuk 234 gagal SHF, satu baris per shader yang gagal.
+
+Langkah berikutnya (belum dikerjakan):
+- Sudah dikerjakan: `builds_running` (di `[hitch]` dan `renderer_stats`) dan pemeriksaan pasangan di tiga jalur (modul vs/fs `exec.c:1920–1937`, pipeline grafis `2506–2511`, pipeline compute `5165–5191`). Belum diuji di game.
+- Kriteria nomor 3 memakai `compiles pending`; yang relevan sekarang `builds running`. Baris `[hitch]` hanya keluar untuk frame di atas 50 ms, jadi angka 0 di frame biasa tidak tercetak. `renderer_stats` kini juga memuat `builds N running` (`exec.c:1115`) di teks statistik per interval; belum diuji di game.
+- SHF: log `[shf]` sudah ada, belum diuji di game. Di PowerShell, set `$env:LARECOMP_SHF_LOG = "1"` di jendela yang juga menjalankan game; baris muncul di stderr bersama `[hitch]` (pakai `2> <berkas>` bila perlu). Hitung dengan `Select-String -Path <berkas> -SimpleMatch '[shf]'`. `bits47-49` adalah nilai 3-bit (bit 47 terendah, 1–7); `word` adalah instruksi 64-bit mentah. Hasilnya menentukan: spesifikasi yang bisa dipakai, atau tetap di-skip.
+- Jalan game pertama setelah perubahan ini memakai `SHADER_TRANSLATOR_ID` baru (hash `translate.c` dan `shader.h`, `Makefile:199`), jadi tag cache shader (`shader_prep.c:471–483`) tidak cocok. Kemungkinan semua shader dikompilasi ulang pada jalan itu; belum diukur. Ukur pop-in dan `compiles` dari jalan kedua.
+- Prewarm: perlu daftar kunci pipeline dan pengukuran di game.
+- Sebelum push publik: baris 8 memuat path lokal `C:\Users\ramas\AppData\Roaming\fritchii`. Dokumen ini sudah ada di `ae399860`.

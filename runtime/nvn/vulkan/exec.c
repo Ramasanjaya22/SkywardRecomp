@@ -60,7 +60,7 @@ uint64_t prof_views_created;  // textures.c vk_image_view cache misses
 uint64_t prof_up_ns = ~0ull;  // textures.c upload checks (~0: profiling off)
 #define PROF_T0() uint64_t prof_t0_ = prof ? SDL_GetTicksNS() : 0
 #define PROF_ADD(v) do { if (prof) v += SDL_GetTicksNS() - prof_t0_; } while (0)
-static _Atomic int stat_compiles;
+static _Atomic int stat_compiles, builds_running;
 static uint64_t op_counts[CMD_COUNT];
 bool g_debug_frame;
 static char stats_text[2048];
@@ -945,9 +945,9 @@ void vk_prof_frame(uint64_t frame, uint64_t present_ns) {
     if (last_t && now - last_t > 50000000) {
         uint64_t dt = now - last_t, ex = cum_exec - l_exec, wt = cum_wait - l_wait;
         LOG("[hitch] frame %llu: %.0f ms = backend exec %.1f (of which GPU waits %.1f) + present %.1f + other %.1f; %llu draws, "
-            "%llu submits, compiles %d pending\n", (unsigned long long)frame, dt / 1e6, ex / 1e6, wt / 1e6, present_ns / 1e6,
+            "%llu submits, compiles %d pending, %d builds running\n", (unsigned long long)frame, dt / 1e6, ex / 1e6, wt / 1e6, present_ns / 1e6,
             ((double)dt - ex - present_ns) / 1e6, (unsigned long long)(cum_draws - l_draws), (unsigned long long)(cum_submits - l_subs),
-            atomic_load(&stat_compiles));
+            atomic_load(&stat_compiles), atomic_load(&builds_running));
     }
     last_t = now; l_exec = cum_exec; l_wait = cum_wait; l_draws = cum_draws; l_subs = cum_submits;
 }
@@ -1026,6 +1026,43 @@ static void skip_log(void) {
     skip_ntop = k;
 }
 
+// Translation failures: a program whose translator failed is skipped for good. Its draws and dispatches are counted by
+// the translator's message (e.g. "shf cc/x/hi"), and renderer_stats logs the counts each stats interval, so a texture
+// that vanishes can be traced to the instruction that failed to translate.
+#define XW_MAX 32  // (slot XW_MAX - 1 is "other": the table is full)
+static pthread_mutex_t xw_lock = PTHREAD_MUTEX_INITIALIZER;
+static char xw_msg[XW_MAX][96];
+static int xw_n;
+static uint64_t xw_skips[XW_MAX];  // (render thread) draws and dispatches skipped this interval, by slot
+static int xw_intern(const char *msg) {  // (translator thread) the slot of a failure message
+    pthread_mutex_lock(&xw_lock);
+    int i = 0;
+    while (i < xw_n && strcmp(xw_msg[i], msg)) i++;
+    if (i == xw_n) {
+        if (xw_n < XW_MAX - 1) { snprintf(xw_msg[i], sizeof xw_msg[i], "%s", msg); xw_n++; }
+        else i = XW_MAX - 1;
+    }
+    pthread_mutex_unlock(&xw_lock);
+    return i;
+}
+static void xw_stats(void) {  // (renderer_stats) "[vk] draws skipped: translation failure N/s (message count, ...)" if any
+    static uint64_t last;
+    uint64_t now = SDL_GetTicksNS(), n = 0;
+    for (int i = 0; i < XW_MAX; i++) n += xw_skips[i];
+    if (n && last) {
+        LOG("[vk] draws skipped: translation failure %.1f/s (", (double)n * 1e9 / (double)(now - last));
+        bool first = true;
+        for (int i = 0; i < XW_MAX; i++) {
+            if (!xw_skips[i]) continue;
+            LOG("%s%s %llu", first ? "" : ", ", i == XW_MAX - 1 ? "other" : xw_msg[i], (unsigned long long)xw_skips[i]);
+            first = false;
+        }
+        LOG(")\n");
+    }
+    memset(xw_skips, 0, sizeof xw_skips);
+    last = now;
+}
+
 // Builds in flight (programs, graphics / compute pipelines): one still running after 10 s is logged once, with its
 // shaders' code addresses. "[shader] slow build" only comes when a build finishes, so one that never does (its draws
 // or dispatches skipped for good, compile 0 in the stats) left no trace.
@@ -1033,6 +1070,7 @@ static void skip_log(void) {
 static pthread_mutex_t builds_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct { const char *what; uint64_t c0, c1, t0; bool logged; } builds[BUILDS_MAX];
 static int build_begin(const char *what, uint64_t c0, uint64_t c1) {
+    atomic_fetch_add(&builds_running, 1);
     pthread_mutex_lock(&builds_lock);
     int s = 0;
     while (s < BUILDS_MAX && builds[s].what) s++;
@@ -1041,6 +1079,7 @@ static int build_begin(const char *what, uint64_t c0, uint64_t c1) {
     return s < BUILDS_MAX ? s : -1;
 }
 static void build_end(int s) {
+    atomic_fetch_sub(&builds_running, 1);  // (one per build_begin, failure paths too; s < 0: the table was full)
     if (s < 0) return;
     pthread_mutex_lock(&builds_lock);
     builds[s].what = NULL;
@@ -1060,6 +1099,7 @@ static void builds_check(void) {
 
 const char *renderer_stats(void) {
     skip_log();
+    xw_stats();
     builds_check();
     static int dumps;
     if (dumps++ < 3) {
@@ -1068,11 +1108,11 @@ const char *renderer_stats(void) {
         LOG("\n");
     }
     snprintf(stats_text, sizeof stats_text,
-             "%llu draws, %llu skipped, %llu passes, %llu dispatches, %llu flushes, wait %.0fms, compile %d, fbcopy %llu, upload %.1fMB, "
+             "%llu draws, %llu skipped, %llu passes, %llu dispatches, %llu flushes, wait %.0fms, compile %d, builds %d running, fbcopy %llu, upload %.1fMB, "
              "deferred %llu, snap %lluKB/%llu",
              (unsigned long long)stat_draws, (unsigned long long)stat_skipped, (unsigned long long)stat_passes,
              (unsigned long long)stat_dispatches, (unsigned long long)stat_flushes, (double)stat_wait_ns / 1e6,
-             atomic_exchange(&stat_compiles, 0), (unsigned long long)stat_feedback_copies, (double)stat_upload_bytes / 1048576.0,
+             atomic_exchange(&stat_compiles, 0), atomic_load(&builds_running), (unsigned long long)stat_feedback_copies, (double)stat_upload_bytes / 1048576.0,
              (unsigned long long)__atomic_exchange_n(&stat_deferred, 0, __ATOMIC_RELAXED), (unsigned long long)(stat_snap_bytes >> 10),
              (unsigned long long)stat_snap_copies);  // (overlap: SyncWaits returned early; storage copies made)
     stat_feedback_copies = stat_upload_bytes = stat_snap_bytes = stat_snap_copies = 0;
@@ -1767,7 +1807,11 @@ typedef struct {
     struct PipeMemo *pmemo;     // (render thread) draw_'s pipeline key memo for this program
     bool reuse;                 // set reuse (stage_set): some uniform buffers are dynamic, sets are kept while their contents repeat
     struct SetCache *scache[2]; // (render thread) stage_set's last set per set index
+    bool xfail;                 // the translator failed (state 2): xwhy is the failure's slot (xw_intern)
+    uint8_t xwhy;
 } Prog;
+// (render thread) a draw or dispatch skipped for a program that did not translate
+static void xw_skip(const Prog *p) { if (p && p->xfail) xw_skips[p->xwhy]++; }
 
 // ---- descriptor set reuse (graphics programs; port of vk-draw-cpu-2 d50bbce)
 // Every draw allocated and wrote two descriptor sets (~20 descriptors) although most repeat the previous draw's of
@@ -1908,11 +1952,15 @@ static bool translate_program_now(Prog *p) {
     pthread_mutex_unlock(&translate_lock);
     if (!p->vi->msl) {
         LOG("[shader] VS translate failed: %s (code %llx)\n", p->vi->error, (unsigned long long)p->code[0]);
+        p->xwhy = (uint8_t)xw_intern(p->vi->error);
+        p->xfail = true;  // (before the state store: the render thread reads both after it)
         atomic_store(&p->state, 2);
         return false;
     }
     if (!p->fi->msl) {
         LOG("[shader] FS translate failed: %s\n", p->fi->error);
+        p->xwhy = (uint8_t)xw_intern(p->fi->error);
+        p->xfail = true;
         atomic_store(&p->state, 2);
         return false;
     }
@@ -2506,9 +2554,32 @@ typedef struct { NvnTexture *key; TexBackend copy; } Snap;
 static Snap snaps[16];
 static int nsnaps;
 
+// A bindless texture's handle (TEX.B): the 32-bit word at c[cbuf][offset] of the stage, read the way cbuf_info maps the
+// buffers (0: the driver constants, whose 64-bit texture handles start at 0x20; 1: the compiler constants; k >= 3: the
+// bound uniform buffer k - 3). 0 (no texture) when the buffer is unbound or the word lies past its end.
+static uint64_t bindless_handle(int stage, uint32_t cbuf, uint32_t offset) {
+    if (stage < 0 || stage > 5 || (offset & 3)) return 0;
+    if (cbuf == 0) {
+        uint32_t s = (offset - 0x20) / 8;
+        return offset < 0x20 || s >= 32 ? 0 : (uint32_t)(st.tex[stage][s] >> (offset & 4 ? 32 : 0));
+    }
+    if (cbuf == 1) {
+        NvnShaderStage *ss = st.program ? &st.program->stages[stage] : NULL;
+        return !ss || (uint64_t)offset + 4 > ss->const_size ? 0 : *(const uint32_t *)(uintptr_t)(ss->code_addr + ss->const_offset + offset);
+    }
+    Range r = cbuf >= 3 && cbuf - 3 < 18 ? st.ubuf[stage][cbuf - 3] : (Range){0, 0};
+    return !r.addr || (uint64_t)offset + 4 > r.size ? 0 : *(const uint32_t *)(uintptr_t)(r.addr + offset);
+}
+
+// The texture handle of a shader texture: bindless (TEX.B) or the slot's 64-bit handle in the driver constants
+static uint64_t shader_texture_handle(int stage, const ShaderTexture *st_) {
+    if (st_->bindless) return bindless_handle(stage, st_->bindless_cbuf, st_->bindless_offset);
+    int slot = ((int)st_->handle_offset - 0x20) / 8;  // 64-bit handles from offset 0x20
+    return slot >= 0 && slot < 32 ? st.tex[stage][slot] : 0;
+}
+
 static NvnTexture *shader_texture_object(int stage, ShaderTexture *st_) {
-    int slot = ((int)st_->handle_offset - 0x20) / 8;
-    uint64_t h = (slot >= 0 && slot < 32) ? st.tex[stage][slot] : 0;
+    uint64_t h = shader_texture_handle(stage, st_);
     uint32_t tic = h & 0xFFFFF;
     if (!h || !st.tpool || tic >= (uint32_t)st.tpool->count) return NULL;
     return ((NvnTexEntry *)st.tpool->entries)[tic].tex;
@@ -4934,8 +5005,7 @@ static void shadow_slot_check(int stage, const ShaderTexture *st_, int i, uint64
 
 static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo *out, float sc[2], uint32_t wh[2], float fr[2]) {
     ShaderTexture *st_ = &si->tex[i];
-    int slot = ((int)st_->handle_offset - 0x20) / 8;  // 64-bit handles from offset 0x20
-    uint64_t h = (slot >= 0 && slot < 32) ? st.tex[stage][slot] : 0;
+    uint64_t h = shader_texture_handle(stage, st_);
     VkImageView view = VK_NULL_HANDLE;
     VkSampler smp = VK_NULL_HANDLE;
     uint32_t tic = h & 0xFFFFF, tsc = (uint32_t)(h >> 20) & 0xFFF;
@@ -5165,6 +5235,8 @@ static bool translate_compute(CsProg *cp, const uint8_t *code, size_t max, uint6
     cp->p.vi = cp->si;
     if (!cp->si->msl) {
         LOG("[compute] translate failed: %s (code %llx)\n", cp->si->error, (unsigned long long)addr);
+        cp->p.xwhy = (uint8_t)xw_intern(cp->si->error);
+        cp->p.xfail = true;
         atomic_store(&cp->p.state, 2);
         return false;
     }
@@ -5452,7 +5524,7 @@ static void dispatch_compute(uint32_t gx, uint32_t gy, uint32_t gz) {
     snap_reason = "compute"; snapshots_invalidate(NULL);
     if (!st.program || !gx || !gy || !gz) return;
     CsProg *cp = compute_program(st.program);
-    if (!cp || atomic_load(&cp->p.state) != 1) { SKIP_CS(!cp ? SK_NO_STAGES : atomic_load(&cp->p.state) == 2 ? SK_CS_FAILED : SK_CS_BUILDING); return; }
+    if (!cp || atomic_load(&cp->p.state) != 1) { SKIP_CS(!cp ? SK_NO_STAGES : atomic_load(&cp->p.state) == 2 ? SK_CS_FAILED : SK_CS_BUILDING); if (cp) xw_skip(&cp->p); return; }
     {   // LARECOMP_SKIP_CS=<code address hex> (debug): skip that compute shader's dispatches, to see what it does
         static uint64_t skip = ~0ull;
         if (skip == ~0ull) { const char *e = getenv("LARECOMP_SKIP_CS"); skip = e ? strtoull(e, NULL, 16) : 0; }
@@ -5674,7 +5746,7 @@ static void draw_(CmdRec *r, bool indexed) {
     for (int i = 0; i < st.rt.ncolor; i++) if (st.rt.color[i]) fkey.rt_kind[i] = (uint8_t)rt_kind(st.rt.color[i]->format);
     if (st.rt.ncolor && st.rt.color[0] && (st.color_state[0] & 1) && dual_src_kind(st.blend[0])) fkey.rt_kind[1] = 3;
     Prog *pr = get_program(st.program, &vkey, &fkey);
-    if (!pr || atomic_load(&pr->state) != 1) { SKIP(!pr ? SK_NO_STAGES : atomic_load(&pr->state) == 2 ? SK_PROG_FAILED : SK_PROG_BUILDING); return; }
+    if (!pr || atomic_load(&pr->state) != 1) { SKIP(!pr ? SK_NO_STAGES : atomic_load(&pr->state) == 2 ? SK_PROG_FAILED : SK_PROG_BUILDING); xw_skip(pr); return; }
     g_mirror_w = 0;
     {   // mirror mode (runtime/hle/mirror.c; as renderer.m): the scene's composite into the window image is mirrored
         extern bool mirror_draw(bool composite);
@@ -5691,7 +5763,7 @@ static void draw_(CmdRec *r, bool indexed) {
         if (mirror_draw(composite)) {
             vkey.flip_x = fkey.flip_x = true;
             pr = get_program(st.program, &vkey, &fkey);
-            if (!pr || atomic_load(&pr->state) != 1) { SKIP(!pr ? SK_NO_STAGES : atomic_load(&pr->state) == 2 ? SK_PROG_FAILED : SK_PROG_BUILDING); return; }
+            if (!pr || atomic_load(&pr->state) != 1) { SKIP(!pr ? SK_NO_STAGES : atomic_load(&pr->state) == 2 ? SK_PROG_FAILED : SK_PROG_BUILDING); xw_skip(pr); return; }
             g_mirror_w = (float)st.rt.color[0]->width;
         }
     }

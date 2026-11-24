@@ -116,12 +116,18 @@ GAMELIB_LDFLAGS := -shared -fuse-ld=lld $(B)/skywardrecomp.dll.a
 GAMELIB_SHARED := -shared  # (+ the import library: runtime/gamebuild.c)
 endif
 
+# The profile-listed hot functions (`make gen` writes them to <name>_hot_NNN.c when HOT_LIST exists: LARECOMP_HOTLIST_OUT,
+# runtime/hotsample.c, Windows) are built optimized, the rest of the game code stays -O0 (compile time). On every platform:
+# GENFLAGS is final here, and a _hot_ object would otherwise get empty flags.
+GENFLAGS_HOT := $(subst -O0,-O2,$(GENFLAGS))
+HOT_LIST ?= build/hot_funcs.txt
+
 # GAMELIB_ID: what the game code library is built from (the generator, the headers it is compiled against, the
 # flags). A library with another id is rebuilt by the start screen, never loaded.
 GAMELIB_SRCS := tools/game_addresses.py runtime/game_addresses/versions.h $(wildcard runtime/game_addresses/patches_v*.h) tools/gen.py tools/lifter.py tools/analyze.py tools/nso.py tools/passes.py tools/patches.py \
                 tools/simd_c.py tools/rando/patch_variants.json tools/gamelib_entry.c runtime/hle/hle_symbols.txt \
                 runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h
-GAMELIB_ID := $(shell (cat $(GAMELIB_SRCS); echo '$(GENFLAGS)') | (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-16)
+GAMELIB_ID := $(shell (cat $(GAMELIB_SRCS); echo '$(GENFLAGS) $(GENFLAGS_HOT)') | (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-16)
 # The library's own id adds the game's main build ID (what `make gen` generated from: $(GEN)/main/main_build_id.txt),
 # so game code for another game version is never loaded (runtime/gamelib.h gamelib_full_id)
 GAMELIB_BUILD := $(shell cut -c1-16 $(GEN)/main/main_build_id.txt 2>/dev/null)
@@ -159,6 +165,7 @@ tools-venv:
 	"$$v" -c 'import lz4, capstone, unicorn, cryptography' 2>/dev/null || \
 	    "$$v" -m pip install -q $(TOOLS_PKGS) || echo "tools-venv: pip install $(TOOLS_PKGS) failed (offline?)"
 
+$(foreach o,$(GEN_OBJ),$(if $(findstring _hot_,$(notdir $(o))),$(o))): GENFLAGS := $(GENFLAGS_HOT)  # (filter takes one %)
 $(B)/obj/%.o: $(GEN)/%.c runtime/cpu.h runtime/simd.h runtime/simd_fp.h
 	@mkdir -p $(dir $@)
 	@$(CC) $(GENFLAGS) -c $< -o $@
@@ -245,7 +252,7 @@ PY := $(firstword $(wildcard tools/venv/bin/python) $(wildcard tools/venv/Script
 
 gen:
 	cd tools && ../$(PY) gen.py sdk ../extracted/exefs/sdk 0x7040000000 ../$(GEN)/sdk --hle ../runtime/hle/hle_symbols.txt $(GENSIMD)
-	cd tools && ../$(PY) gen.py main ../extracted/exefs/main 0x7000000000 ../$(GEN)/main $(GENSIMD)
+	cd tools && ../$(PY) gen.py main ../extracted/exefs/main 0x7000000000 ../$(GEN)/main $(GENSIMD) $(if $(wildcard $(HOT_LIST)),--hot ../$(HOT_LIST))
 
 gen-objs: $(GEN_OBJ)
 

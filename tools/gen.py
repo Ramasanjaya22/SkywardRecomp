@@ -642,6 +642,65 @@ def write_if_changed(path, text):
         f.write(text)
 
 
+def read_hot(path):
+    """The addresses in a profile list (runtime/hotsample.c: "0x<guest address> <samples>" lines; others are skipped)."""
+    hot = set()
+    for line in open(path):
+        w = line.split()
+        if w and re.fullmatch(r'0x[0-9a-fA-F]+', w[0]):
+            hot.add(int(w[0], 16))
+    return hot
+
+
+def split_hot(order, hot, size_of, max_bytes):
+    """(hot functions, the rest, how many `hot` addresses are no function in `order`), both in `order`'s order. A hot
+    function whose C is over max_bytes stays with the rest: it would take too long to compile at -O2."""
+    hot_fns = [a for a in order if a in hot and size_of.get(a, max_bytes + 1) <= max_bytes]
+    taken = set(hot_fns)
+    return hot_fns, [a for a in order if a not in taken], len(hot - set(order))
+
+
+def write_chunks(m, args, prefix, order, emit, hle, progress):
+    """Writes `order`'s functions (emit(a) -> (lines, refs)) to <prefix>_NNN.c files; returns the number of files."""
+    nchunks = 0
+    ci = 0
+    pending = None  # (address, lines, refs) of a big function that starts the next file
+    while ci < len(order) or pending:
+        body, refs, size, fns = [], set(), 0, []
+        while (pending or ci < len(order)) and len(fns) < args.chunk and size < args.chunk_bytes:
+            if pending:
+                a, lines, r = pending
+                pending = None
+            else:
+                a = order[ci]
+                ci += 1
+                lines, r = emit(a)
+            n = sum(len(l) + 1 for l in lines)
+            if n > args.big_fn and fns:  # (a big function gets a file of its own: they compile in parallel)
+                pending = (a, lines, r)
+                break
+            body += lines
+            size += n
+            fns.append(a)
+            refs |= r
+            if n > args.big_fn:
+                break
+        path = os.path.join(args.outdir, f'{prefix}_{nchunks:03d}.c')
+        text = ['#include "cpu.h"\n' + ('#include "simd.h"\n' if m.lifter.sc else '')]
+        text += [f'void {fname(r)}(Cpu *c);\n' for r in sorted(refs)]
+        text += [f'void {sanitize(hle[a])}(Cpu *c);\n' for a in sorted(set(hle) & set(fns))]
+        text += ['\n'.join(body), '\n']
+        write_if_changed(path, ''.join(text))
+        nchunks += 1
+        if progress:  # (the start screen's setup reads these for its progress bar: runtime/gamebuild.c)
+            print(f'{args.name}: progress {ci}/{len(order)} files {nchunks}', file=sys.stderr, flush=True)
+    for fn in os.listdir(args.outdir):  # an earlier run's extra chunks
+        mm = re.fullmatch(re.escape(prefix) + r'_(\d{3})\.c', fn)
+        if mm and int(mm.group(1)) >= nchunks:
+            os.remove(os.path.join(args.outdir, fn))
+    return nchunks
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('name')
@@ -652,6 +711,8 @@ def main():
     ap.add_argument('--chunk', type=int, default=1500)  # functions per file at most
     ap.add_argument('--chunk-bytes', type=int, default=1500000)  # and about this much C (even compile times)
     ap.add_argument('--big-fn', type=int, default=100000)  # bytes of C from which a function gets its own file
+    ap.add_argument('--hot')  # a profile list (runtime/hotsample.c): its functions go to <name>_hot_NNN.c, built at -O2
+    ap.add_argument('--hot-max-bytes', type=int, default=100000)  # bytes of C above which a listed function stays cold
     ap.add_argument('--limit', type=int, default=0)
     ap.add_argument('--simd', choices=('asm', 'c'),
                     default='asm' if platform.machine().lower() in ('arm64', 'aarch64') else 'c')
@@ -735,45 +796,29 @@ def main():
     order = sorted(entries)
     if args.limit:
         order = order[:args.limit]
-    nchunks = 0
-    ci = 0
-    pending = None  # (address, lines, refs) of a big function that starts the next file
-    while ci < len(order) or pending:
-        body, refs, size, fns = [], set(), 0, []
-        while (pending or ci < len(order)) and len(fns) < args.chunk and size < args.chunk_bytes:
-            if pending:
-                a, lines, r = pending
-                pending = None
-            else:
-                a = order[ci]
-                ci += 1
-                end, labels, tables = entries[a]
-                lines = m.emit_function(a, end, labels, tables, hle)
-                r = getattr(m, '_refs', set())
-                m._refs = set()
-            n = sum(len(l) + 1 for l in lines)
-            if n > args.big_fn and fns:  # (a big function gets a file of its own: they compile in parallel)
-                pending = (a, lines, r)
-                break
-            body += lines
-            size += n
-            fns.append(a)
-            refs |= r
-            if n > args.big_fn:
-                break
-        path = os.path.join(args.outdir, f'{args.name}_{nchunks:03d}.c')
-        text = ['#include "cpu.h"\n' + ('#include "simd.h"\n' if m.lifter.sc else '')]
-        text += [f'void {fname(r)}(Cpu *c);\n' for r in sorted(refs)]
-        text += [f'void {sanitize(hle[a])}(Cpu *c);\n' for a in sorted(set(hle) & set(fns))]
-        text += ['\n'.join(body), '\n']
-        write_if_changed(path, ''.join(text))
-        nchunks += 1
-        # (the start screen's setup reads these for its progress bar: runtime/gamebuild.c)
-        print(f'{args.name}: progress {ci}/{len(order)} files {nchunks}', file=sys.stderr, flush=True)
-    for fn in os.listdir(args.outdir):  # an earlier run's extra chunks
-        mm = re.fullmatch(re.escape(args.name) + r'_(\d{3})\.c', fn)
-        if mm and int(mm.group(1)) >= nchunks:
-            os.remove(os.path.join(args.outdir, fn))
+    emitted = {}  # (a listed function's C: emitted once to size it, then written hot or kept for the cold files)
+
+    def emit(a):
+        if a in emitted:
+            return emitted.pop(a)
+        end, labels, tables = entries[a]
+        lines = m.emit_function(a, end, labels, tables, hle)
+        r = getattr(m, '_refs', set())
+        m._refs = set()
+        return lines, r
+
+    hot_order, cold_order, lost = [], order, 0
+    if args.hot:
+        hot = read_hot(args.hot)
+        for a in order:
+            if a in hot:
+                emitted[a] = emit(a)
+        sizes = {a: sum(len(l) + 1 for l in v[0]) for a, v in emitted.items()}
+        hot_order, cold_order, lost = split_hot(order, hot, sizes, args.hot_max_bytes)
+    nhot = write_chunks(m, args, f'{args.name}_hot', hot_order, emit, hle, False)  # (none: removes an earlier run's)
+    nchunks = write_chunks(m, args, args.name, cold_order, emit, hle, True)
+    if args.hot:
+        print(f'{args.name}: hot {len(hot_order)} functions in {nhot} files, {lost} addresses not found', file=sys.stderr)
     import io
     with io.StringIO() as f:
         f.write('#include "cpu.h"\n')
