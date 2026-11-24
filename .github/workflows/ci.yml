@@ -74,6 +74,10 @@ jobs:
         run: |
           clang -std=gnu11 -O2 -I"/opt/sdl3/include" tools/test_rumble.c -L"/opt/sdl3/lib" -Wl,-rpath,"/opt/sdl3/lib" -lSDL3 -lm -o build/test-rumble
           build/test-rumble
+      - name: Keyboard + Mouse preset (no clashes, WASD, reserved keys)
+        run: |
+          clang -std=gnu11 -O2 -I"/opt/sdl3/include" tools/test_kbm_preset.c -o build/test-kbm-preset
+          build/test-kbm-preset
       - name: Controller in use (two virtual gamepads, #455)
         run: |
           clang -std=gnu11 -O2 -I"/opt/sdl3/include" tools/test_active_pad.c -L"/opt/sdl3/lib" -Wl,-rpath,"/opt/sdl3/lib" -lSDL3 -lm -o build/test-active-pad
@@ -177,6 +181,10 @@ jobs:
         run: |
           clang -std=gnu11 -O2 -I"$(brew --prefix sdl3)/include" -L"$(brew --prefix sdl3)/lib" tools/test_rumble.c -lSDL3 -o build/test-rumble
           build/test-rumble
+      - name: Keyboard + Mouse preset (no clashes, WASD, reserved keys)
+        run: |
+          clang -std=gnu11 -O2 -I"$(brew --prefix sdl3)/include" tools/test_kbm_preset.c -o build/test-kbm-preset
+          build/test-kbm-preset
       - name: Controller in use (two virtual gamepads, #455)
         run: |
           clang -std=gnu11 -O2 -I"$(brew --prefix sdl3)/include" -L"$(brew --prefix sdl3)/lib" tools/test_active_pad.c -lSDL3 -o build/test-active-pad
@@ -249,6 +257,10 @@ jobs:
         run: |
           clang -std=gnu11 -O2 $(pkg-config --cflags sdl3) tools/test_rumble.c $(pkg-config --libs sdl3) -o build/test-rumble.exe
           build/test-rumble.exe
+      - name: Keyboard + Mouse preset (no clashes, WASD, reserved keys)
+        run: |
+          clang -std=gnu11 -O2 $(pkg-config --cflags sdl3) tools/test_kbm_preset.c -o build/test-kbm-preset.exe
+          build/test-kbm-preset.exe
       - name: Controller in use (two virtual gamepads, #455)
         run: |
           clang -std=gnu11 -O2 $(pkg-config --cflags sdl3) tools/test_active_pad.c $(pkg-config --libs sdl3) -o build/test-active-pad.exe

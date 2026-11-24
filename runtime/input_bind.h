@@ -36,6 +36,8 @@ int bind_label_family(void);                   // the connected controller's fam
 int input_family_of_type(int sdl_gamepad_type); // runtime/hle/input.c: 0 Nintendo, 1 Xbox (or labelled like one), 2 PS
 int input_menu_family(uint32_t sdl_joystick_id); // runtime/hle/input.c: our menus' layout for that pad (0: any)
 void bind_reset(int dev);
+// "Keyboard + Mouse" preset (runtime/kbm_preset.h): sets the keyboard bindings and turns mouse_camera / mouse_combat / free_cam on
+void bind_apply_kbm_preset(void);
 bool bind_is_default(int dev);
 bool bind_is_default_slot(int dev, int slot);
 

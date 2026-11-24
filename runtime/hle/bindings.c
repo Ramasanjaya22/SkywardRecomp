@@ -7,6 +7,8 @@
 
 #include "../hle.h"
 #include "../input_bind.h"
+#include "../kbm_preset.h"
+#include "../settings.h"
 
 _Static_assert(PADB_LTRIGGER == SDL_GAMEPAD_BUTTON_COUNT, "trigger pseudo-buttons follow SDL's buttons");
 
@@ -100,6 +102,13 @@ void bind_reset(int dev) {
     else memcpy(g_bind_key, k_def_key, sizeof g_bind_key);
     LOG("[input] %s bindings reset to the defaults\n", dev == BIND_DEV_PAD ? "controller" : "keyboard");
     result(5, dev, -1, -1);
+}
+
+void bind_apply_kbm_preset(void) {
+    memcpy(g_bind_key, k_kbm_key, sizeof g_bind_key);
+    g_settings.mouse_camera = g_settings.mouse_combat = g_settings.free_cam = true;
+    LOG("[input] keyboard bindings set to the Keyboard + Mouse preset\n");
+    result(5, BIND_DEV_KEY, -1, -1);
 }
 
 bool bind_is_default(int dev) {
