@@ -179,7 +179,25 @@ static void configure_inputs(float scale) {
         bind_reset(dev);
     }
     // (the cursor or the mouse on a row with a description: it shows on the right instead of the bindings)
-    bool desc_right = (ImGui::IsItemHovered() || nav_on_item()) && g_focus != FOCUS_RIGHT;
+    bool desc_right = ImGui::IsItemHovered() || nav_on_item();
+    if (!g_dev_pad) {  // the keyboard's preset and mouse rows (the mouse camera needs Free Camera, which the preset turns on too)
+        if (opt_action("Keyboard + Mouse", "", "WASD keys plus the mouse for the camera and the sword. Turns Mouse camera, Mouse combat and "
+                                                "Free camera look on.")) {
+            bind_capture_cancel();
+            bind_apply_kbm_preset();
+        }
+        desc_right |= ImGui::IsItemHovered() || nav_on_item();
+        opt_toggle("Mouse camera", &g_settings.mouse_camera, false,
+                   "The mouse turns the camera. Needs Free camera look on.");
+        desc_right |= ImGui::IsItemHovered() || nav_on_item();
+        opt_toggle("Mouse combat", &g_settings.mouse_combat, false,
+                   "Left click slashes, middle click thrusts, right click raises the shield, side button aims.");
+        desc_right |= ImGui::IsItemHovered() || nav_on_item();
+        opt_slider("Mouse sensitivity", &g_settings.mouse_sens, 0.25f, 4.0f, 0.25f, 1.0f, "%.2f",
+                   "How fast the mouse turns the camera and aims. The camera needs Free camera look on.");
+        desc_right |= ImGui::IsItemHovered() || nav_on_item();
+    }
+    desc_right = desc_right && g_focus != FOCUS_RIGHT;
     opt_split();
     if (desc_right) {
         opt_desc_text();
