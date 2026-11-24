@@ -18,7 +18,7 @@ int main(void) {
     assert(k_kbm_key[BIND_L] == SDL_SCANCODE_Q);
     assert(k_kbm_key[BIND_A] == SDL_SCANCODE_E && k_kbm_key[BIND_B] == SDL_SCANCODE_LSHIFT);
     assert(k_kbm_key[BIND_X] == SDL_SCANCODE_SPACE && k_kbm_key[BIND_Y] == SDL_SCANCODE_F);
-    assert(k_kbm_key[BIND_ZR] == SDL_SCANCODE_R && k_kbm_key[BIND_PLUS] == SDL_SCANCODE_ESCAPE);
+    assert(k_kbm_key[BIND_ZR] == SDL_SCANCODE_R && k_kbm_key[BIND_PLUS] == SDL_SCANCODE_RETURN);
     assert(k_kbm_key[BIND_MINUS] == SDL_SCANCODE_M && k_kbm_key[BIND_DOWN] == SDL_SCANCODE_TAB);
     for (int i = BIND_RS_UP; i <= BIND_RS_RIGHT; i++) assert(!k_kbm_key[i]);  // the mouse drives the right stick
     puts("kbm preset ok");

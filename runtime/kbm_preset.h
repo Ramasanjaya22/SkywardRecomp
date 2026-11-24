@@ -13,7 +13,7 @@ static const int16_t k_kbm_key[BIND_KEY_COUNT] = {
     [BIND_Y] = SDL_SCANCODE_F,           // item action
     [BIND_L] = SDL_SCANCODE_Q,           // free-camera toggle (short tap)
     [BIND_ZR] = SDL_SCANCODE_R,          // item wheel
-    [BIND_PLUS] = SDL_SCANCODE_ESCAPE,   // pause
+    [BIND_PLUS] = SDL_SCANCODE_RETURN,   // pause (Esc is taken by the overlay menu: menu.mm opens it before bindings see Esc)
     [BIND_MINUS] = SDL_SCANCODE_M,       // map
     [BIND_DOWN] = SDL_SCANCODE_TAB,      // inventory
     [BIND_LS_UP] = SDL_SCANCODE_W, [BIND_LS_DOWN] = SDL_SCANCODE_S,
