@@ -95,10 +95,12 @@ static bool lazy_heap_predicted(bool budget_ext, bool *probe) {
     uint64_t lim = g_vk.props.limits.maxStorageBufferRange;
     if (lim && lim < HEAP_MAX) return true;  // (UHD 770 main pass: lazy 8.4 ms, 512 MB windows 8.5)
 #ifdef _WIN32
-    // The Windows AMD integrated driver accepts one import of the whole heap (the probe writes both ends) and then
-    // faults a shader read of it: device lost, as soon as a save loads. Chunks stay inside the pages it maps.
-    if (g_vk.props.vendorID == 0x1002 && g_vk.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
-        return true;
+    // Chunks on every Windows GPU. The AMD integrated driver accepts one import of the whole heap (the probe writes both
+    // ends) and then faults a shader read of it: device lost, as soon as a save loads; chunks stay inside the pages it
+    // maps. On the others one import of the whole heap makes the driver pin all of it (RX 9060 XT: 3.2 GB
+    // of the guest heap, a 4.1 GB working set at the title screen); chunks imported as the game binds them hold
+    // 1.3-1.4 GB with the same fps. LARECOMP_VK_GMEM_LAZY=0 brings the whole import back.
+    return true;
 #endif
 #ifdef __linux__
     // RADV with the dma-buf heap (exec.c guest_heap_dmabuf): no import at all, so whole_import_fits doesn't apply; any
@@ -1181,8 +1183,11 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         frames = 0;
         last_fps_time = now;
     }
-    static double mem_at = 60.0;  // (memory in steady state: a minute in, then every 10 minutes)
-    if (now >= mem_at) { vk_log_memory("playing"); mem_at = now + 600.0; }
+    // (memory in steady state: a minute in, then every 10 minutes; LARECOMP_VK_MEMLOG=<seconds>: that interval, to see
+    // what a heavy render scale holds per heap)
+    static double mem_at = 60.0, mem_iv = -1;
+    if (mem_iv < 0) { const char *e = getenv("LARECOMP_VK_MEMLOG"); mem_iv = e && atof(e) >= 1 ? atof(e) : 600.0; if (mem_iv < 600.0) mem_at = mem_iv; }
+    if (now >= mem_at) { vk_log_memory("playing"); mem_at = now + mem_iv; }
 }
 
 // The game thread's side of a present: the frame counters and the per-frame hooks (input, pacing, test hooks).
