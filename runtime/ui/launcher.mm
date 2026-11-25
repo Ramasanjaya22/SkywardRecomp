@@ -1597,11 +1597,12 @@ static void draw_home_chip(const char *text, bool ready, float s) {
     ImGui::PushFont(g_font_small);
     ImVec2 at = ImGui::GetCursorScreenPos();
     float pad = 12 * s, h = 28 * s;
-    float w = ImGui::CalcTextSize(text).x + 2 * pad;
+    float dot = h * 0.5f, w = ImGui::CalcTextSize(text).x + 2 * pad + dot;  // (a status dot, then the one line)
     ImGui::GetWindowDrawList()->AddRectFilled(at, ImVec2(at.x + w, at.y + h),
                                               ready ? IM_COL32(32, 120, 190, 235) : IM_COL32(40, 64, 104, 230),
                                               h * 0.5f);
-    ImGui::SetCursorScreenPos(ImVec2(at.x + pad, at.y + (h - ImGui::GetFontSize()) * 0.5f));
+    ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(at.x + pad + dot * 0.3f, at.y + h * 0.5f), h * 0.15f, ready ? PAL_OK : IM_COL32(250, 205, 125, 255));
+    ImGui::SetCursorScreenPos(ImVec2(at.x + pad + dot, at.y + (h - ImGui::GetFontSize()) * 0.5f));
     ImGui::TextColored(ImVec4(1, 1, 1, 1), "%s", text);
     ImGui::SetCursorScreenPos(ImVec2(at.x, at.y + h));
     ImGui::PopFont();
@@ -2482,7 +2483,7 @@ extern "C" void launcher_run(const char *root) {
             // an update by itself: only its bar, on the start screen's background (gray without it; a failure or
             // Cancel then shows the Game Files page)
             const bool update_only = g_auto_update && busy;
-            const bool art_on = g_art && (status.empty() || update_only || page == SETUP);
+            const bool art_on = g_art ? true : false;  // (the artwork on every page: not an empty gradient)
             if (art_on || (g_bg && (status.empty() || update_only))) {  // cover the window, keep the aspect
                 float ia = art_on ? (float)g_art_w / g_art_h : (float)g_bg_w / g_bg_h, wa = ds.x / ds.y;
                 ImVec2 uv0(0, 0), uv1(1, 1);
@@ -2496,7 +2497,7 @@ extern "C" void launcher_run(const char *root) {
                                             IM_COL32(10, 28, 64, 255), IM_COL32(6, 16, 40, 255));
             }
             if (!update_only) {  // a shadow banner fading in from the left behind the menu, and one from the right behind the version
-                const float stops[][2] = {{0.0f, 225}, {0.3f, 215}, {0.44f, 165}, {0.55f, 95}, {0.64f, 35}, {0.74f, 0}};
+                const float stops[][2] = {{0.0f, 150}, {0.3f, 130}, {0.44f, 90}, {0.55f, 50}, {0.64f, 18}, {0.74f, 0}};
                 for (int i = 0; i + 1 < (int)(sizeof stops / sizeof stops[0]); i++) {
                     ImU32 a = IM_COL32(6, 10, 34, (int)stops[i][1]), b = IM_COL32(6, 10, 34, (int)stops[i + 1][1]);
                     bg->AddRectFilledMultiColor(ImVec2(ds.x * stops[i][0], 0), ImVec2(ds.x * stops[i + 1][0], ds.y), a, b, b, a);
@@ -2530,6 +2531,12 @@ extern "C" void launcher_run(const char *root) {
                 const char *action = home_action_label(status);
                 bool hov = false;
 
+                // a translucent navy card behind title, status, button and links: the artwork stays visible around it
+                // (drawn first through channel 0, once the content's height is known)
+                ImDrawList *card_dl = ImGui::GetWindowDrawList();
+                card_dl->ChannelsSplit(2);
+                card_dl->ChannelsSetCurrent(1);
+                const float card_top = 70 * s;
                 ImGui::SetCursorPos(ImVec2(x0, 120 * s));
                 ImGui::PushFont(g_font_title);
                 const char *title = "Skyward Sword HD";
@@ -2633,6 +2640,16 @@ extern "C" void launcher_run(const char *root) {
                 }
                 if (link("QUIT", true)) exit(0);
                 g_menu_small = false;
+                {
+                    ImVec2 wp0 = ImGui::GetWindowPos();
+                    float pad = 40 * s, cw = std::max(links_x - x0, 720 * s);
+                    ImVec2 ca(wp0.x + x0 - pad, wp0.y + card_top);
+                    ImVec2 cb(wp0.x + std::min(x0 + cw + pad, ds.x - 20 * s), wp0.y + links_y + 70 * s);
+                    card_dl->ChannelsSetCurrent(0);
+                    card_dl->AddRectFilled(ca, cb, IM_COL32(8, 22, 52, 205), 22 * s);
+                    card_dl->AddRect(ca, cb, PAL_ACCENT_A(70), 22 * s, 0, 1.5f * s);
+                    card_dl->ChannelsMerge();
+                }
             } else if (page == SETTINGS) {
                 // the in-game menu's tabs (runtime/ui/menu.mm), in a window like the in-game one; tabs that need a
                 // loaded game say so
@@ -2760,16 +2777,10 @@ extern "C" void launcher_run(const char *root) {
                     dl->AddLine(ImVec2(x, cy), ImVec2(x + u * 0.35f, cy + u * 0.35f), g, fs * 0.11f);
                     dl->AddLine(ImVec2(x + u * 0.35f, cy + u * 0.35f), ImVec2(x + u, cy - u * 0.4f), g, fs * 0.11f);
                 };
-                std::string src_d = "The folder with your own copy of The Legend of Zelda: Skyward Sword HD for Nintendo Switch: "
-                                    "the extracted game files (exefs/romfs), or the game's .nsp package. Version 1.0.0 and "
-                                    "1.0.1 are supported; for 1.0.1, keep the base game's .nsp and its update .nsp in this folder "
-                                    "(or choose the update below). The game isn't included with SkywardRecomp.";
-                if (std::string v = detected_game_version(); !v.empty()) src_d += "\n\nDetected version: " + v + ".";
-                // the step that's running / its result, under the rows and in the Set up row's explanation
+                // two sentences at most; the version is under Advanced details, the folder picture under "Show example"
+                const std::string src_d = "Choose the folder with your own copy of the game, or its .nsp package. "
+                                          "Then set it up once: it copies and compiles what SkywardRecomp needs.";
                 const std::string &job_line = job;
-                std::string ex_d = "Copies the game files SkywardRecomp needs and recompiles the game from them. This only "
-                                   "needs to be done once and may take a while. Your own files aren't changed.";
-                if (!job.empty()) ex_d += "\n\n" + job + (job_hint.empty() ? "" : ".\n" + job_hint);
 
                 // the controller's cursor starts on the first row (not the X), a few frames while the window lays out
                 static int seen_frame = -10, focus_first;  // (not drawn last frame: the window has just opened)
@@ -2780,7 +2791,7 @@ extern "C" void launcher_run(const char *root) {
                 };
                 opt_begin("##files", sc);
                 if (!ready) {
-                    opt_section("Your copy of the game");
+                    opt_section("Your game");
                     if (busy) opt_disable_next();
                     static const SDL_DialogFileFilter nsp_f[] = {{"Switch package", "nsp"}, {"All files", "*"}};
                     static const SDL_DialogFileFilter keys_f[] = {{"Switch keys", "keys"}, {"All files", "*"}};
@@ -2799,11 +2810,15 @@ extern "C" void launcher_run(const char *root) {
                     const std::string key_file = detected_key_file();
                     const bool have_files = scan_base || copied_ok;
                     const bool have_update = scan_update || !upick.empty();
-                    if (!src.empty()) {
-                        ImGui::Text("Files      %s", have_files ? "found" : "missing");
-                        ImGui::Text("Version    %s", have_update ? "1.0.1" : have_files ? "1.0.0" : "?");
-                        ImGui::Text("Update     %s", have_update ? "found" : "not chosen (optional)");
-                        if (is_nsp) ImGui::Text("prod.keys  %s", key_file.empty() ? "missing" : "found");
+                    if (!src.empty()) {  // the scan's checklist: one line each, the result coloured
+                        auto check = [&](const char *name, const char *val, bool good, bool bad) {
+                            ImGui::TextColored(PAL_DIM_V4, "%s", name);
+                            ImGui::SameLine(ImGui::GetFontSize() * 7);
+                            ImGui::TextColored(good ? PAL_OK_V4 : bad ? PAL_WARN_V4 : PAL_DIM_V4, "%s", val);
+                        };
+                        check("Game files", have_files ? "Found" : "Missing", have_files, !have_files);
+                        check("Update 1.0.1", have_update ? "Found" : "Not chosen (optional)", have_update, false);
+                        if (is_nsp) check("prod.keys", key_file.empty() ? "Missing" : "Found", !key_file.empty(), key_file.empty());
                         if (!have_files)
                             ImGui::TextDisabled("Choose a folder with exefs/ and romfs/, or a .nsp.");
                     }
@@ -2821,16 +2836,29 @@ extern "C" void launcher_run(const char *root) {
                             SDL_ShowOpenFileDialog(picked_keys, NULL, win, keys_f, 2, NULL, false);
                         check_left_of_value(!key_file.empty(), keys_v);
                     }
-                    opt_section("Set up");
-                    if (busy || (src.empty() && !copied_ok)) opt_disable_next();
-                    bool resume = !busy && src.empty() && resumable_build();
-                    if (opt_action(resume ? "Resume game code" : "Set up game files", busy ? "Working..." : "", ex_d.c_str(), true)) {
-                        pthread_mutex_lock(&g_lock);
-                        g_busy = true;
-                        pthread_mutex_unlock(&g_lock);
-                        pthread_t t;
-                        pthread_create(&t, NULL, extract_thread, NULL);
-                        pthread_detach(t);
+                    // ONE big primary button; it looks enabled as soon as there is something to set up
+                    {
+                        const bool can = !busy && !(src.empty() && !copied_ok);
+                        const bool resume = !busy && src.empty() && resumable_build();
+                        const char *bl = busy ? "Working..." : resume ? "Resume Game Code" : "Set Up Game";
+                        ImGui::Dummy(ImVec2(0, 8 * sc));
+                        ImGui::PushFont(g_font_menu);
+                        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 14 * sc);
+                        ImGui::PushStyleColor(ImGuiCol_Button, can ? ImGui::ColorConvertU32ToFloat4(PAL_SKY) : ImGui::ColorConvertU32ToFloat4(PAL_SKY_OFF));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::ColorConvertU32ToFloat4(can ? PAL_SKY_HI : PAL_SKY_OFF));
+                        ImGui::PushStyleColor(ImGuiCol_Border, PAL_ACCENT_V4);
+                        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, can ? 2 * sc : 0);
+                        if (ImGui::Button(bl, ImVec2(-1, 78 * sc)) && can) {
+                            pthread_mutex_lock(&g_lock);
+                            g_busy = true;
+                            pthread_mutex_unlock(&g_lock);
+                            pthread_t t;
+                            pthread_create(&t, NULL, extract_thread, NULL);
+                            pthread_detach(t);
+                        }
+                        ImGui::PopStyleVar(2);
+                        ImGui::PopStyleColor(3);
+                        ImGui::PopFont();
                     }
                     files_gb = -1;  // (re-measured after a setup)
                 } else {
@@ -2861,6 +2889,8 @@ extern "C" void launcher_run(const char *root) {
                         if (opt_action("Cancel", "", "Keeps the game files.", true)) g_confirm_delete = false;
                     }
                 }
+                ImGui::Dummy(ImVec2(0, 6 * sc));
+                if (ImGui::CollapsingHeader("More")) {  // storage, build cache and saves: not part of the first run
                 {  // where all of it is kept: another folder (a bigger drive)
                     const char *fixed = rt_data_root_fixed();
                     std::string d = std::string("Where SkywardRecomp keeps game files, saves, seeds and settings.\n\n") +
@@ -2951,6 +2981,7 @@ extern "C" void launcher_run(const char *root) {
                         SDL_OpenURL(("file:///" + dir).c_str());
                     }
                 }
+                }  // More
                 if (!job_line.empty()) {  // the current step / result
                     ImGui::Dummy(ImVec2(0, 14 * sc));
                     ImGui::PushTextWrapPos(0);
@@ -2996,11 +3027,13 @@ extern "C" void launcher_run(const char *root) {
                     opt_desc_text();
                     float fs = ImGui::GetFontSize(), ew = fminf(ImGui::GetContentRegionAvail().x, fs * 15);
                     ImGui::Dummy(ImVec2(0, fs * 0.5f));  // (a paragraph's space)
-                    draw_folder_example(ew);
-                    ImGui::Dummy(ImVec2(0, fs * 0.3f));  // (its shadow)
-                    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ew);
-                    ImGui::TextColored(PAL_DIM_V4, "%s", PICK_FOLDER_HINT);
-                    ImGui::PopTextWrapPos();
+                    if (ImGui::CollapsingHeader("Show example")) {  // (collapsed: the folder picture only when asked for)
+                        draw_folder_example(ew);
+                        ImGui::Dummy(ImVec2(0, fs * 0.3f));  // (its shadow)
+                        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ew);
+                        ImGui::TextColored(PAL_DIM_V4, "%s", PICK_FOLDER_HINT);
+                        ImGui::PopTextWrapPos();
+                    }
                     opt_split_end();
                 }
                 // SKY-37: Level 3 diagnostics live here, never in the main flow (both states).
