@@ -326,6 +326,7 @@ static std::string g_src;           // the picked folder (launcher_prepare: or a
 static std::string g_keys_pick;     // the prod.keys the player chose (g_lock); empty: search for one
 static std::string g_update_pick;   // the 1.0.1 update .nsp the player chose (g_lock); empty: the one found next to the base game
 static std::string g_found;         // what the picked folder holds, as game_find_describe says it (g_lock): shown under the folder row
+static bool g_scan_base, g_scan_update, g_scan_keys; // what the folder scan found, for the setup checklist (g_lock)
 static bool g_headless;             // launcher_prepare: no window, so no shader preparation (the game does it later)
 static std::string g_job;           // current setup step / result for the status line
 static std::string g_job_hint;      // a failure: what to do about it (shown under it)
@@ -848,15 +849,22 @@ static std::string picker_hint(const char *what) {
 static void SDLCALL picked(void *, const char *const *files, int) {
     if (!files) { set_job(PICKER_FAILED, true, picker_hint("folder")); return; }
     if (!files[0]) return;
-    std::string found;  // (what's in the folder, so a wrong pick can be seen before Set up)
+    std::string found;  // game_find_describe(found): what the folder has and why
+    bool base = false, update = false, keys = false;
     {
         GameFind *f = new GameFind;
         find_game(files[0], *f, &found);
+        base = (f->exefs[0] && f->romfs[0]) || f->nsp[0] != 0;
+        update = f->update[0] != 0;
         delete f;
     }
+    keys = !find_prod_keys(files[0]).empty();
     pthread_mutex_lock(&g_lock);
     g_src = files[0];
     g_found = found;
+    g_scan_base = base;
+    g_scan_update = update;
+    g_scan_keys = keys;
     if (g_job == PICKER_FAILED) g_job.clear(), g_job_hint.clear(), g_job_failed = false;
     pthread_mutex_unlock(&g_lock);
 }
@@ -2356,6 +2364,7 @@ extern "C" void launcher_run(const char *root) {
                 pthread_mutex_lock(&g_lock);
                 std::string src = g_src, job = g_job, job_hint = g_job_hint, found = g_found;
                 bool failed = g_job_failed;
+                bool scan_base = g_scan_base, scan_update = g_scan_update, scan_keys = g_scan_keys;
                 pthread_mutex_unlock(&g_lock);
                 bool ready = status.empty() && !busy;  // (set up: the window offers to delete them)
                 static double files_gb = -1;
@@ -2391,45 +2400,40 @@ extern "C" void launcher_run(const char *root) {
                     if (focus_first > 0 && focus_first--) ImGui::SetFocusID(ImGui::GetItemID(), ImGui::GetCurrentWindow());
                 };
                 opt_begin("##files", sc);
-                if (!ready) {
-                    opt_section("Your copy of the game");
-                    if (busy) opt_disable_next();
-                    if (opt_action("Game files folder", src_v.c_str(), src_d.c_str(), true))
-                        SDL_ShowOpenFolderDialog(picked, NULL, win, NULL, false);
-                    check_left_of_value(src_v);
-                    first_row();
-                    {  // (only for 1.0.1 from a .nsp, and only when the update isn't in the game files folder)
-                        pthread_mutex_lock(&g_lock);
-                        std::string up = g_update_pick;
-                        pthread_mutex_unlock(&g_lock);
-                        std::string ud = "Optional, for version 1.0.1: the update .nsp (\"[01002DA013484800][v65536]\") of the game. "
-                                         "SkywardRecomp applies it over the base game's .nsp, so the game files become 1.0.1. It is "
-                                         "found by itself when it's in the game files folder; choose it here if it's somewhere else. "
-                                         "Leave this empty for version 1.0.0.";
-                        if (!up.empty()) ud += "\n\nChosen: " + up;
-                        static const SDL_DialogFileFilter nsp_f[] = {{"Switch package", "nsp"}, {"All files", "*"}};
-                        std::string uv = up.empty() ? "Choose..." : "Selected";
-                        if (busy) opt_disable_next();
-                        if (opt_action("Update 1.0.1 (optional .nsp)", uv.c_str(), ud.c_str(), true))
-                            SDL_ShowOpenFileDialog(picked_update, NULL, win, nsp_f, 2, NULL, false);
-                        check_left_of_value(uv);
-                    }
-                    {  // (only a .nsp needs it; found by itself when it's next to the .nsp or where yuzu / Ryujinx keep it)
-                        pthread_mutex_lock(&g_lock);
-                        std::string kp = g_keys_pick;
-                        pthread_mutex_unlock(&g_lock);
-                        std::string kd = "Only needed when you chose a .nsp package: the prod.keys file (your Switch's encryption "
-                                         "keys, dumped from your own console with Lockpick_RCM) that opens it. SkywardRecomp "
-                                         "looks for it by itself next to the .nsp and where yuzu / Eden / Ryujinx keep it; "
-                                         "choose it here if that didn't find it.";
-                        if (!kp.empty()) kd += "\n\nChosen: " + kp;
-                        static const SDL_DialogFileFilter keys_f[] = {{"Switch keys", "keys"}, {"All files", "*"}};
-                        std::string kv = kp.empty() ? "Choose..." : "Selected";
-                        if (busy) opt_disable_next();
-                        if (opt_action("prod.keys (for a .nsp)", kv.c_str(), kd.c_str(), true))
-                            SDL_ShowOpenFileDialog(picked_keys, NULL, win, keys_f, 2, NULL, false);
-                        check_left_of_value(kv);
-                    }
+        if (!ready) {
+            opt_section("Your copy of the game");
+            if (busy) opt_disable_next();
+            SDL_DialogFileFilter nsp_f[] = {{"NSP files", "*.nsp"}, {NULL, NULL}};
+            SDL_DialogFileFilter keys_f[] = {{"prod.keys", "*.keys"}, {NULL, NULL}};
+            // One picker for the whole set: the scan fills the checklist below and we ask
+            // only for what it could not find.
+            if (opt_action("Choose Game Files", src_v.c_str(), src_d.c_str(), true))
+                SDL_ShowOpenFolderDialog(picked, NULL, win, NULL, false);
+            check_left_of_value(src_v);
+            first_row();
+
+            const bool have_files = scan_base || !check_copied_files(g_root).empty();
+            const bool have_update = scan_update || !g_update_pick.empty();
+            const bool have_keys = scan_keys || !g_keys_pick.empty();
+            if (!src.empty()) {
+                ImGui::Text("Files      %s", have_files ? "found" : "missing");
+                ImGui::Text("Version    %s", have_update ? "1.0.1" : have_files ? "1.0.0" : "?");
+                ImGui::Text("Update     %s", have_update ? "found" : "missing");
+                ImGui::Text("prod.keys  %s", have_keys ? "found" : "missing");
+                if (!have_files)
+                    ImGui::TextDisabled("Choose a folder with exefs/ and romfs/, or a .nsp.");
+            }
+            if (!src.empty() && have_files && !have_update) {
+                std::string upd_v = g_update_pick.empty() ? "Choose..." : g_update_pick;
+                if (opt_action("Choose update", upd_v.c_str(), "The 1.0.1 update package for your game files.", true))
+                    SDL_ShowOpenFileDialog(picked_update, NULL, win, nsp_f, 2, NULL, false);
+                check_left_of_value(upd_v);
+            }
+            if (!src.empty() && have_files && !have_keys) {
+                std::string keys_v = g_keys_pick.empty() ? "Choose..." : g_keys_pick;
+                if (opt_action("Choose prod.keys", keys_v.c_str(), "Your prod.keys, if it is not in the game files folder.", false))
+                    SDL_ShowOpenFileDialog(picked_keys, NULL, win, keys_f, 2, NULL, false);
+            }
                     opt_section("Set up");
                     if (busy || (src.empty() && !check_copied_files(g_root).empty())) opt_disable_next();
                     bool resume = !busy && src.empty() && resumable_build();
