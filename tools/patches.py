@@ -1023,3 +1023,23 @@ def _g3d_cull_aspect(gen, a):
 
 if G3D_CULL_ASPECT_SITE:
     PATCHES[G3D_CULL_ASPECT_SITE] = _g3d_cull_aspect
+
+
+# The camera's own frustum (camera +0xf0, FRUSTUM::Set from the camera update) is a second, separate cull: actors test
+# their world box against its box and planes (1.0.1 0x7000df58d4, from the actor draw gate; doors use it) and are not
+# drawn when it says outside. Its right edge is tan(fovy / 2) x near x s10, with s10 = viewport width / height
+# (`fdiv s10, s1, s2`; s10 has no other use). At 16:9 a door turning into an ultrawide side band was skipped while on
+# screen. Widened like the g3d frustum; the projection is built elsewhere and stays 16:9.
+ACTOR_CULL_ASPECT_SITE = A.ACTOR_CULL_ASPECT_SITE
+
+
+def _actor_cull_aspect(gen, a):
+    w = _word(gen, a)
+    assert w == 0x1e22182a, hex(w)  # fdiv s10, s1, s2
+    return ('{ extern float rt_actor_cull_aspect(float); float n, d; memcpy(&n, &c->v[1], 4); memcpy(&d, &c->v[2], 4); '
+            'float f = rt_actor_cull_aspect(n / d); c->v[10] = 0; memcpy(&c->v[10], &f, 4); }'
+            f'  /* {a:#x}: fdiv s10, s1, s2 (camera culling frustum aspect) */')
+
+
+if ACTOR_CULL_ASPECT_SITE:
+    PATCHES[ACTOR_CULL_ASPECT_SITE] = _actor_cull_aspect

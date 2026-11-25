@@ -101,6 +101,12 @@ float rt_cull_aspect(float orig) {
 // (Vulkan exec.c wide_k scales clip x by 1 / factor). Never narrowed: a tall output is not drawn narrower.
 float rt_g3d_cull_aspect(float orig) { return g_wide > 1.0f ? orig * g_wide : orig; }
 
+// SS's camera culling frustum, which actors such as doors test before they draw (tools/patches.py
+// ACTOR_CULL_ASPECT_SITE): widened the same way. LARECOMP_NO_WIDE_ACTOR_CULL=1 keeps it 16:9, to compare.
+float rt_actor_cull_aspect(float orig) {
+    return g_wide > 1.0f && !ENV("LARECOMP_NO_WIDE_ACTOR_CULL") ? orig * g_wide : orig;
+}
+
 // Sky and sea pieces past the north edge (tools/patches.py SKYSEA_BOX_SITES): a piece shows while Link is within
 // its reach plus half a 16:9 view (7.5). A wider view reaches further: half its extra width, doubled for the far
 // (top) edge of the perspective view, where the sky is.
