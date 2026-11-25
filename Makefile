@@ -36,12 +36,15 @@ MINFLAG  := $(if $(MACOS_MIN),-mmacosx-version-min=$(MACOS_MIN))
 CC       := clang $(MINFLAG) $(CROSS)
 CXX      := clang++ $(MINFLAG) $(CROSS)
 IMGUI    := third_party/imgui
-# SkywardRecomp: generated files reach 3.8 MB each and LLVM blows up on the biggest ones at -O1
-# (main_465.c: >45 min and still running). -O0 does the same file in 9 s. The runtime keeps its
-# own -O2 (RTFLAGS); only this generated code is built unoptimized.
+# SkywardRecomp: the game code is -O2 (it ran at -O0, 3-5x slower), but generated files reach 3.8 MB each and LLVM's time
+# on the biggest functions blows up (main_513.c: >45 min at -O1, 9 s at -O0): tools/gen.py marks a function of more than
+# 30000 bytes of C GEN_BIG (runtime/cpu.h: optnone), so those stay -O0 and the whole code builds in about 1.4x the -O0 time
+# (tools/genopt.py). The runtime has its own -O2 (RTFLAGS).
+# -fwrapv -ffp-contract=off -fno-strict-aliasing: AArch64 signed overflow wraps, fmul + fadd stay two roundings (not an
+# fmadd the guest didn't have), guest addresses are host pointers through casts.
 # -fno-sanitize=undefined: zig cc turns UBSan on at -O0, and the slim zig's link (tools/zig_slim.sh) has no ubsan_rt, so
 # the link failed with undefined __ubsan_handle_* symbols (players' logs).
-GENFLAGS := -O0 -fno-sanitize=undefined -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -Iruntime
+GENFLAGS := -O2 -fwrapv -ffp-contract=off -fno-sanitize=undefined -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -Iruntime
 
 # The game code (made by `make gen` from your own game files) is its own library next to the app (runtime/gamelib.h);
 # the app itself holds none of it
@@ -118,7 +121,7 @@ endif
 
 # GAMELIB_ID: what the game code library is built from (the generator, the headers it is compiled against, the
 # flags). A library with another id is rebuilt by the start screen, never loaded.
-GAMELIB_SRCS := tools/game_addresses.py runtime/game_addresses/versions.h $(wildcard runtime/game_addresses/patches_v*.h) tools/gen.py tools/lifter.py tools/analyze.py tools/nso.py tools/passes.py tools/patches.py \
+GAMELIB_SRCS := tools/game_addresses.py runtime/game_addresses/versions.h $(wildcard runtime/game_addresses/patches_v*.h) tools/gen.py tools/genopt.py tools/lifter.py tools/analyze.py tools/nso.py tools/passes.py tools/patches.py \
                 tools/simd_c.py tools/rando/patch_variants.json tools/gamelib_entry.c runtime/hle/hle_symbols.txt \
                 runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h
 GAMELIB_ID := $(shell (cat $(GAMELIB_SRCS); echo '$(GENFLAGS)') | (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-16)

@@ -1,5 +1,8 @@
 // Guest CPU state and helpers used by recompiled code.
 #pragma once
+
+// A lifted function too big for the optimizer to take in a sane time (tools/genopt.py): stays -O0, the rest of the game code is -O2
+#define GEN_BIG __attribute__((optnone, noinline))
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>

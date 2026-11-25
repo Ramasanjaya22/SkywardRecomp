@@ -18,6 +18,7 @@ import unicorn as uc
 from unicorn import arm64_const as A
 
 from analyze import eh_frame_functions
+from genopt import NOOPT_FN, mark_big
 from lifter import Insn, Lifter, Unsupported, bits, emit_asm_batch, hx, sext
 from nso import Nso, R_AARCH64_RELATIVE
 
@@ -325,7 +326,8 @@ class Module:
             if (w & 0x7F80001F) == 0x7100001F:
                 cmp = a
                 break
-            if self.lift(a).kind != 'op':
+            # (SkywardRecomp) 'asm': an FP load lifted for AArch64 hosts (main+7c6404: ldr s1,[x9]), #19
+            if self.lift(a).kind not in ('op', 'asm'):
                 return None
             a -= 4
         if cmp is None:
@@ -652,6 +654,7 @@ def main():
     ap.add_argument('--chunk', type=int, default=1500)  # functions per file at most
     ap.add_argument('--chunk-bytes', type=int, default=1500000)  # and about this much C (even compile times)
     ap.add_argument('--big-fn', type=int, default=100000)  # bytes of C from which a function gets its own file
+    ap.add_argument('--noopt-fn', type=int, default=NOOPT_FN)  # bytes of C from which a function stays -O0 (GEN_BIG)
     ap.add_argument('--limit', type=int, default=0)
     ap.add_argument('--simd', choices=('asm', 'c'),
                     default='asm' if platform.machine().lower() in ('arm64', 'aarch64') else 'c')
@@ -738,6 +741,7 @@ def main():
     nchunks = 0
     ci = 0
     pending = None  # (address, lines, refs) of a big function that starts the next file
+    n_big = 0  # (functions left at -O0)
     while ci < len(order) or pending:
         body, refs, size, fns = [], set(), 0, []
         while (pending or ci < len(order)) and len(fns) < args.chunk and size < args.chunk_bytes:
@@ -751,6 +755,8 @@ def main():
                 lines = m.emit_function(a, end, labels, tables, hle)
                 r = getattr(m, '_refs', set())
                 m._refs = set()
+                lines, is_big = mark_big(lines, args.noopt_fn)
+                n_big += is_big
             n = sum(len(l) + 1 for l in lines)
             if n > args.big_fn and fns:  # (a big function gets a file of its own: they compile in parallel)
                 pending = (a, lines, r)
@@ -789,6 +795,7 @@ def main():
         write_if_changed(os.path.join(args.outdir, f'{args.name}_table.c'), f.getvalue())
     if args.name == 'main':  # (what this code was generated from: the Makefile's game code library id, GAMELIB_BUILD_ID)
         write_if_changed(os.path.join(args.outdir, 'main_build_id.txt'), game_addresses.VERSIONS[version][1] + '\n')
+    print(f'{args.name}: {n_big} of {len(order)} functions over {args.noopt_fn} bytes stay -O0 (GEN_BIG)', file=sys.stderr)
     print(f'{args.name}: wrote {nchunks} chunks, {time.time() - t0:.0f}s total', file=sys.stderr)
 
 

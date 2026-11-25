@@ -46,7 +46,11 @@ bool controls_ui_took_back(void);
 bool rando_tab_took_back(void);  // rando_tab.mm: B went back from the Triforce hunt's count
 #include "../input_bind.h"
 #include "../paths.h"
+#include "../save_backup.h"
 }
+#include <sys/stat.h>
+#include <time.h>
+#include <unistd.h>
 
 // ------------------------------------------------------------------ state shared with the main thread
 static std::atomic<bool> g_open{false};
@@ -417,6 +421,10 @@ static void tab_display(void) {
         g_settings.fullscreen = fs;
         g_want_fullscreen_apply.store(true);
     }
+    if (opt_toggle("Skip start screen", &g_settings.skip_launcher, false,
+                   "Start the game directly on launch.")) {
+        settings_save();
+    }
     opt_toggle("Show FPS", &g_settings.show_fps, false, "Shows the frame rate in the top right corner.");
     {   // display order -> FPS_* (settings.h)
         static const char *fps[] = {"Auto", "30", "60", "90 (experimental)", "120 (experimental)", "Unlocked (experimental)"};
@@ -514,6 +522,45 @@ static void tab_audio(void) {
                "The game's echo in caves, dungeons and big rooms.");
     opt_toggle("Movie audio", &g_settings.movie_audio, true,
                "Sound in the game's movies (the opening and the ending). Applies the next time a movie starts.");
+    opt_end();
+}
+
+// Saves (in game): a backup now and the backup folder. Restoring and importing are on the start screen (Settings >
+// Prelaunch > Save data): the running game holds its saves in memory and writes them again at its next save.
+static void tab_saves(void) {
+    static char msg[512];
+    static bool bad;
+    opt_begin("##saves", ImGui::GetFontSize() / 34);
+    opt_section("Save data");
+    if (opt_action("Back up now", "", "Copies your saves (and each randomizer seed's) to the backups folder. "
+                   "The newest 20 are kept.", true)) {
+        char made[64], why[400];
+        bad = !save_backup_create(rt_data_root(), made, sizeof made, why, sizeof why);
+        snprintf(msg, sizeof msg, "%s", bad ? why : "Saves backed up.");
+    }
+    if (opt_action("Open backups folder", "", "Shows the folder the backups are kept in.", true)) {
+        std::string dir = std::string(rt_data_root()) + "/backups";
+        mkdir(dir.c_str(), 0755);
+        SDL_OpenURL(("file:///" + dir).c_str());
+    }
+    static SaveBackup list[SAVE_BACKUP_KEEP];
+    int nb = save_backup_list(rt_data_root(), list, SAVE_BACKUP_KEEP);
+    if (nb) opt_section("Backups");
+    for (int i = 0; i < nb; i++) {
+        char when[48], size[32], label[96];
+        time_t t = (time_t)list[i].when;
+        strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S", localtime(&t));
+        snprintf(size, sizeof size, "%.1f MB", list[i].bytes / 1e6);
+        snprintf(label, sizeof label, "%s%s", when, strstr(list[i].name, "-auto") ? " (auto)" : "");
+        opt_disable_next();
+        opt_action(label, size, "To restore it: Quit to Start Screen, then Settings > Prelaunch > Save data.", false);
+    }
+    if (msg[0]) {
+        ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.5f));
+        ImGui::PushTextWrapPos(0);
+        ImGui::TextColored(bad ? ImVec4(1, 0.5f, 0.4f, 1) : ImVec4(0.45f, 0.95f, 0.55f, 1), "%s", msg);
+        ImGui::PopTextWrapPos();
+    }
     opt_end();
 }
 
@@ -706,11 +753,11 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     int ntabs = 0;
     if (prelaunch) tabs[ntabs++] = {"Prelaunch", -1, true};
     static const char *names[] = {"Video", "Audio", "Save Editor", "Randomizer", "Warp", "Cheats", "Gameplay",
-                                  "Cosmetics", "Controls", "Quit"};
-    static const int order[] = {8, 0, 1, 6, 9};  // Controls, Video, Audio, Gameplay, Quit (ids stay: test hooks;
-                                                  // LA tabs 2-5 and 7 Cosmetics hidden: they read LA state)
-    for (int i : order)  // (Quit: in game only - the start screen has its own QUIT, and an eleventh tab cut names short)
-        if (i != 9 || !prelaunch) tabs[ntabs++] = {names[i], i, true};
+                                  "Cosmetics", "Controls", "Quit", "Saves"};
+    static const int order[] = {8, 0, 1, 6, 10, 9};  // Controls, Video, Audio, Gameplay, Saves, Quit (ids stay: test hooks;
+                                                      // LA tabs 2-5 and 7 Cosmetics hidden: they read LA state)
+    for (int i : order)  // (Quit, Saves: in game only - the start screen has its own QUIT and Save data, and an eleventh tab cut names short)
+        if ((i != 9 && i != 10) || !prelaunch) tabs[ntabs++] = {names[i], i, true};
     int cur = 0;  // g_tab / g_tab_request hold ids
     for (int i = 0; i < ntabs; i++) if (tabs[i].id == g_tab) cur = i;
     if (!tabs[cur].on) cur = 0;
@@ -816,6 +863,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 case 6: difficulty_draw(scale); break;
                 case 8: controls_tab_draw(scale); break;
                 case 9: tab_quit(scale, in_game); break;
+                case 10: tab_saves(); break;
                 }
                 static const char *scroll_test = getenv("LARECOMP_MENU_SCROLL");  // test hook: page scroll, 0..1
                 if (scroll_test) ImGui::SetScrollY(ImGui::GetScrollMaxY() * (float)atof(scroll_test));

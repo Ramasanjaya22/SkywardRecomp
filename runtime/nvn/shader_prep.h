@@ -119,7 +119,7 @@ bool shader_prep_run(const char *romfs, void (*progress)(int done, int total), c
 // (LARECOMP_SHADER_PREP=1, tests) the same at game start, before the game's first frame: runtime/nvn/objects.c
 void shader_prep_boot(const char *romfs);
 
-// ---- the shader caches' tag (Metal binary archive, Vulkan pipeline cache): this build, the translator, the prepared
+// ---- the shader caches' tag (Metal binary archive, Vulkan pipeline cache): the translator, the prepared
 // objects' format and the GPU / driver; a cache with another tag is discarded (rebuilt as the game runs)
 #define SHADER_CACHE_VERSION 1  // (bump when what goes into the caches changes meaning)
 void shader_cache_tag(char *out, size_t n, const char *gpu);       // gpu: device name, driver / OS version

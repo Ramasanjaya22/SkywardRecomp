@@ -1,5 +1,5 @@
 // Save data backups (runtime/save_backup.c), driven by tools/test_save_backup.py:
-//   test_save_backup <root> create | list | restore <name> | import <dir>
+//   test_save_backup <root> create | list | restore <name> | import <dir> | update <version>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,6 +38,9 @@ int main(int argc, char **argv) {
     } else if (!strcmp(cmd, "import") && argc > 3) {
         bool ok = save_backup_import(root, argv[3], why, sizeof why);
         printf("IMPORT %d|%s\n", ok, why);
+    } else if (!strcmp(cmd, "update") && argc > 3) {
+        bool ok = save_backup_on_update(root, argv[3], name, sizeof name);
+        printf("UPDATE %d %s|\n", ok, name);
     } else {
         return 2;
     }

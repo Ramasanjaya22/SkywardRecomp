@@ -159,4 +159,13 @@ with tempfile.TemporaryDirectory() as directory:
     assert (data / 'backups' / oldest).is_dir() and (data / SAVE).read_bytes() == a, 'oldest backup lost'
     assert len(backups()) == 20, len(backups())
     print('restore of the oldest backup at the cap: restored, the backup is still there, 20 kept')
+    # an update: one -auto backup when the version changes, none when it's the same
+    n0 = len(backups())
+    line = run('update', '9.9.0')[0]
+    made = line.split()[2].rstrip('|')
+    assert ok_of(line, 'UPDATE')[0] and made.endswith('-auto') and len(backups()) == min(n0 + 1, 20), line
+    assert (data / 'backups' / made / SAVE).read_bytes() == (data / SAVE).read_bytes()
+    assert not ok_of(run('update', '9.9.0')[0], 'UPDATE')[0] and len(backups()) == min(n0 + 1, 20)
+    assert not subprocess.run([str(exe), str(empty), 'update', '1'], capture_output=True, text=True).stdout.startswith('UPDATE 1')
+    print('update: a new version backs the saves up once; the same version, or no saves: none')
     print(f'{plat}: save backups ok')

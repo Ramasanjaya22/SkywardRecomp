@@ -34,6 +34,8 @@ jobs:
           python3 tools/test_gamebuild_resume.py
       - name: Save I/O regression tests
         run: python3 tools/test_save.py
+      - name: Settings keys frozen
+        run: python3 tools/test_settings_keys.py
       - name: Movie extractor lifecycle and audio regression
         run: |
           clang -std=gnu11 -O1 tools/test_movie_extractor.c $(pkg-config --cflags --libs libavformat libavcodec libavutil libswscale) -pthread -o build/test-movie-extractor
@@ -46,6 +48,8 @@ jobs:
           build/test-condvar
       - name: Settings regression tests
         run: python3 tools/test_settings.py
+      - name: Settings keys frozen
+        run: python3 tools/test_settings_keys.py
       - name: Game-files delete guard (links, outside the data folder)
         run: DEPS="/opt/sdl3" python3 tools/test_delete_guard.py
       - name: Game-file detection (the right .nsp among unrelated, update, DLC and damaged files)
@@ -62,6 +66,14 @@ jobs:
         run: python3 tools/test_pace.py
       - name: Frame rate setting (the timestep and interval the frame controller is handed)
         run: python3 tools/test_fps_target.py
+      - name: Perf summary test
+        run: python3 tools/test_perfstat.py
+      - name: Game code flags and GEN_BIG marking
+        run: python3 tools/test_gen_opt.py
+      - name: Pipeline cache save policy
+        run: python3 tools/test_pcache.py
+      - name: Keep an existing extraction
+        run: python3 tools/test_extract_current.py
       - name: Controller light colours
         run: |
           clang -std=gnu11 -O1 tools/test_led.c -lm -o build/test-led
@@ -107,10 +119,11 @@ jobs:
         run: python3 tools/test_vulkan_sync_errors.py
       - name: Shader translator instruction semantics
         run: tools/test_translate_ops.sh
-      - name: SkywardRecomp tests (shader records, shadows, ZR tap, texture packs)
+      - name: SkywardRecomp tests (shader records, shadows, temporal inputs, ZR tap, texture packs)
         run: |
           python3 tools/test_shader_rec.py
           python3 tools/test_shadow_map.py
+          python3 tools/test_temporal.py
           python3 tools/test_zr_tap.py
           python3 tools/test_mouse_sword.py
           make test_texpack
@@ -122,6 +135,8 @@ jobs:
       - name: FP/SIMD lowering vs a CPU emulator (a sample)
         run: |
           /opt/venv/bin/python tools/test_simd.py --encodings 3000 --cases 4 --jobs "$(nproc)"
+      - name: Jump tables resolve with either SIMD lowering
+        run: /opt/venv/bin/python tools/test_jump_table.py
 
   macos:
     runs-on: macos-15  # (GitHub-hosted Apple Silicon; free for public repositories)
@@ -141,6 +156,8 @@ jobs:
           python3 tools/test_gamebuild_resume.py
       - name: Save I/O regression tests
         run: python3 tools/test_save.py
+      - name: Settings keys frozen
+        run: python3 tools/test_settings_keys.py
       - name: Movie extractor lifecycle and audio regression
         run: |
           clang -std=gnu11 -O1 -I"$(brew --prefix ffmpeg)/include" -L"$(brew --prefix ffmpeg)/lib" tools/test_movie_extractor.c -lavformat -lavcodec -lavutil -lswscale -pthread -o build/test-movie-extractor
@@ -153,6 +170,8 @@ jobs:
           build/test-condvar
       - name: Settings regression tests
         run: python3 tools/test_settings.py
+      - name: Settings keys frozen
+        run: python3 tools/test_settings_keys.py
       - name: Game-files delete guard (links, outside the data folder)
         run: python3 tools/test_delete_guard.py
       - name: Game-file detection (the right .nsp among unrelated, update, DLC and damaged files)
@@ -169,6 +188,14 @@ jobs:
         run: python3 tools/test_pace.py
       - name: Frame rate setting (the timestep and interval the frame controller is handed)
         run: python3 tools/test_fps_target.py
+      - name: Perf summary test
+        run: python3 tools/test_perfstat.py
+      - name: Game code flags and GEN_BIG marking
+        run: python3 tools/test_gen_opt.py
+      - name: Pipeline cache save policy
+        run: python3 tools/test_pcache.py
+      - name: Keep an existing extraction
+        run: python3 tools/test_extract_current.py
       - name: Controller light colours
         run: |
           clang -std=gnu11 -O1 tools/test_led.c -lm -o build/test-led
@@ -229,6 +256,8 @@ jobs:
           python3 tools/test_windows_processes.py
       - name: Save I/O regression tests
         run: python3 tools/test_save.py
+      - name: Settings keys frozen
+        run: python3 tools/test_settings_keys.py
       - name: Game-files delete guard (junctions, outside the data folder)
         run: python3 tools/test_delete_guard.py
       - name: Widescreen guard (no ultrawide without aspect sites)
@@ -243,6 +272,14 @@ jobs:
         run: python3 tools/test_save_backup.py
       - name: Frame rate setting (the timestep and interval the frame controller is handed)
         run: python3 tools/test_fps_target.py
+      - name: Perf summary test
+        run: python3 tools/test_perfstat.py
+      - name: Game code flags and GEN_BIG marking
+        run: python3 tools/test_gen_opt.py
+      - name: Pipeline cache save policy
+        run: python3 tools/test_pcache.py
+      - name: Keep an existing extraction
+        run: python3 tools/test_extract_current.py
       - name: Movie extractor lifecycle and audio regression
         run: |
           clang -std=gnu11 -O1 tools/test_movie_extractor.c -lavformat -lavcodec -lavutil -lswscale -o build/test-movie-extractor.exe

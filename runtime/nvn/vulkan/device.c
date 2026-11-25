@@ -13,6 +13,7 @@
 #include "../../settings.h"
 #include "../../ui/menu.h"
 #include "../rqueue.h"
+#include "pcache_policy.h"
 #include "vk.h"
 #include "record.h"
 #include "../output_scale.h"
@@ -306,12 +307,18 @@ static void pipeline_cache_tag(char *out, size_t n) {
     shader_cache_tag(out, n, gpu);
 }
 
-static void *pipeline_cache_saver(void *a) {  // every 3 minutes, when it grew
+static uint64_t pcache_saved_ns;  // when (SDL_GetTicksNS) the file was last written, or the cache loaded
+
+// Looks every 10 s (a thread of its own, never the game's or the render thread): the cache is written when it grew
+// 1 MB, or a minute after it first grew (pcache_policy.h), so a crash loses seconds of shader work, not minutes.
+static void *pipeline_cache_saver(void *a) {
     (void)a;
     for (;;) {
-        SDL_Delay(180000);
+        SDL_Delay(10000);
         if (rq_stopping()) break;  // (quitting: backend_quit saves it)
-        vk_pipeline_cache_save();
+        size_t sz = 0;
+        if (vkGetPipelineCacheData(g_vk.dev, g_vk.pcache, &sz, NULL) != VK_SUCCESS) continue;
+        if (pcache_should_save(sz, pcache_saved, (double)(SDL_GetTicksNS() - pcache_saved_ns) * 1e-9)) vk_pipeline_cache_save();
     }
     return NULL;
 }
@@ -481,8 +488,12 @@ static void create_device(void) {
                                             .maintenance4 = VK_TRUE,
                                             .pNext = g_vk.custom_border ? (void *)&cbc : g_vk.divisor ? (void *)&div : NULL};
     VkPhysicalDeviceVulkan12Features f12 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
-                                            .timelineSemaphore = VK_TRUE, .shaderInt8 = VK_TRUE, .samplerMirrorClampToEdge = VK_TRUE,
-                                            .uniformAndStorageBuffer8BitAccess = VK_TRUE, .storageBuffer8BitAccess = VK_TRUE,
+                                            .timelineSemaphore = VK_TRUE, .samplerMirrorClampToEdge = VK_TRUE,
+                                            // no shader uses 8-bit types: ask only for what the driver has (Turnip on
+                                            // Adreno 830 lacks uniformAndStorageBuffer8BitAccess, #18)
+                                            .shaderInt8 = have12.shaderInt8,
+                                            .uniformAndStorageBuffer8BitAccess = have12.uniformAndStorageBuffer8BitAccess,
+                                            .storageBuffer8BitAccess = have12.storageBuffer8BitAccess,
                                             .scalarBlockLayout = VK_TRUE, .bufferDeviceAddress = g_vk.bda, .pNext = &f13};
     VkPhysicalDeviceVulkan11Features f11 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
                                             .storageBuffer16BitAccess = VK_TRUE, .pNext = &f12};
@@ -565,7 +576,7 @@ static void create_device(void) {
     VK_CHECK(vkCreateCommandPool(g_vk.dev, &pi, NULL, &g_vk.pool));
 
     // pipeline cache: cache/vk_pipelines.bin (written by vk_pipeline_cache_save), used only with its tag
-    // (vk_pipelines.bin.tag: this build, the translator, the GPU and its driver - another one starts it empty)
+    // (vk_pipelines.bin.tag: the translator, the GPU and its driver - another one starts it empty)
     char tag[512];
     pipeline_cache_tag(tag, sizeof tag);
     size_t sz = 0;
@@ -589,7 +600,8 @@ static void create_device(void) {
     free(data);
     if (pc.initialDataSize) LOG("[vk] pipeline cache: loaded %zu bytes\n", pc.initialDataSize);
     pcache_saved = pc.initialDataSize;
-    pthread_t t;  // (kept every few minutes while it grows, not only at a clean exit)
+    pcache_saved_ns = SDL_GetTicksNS();
+    pthread_t t;  // (kept while it grows, not only at a clean exit)
     pthread_create(&t, NULL, pipeline_cache_saver, NULL);
     pthread_detach(t);
 }
@@ -606,6 +618,7 @@ void vk_pipeline_cache_save(void) {
             pipeline_cache_tag(tag, sizeof tag);
             if (!shader_cache_tag_ok(PCACHE_TAG, tag)) shader_cache_tag_write(PCACHE_TAG, tag);
             pcache_saved = sz;
+            pcache_saved_ns = SDL_GetTicksNS();
             LOG("[vk] pipeline cache: saved %zu bytes\n", sz);
         }
         free(data);
@@ -1067,6 +1080,8 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         OutScale os;
         output_scale(dw, dh, widescreen_allowed(), SDL_GetTicksNS() / 1e9, game_ms, win_ms, &os);
         double sx = os.sx, sy = os.sy, vx = os.vx, vy = os.vy, vw = os.vw, vh = os.vh, shape = os.shape;
+        extern void temporal_note_output(uint32_t display_w);  // (the camera jitter's phase count, vulkan/exec.c)
+        temporal_note_output((uint32_t)vw);
         output_scale_log((unsigned long long)frame, dw, dh, &os);  // (diagnostics: [scale] on a change)
         // interiors / dungeons: their 16:9 centre, or the part inside a room wider than one screen
         extern void widescreen_present_crop(uint64_t, double, float *, double *, double *, double *, double *);
