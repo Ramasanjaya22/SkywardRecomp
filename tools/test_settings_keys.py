@@ -26,6 +26,7 @@ FROZEN_KEYS = (
     "cheat_rupees", "cheat_hookshot", "no_buff_drops", "diff_damage",
     "diff_ohko", "diff_hero", "walk_speed", "walk_speed_dungeons",
     "timer_position", "timer", "livesplit", "livesplit_host",
+    "tunic", "hearts", "hair", "shield", "skin", "leaves", "grass", "sand",
     "enemy_colours", "screen_filter", "rando_seed", "rando_options",
 )
 
@@ -39,8 +40,8 @@ FROZEN_VALUES = {
     "antialias": ("smaa", "off"),
     "shadows": ("high", "default"),
     "ambient_occlusion": ("high", "off", "switch"),
-    "resolution": ("auto",),
-    "res_name": ("%dx", "dynamic", "75%", "50%", "25%", "match"),
+    # "resolution" writes "auto" inline, then values returned by res_name().
+    "resolution": ("auto", "%dx", "dynamic", "75%", "50%", "25%", "match"),
     "menu_confirm": ("controller", "game"),
     "timer_position": ("right", "left"),
     "g_language_codes": (
@@ -59,8 +60,8 @@ TABLES = frozenset((
 ))
 
 
-def string_literals(text):
-    """C string literal contents, in source order."""
+def literals_with_positions(text):
+    """C string literal (start offset, contents) pairs, in source order."""
     result = []
     i = 0
     while i < len(text):
@@ -72,24 +73,53 @@ def string_literals(text):
             if text[j] == BS:
                 j += 1
             j += 1
-        result.append(text[i + 1:j])
+        result.append((i, text[i + 1:j]))
         i = j + 1
     return result
 
 
+def string_literals(text):
+    """C string literal contents, in source order."""
+    return [literal for _, literal in literals_with_positions(text)]
+
+
+def colour_keys(src):
+    """Keys written by the cosmetic-colour loop (cols[] in settings.c)."""
+    marker = "struct { const char *key;"
+    start = src.find(marker)
+    assert start >= 0, "missing cosmetic colour keys"
+    brace = src.find("{", start)
+    end = src.find("};", brace)
+    assert brace >= 0 and end > brace, "malformed cosmetic colour keys"
+    return string_literals(src[brace:end])
+
+
 def saved_keys(src):
-    save = src[src.index("void settings_save"):]
-    keys = []
-    for literal in string_literals(save):
+    save_at = src.index("void settings_save")
+    save = src[save_at:]
+    entries = []
+    for pos, literal in literals_with_positions(save):
         for line in literal.split(BS + "n"):
             line = line.strip()
             if " = " not in line:
                 continue
             key = line.split(" = ", 1)[0].strip()
             if (key and key[0].isalpha()
-                    and all(c.isalnum() or c == "_" for c in key)
-                    and key not in keys):
-                keys.append(key)
+                    and all(c.isalnum() or c == "_" for c in key)):
+                entries.append((pos, key))
+
+    # The cols[] loop writes these keys between the timer and enemy_colours
+    # blocks. Sort by source position so they land in the right write order.
+    table = src.find("struct { const char *key;", save_at)
+    assert table >= 0, "missing cosmetic colour keys"
+    for key in colour_keys(src):
+        entries.append((table - save_at, key))
+
+    entries.sort(key=lambda entry: entry[0])  # stable: keep cols[] order
+    keys = []
+    for _, key in entries:
+        if key not in keys:
+            keys.append(key)
     return keys
 
 
@@ -121,6 +151,15 @@ def res_name_values(src):
     return string_literals(src[brace:end])
 
 
+def actual_values(src, name):
+    if name in TABLES:
+        return table_values(src, name)
+    values = fprintf_values(src, name)
+    if name == "resolution":
+        return values + res_name_values(src)
+    return values
+
+
 def check_values(label, actual, frozen):
     assert len(actual) >= len(frozen), (
         label + ": value removed: " + str(actual) + " (frozen " + str(frozen) + ")"
@@ -142,12 +181,7 @@ def main():
     assert order == list(FROZEN_KEYS), "ini keys reordered: " + str(order)
 
     for name, frozen in FROZEN_VALUES.items():
-        if name in TABLES:
-            actual = table_values(src, name)
-        elif name == "res_name":
-            actual = res_name_values(src)
-        else:
-            actual = fprintf_values(src, name)
+        actual = actual_values(src, name)
         check_values(name, actual, frozen)
 
     print("OK: %d ini keys and %d saved value lists unchanged"

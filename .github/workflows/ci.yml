@@ -34,6 +34,8 @@ jobs:
           python3 tools/test_gamebuild_resume.py
       - name: Save I/O regression tests
         run: python3 tools/test_save.py
+      - name: Settings keys frozen
+        run: python3 tools/test_settings_keys.py
       - name: Movie extractor lifecycle and audio regression
         run: |
           clang -std=gnu11 -O1 tools/test_movie_extractor.c $(pkg-config --cflags --libs libavformat libavcodec libavutil libswscale) -pthread -o build/test-movie-extractor
@@ -149,6 +151,8 @@ jobs:
           python3 tools/test_gamebuild_resume.py
       - name: Save I/O regression tests
         run: python3 tools/test_save.py
+      - name: Settings keys frozen
+        run: python3 tools/test_settings_keys.py
       - name: Movie extractor lifecycle and audio regression
         run: |
           clang -std=gnu11 -O1 -I"$(brew --prefix ffmpeg)/include" -L"$(brew --prefix ffmpeg)/lib" tools/test_movie_extractor.c -lavformat -lavcodec -lavutil -lswscale -pthread -o build/test-movie-extractor
@@ -161,6 +165,8 @@ jobs:
           build/test-condvar
       - name: Settings regression tests
         run: python3 tools/test_settings.py
+      - name: Settings keys frozen
+        run: python3 tools/test_settings_keys.py
       - name: Game-files delete guard (links, outside the data folder)
         run: python3 tools/test_delete_guard.py
       - name: Game-file detection (the right .nsp among unrelated, update, DLC and damaged files)
@@ -241,6 +247,8 @@ jobs:
           python3 tools/test_windows_processes.py
       - name: Save I/O regression tests
         run: python3 tools/test_save.py
+      - name: Settings keys frozen
+        run: python3 tools/test_settings_keys.py
       - name: Game-files delete guard (junctions, outside the data folder)
         run: python3 tools/test_delete_guard.py
       - name: Widescreen guard (no ultrawide without aspect sites)
