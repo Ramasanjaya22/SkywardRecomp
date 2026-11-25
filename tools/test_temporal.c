@@ -176,6 +176,16 @@ int main(void) {
     assert(!temporal_camera_cut(v0, v0) && !temporal_camera_cut(v0, v59) && !temporal_camera_cut(v0, vmove));
     assert(temporal_camera_cut(v0, v61) && temporal_camera_cut(v0, v90));
 
+    // Static scene under jitter: motion is j_prev - j_cur, so unjittering must give zero.
+{
+    const float j_cur[2] = { 0.25f, -0.25f };
+    const float j_prev[2] = { -0.25f, 0.25f };
+    const float motion[2] = { j_prev[0] - j_cur[0], j_prev[1] - j_cur[1] };
+    float clean[2];
+    temporal_unjitter_motion(motion, j_cur[0], j_cur[1], j_prev[0], j_prev[1], clean);
+    assert(fabsf(clean[0]) < 1e-6f && fabsf(clean[1]) < 1e-6f);
+}
+
     printf("test_temporal: ok\n");
     return 0;
 }

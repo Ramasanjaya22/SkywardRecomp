@@ -113,11 +113,12 @@ jobs:
         run: python3 tools/test_vulkan_sync_errors.py
       - name: Shader translator instruction semantics
         run: tools/test_translate_ops.sh
-      - name: SkywardRecomp tests (shader records, shadows, temporal inputs, ZR tap, texture packs)
+      - name: SkywardRecomp tests (shader records, shadows, temporal inputs and chains, ZR tap, texture packs)
         run: |
           python3 tools/test_shader_rec.py
           python3 tools/test_shadow_map.py
           python3 tools/test_temporal.py
+          python3 tools/test_temporal_chain.py
           python3 tools/test_zr_tap.py
           make test_texpack
       # (the same programs as vertex / fragment / compute GLSL -> glslc -> spirv-val, Vulkan 1.3; the shipped shader

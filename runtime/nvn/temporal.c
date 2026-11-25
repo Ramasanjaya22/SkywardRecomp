@@ -113,3 +113,11 @@ bool temporal_camera_cut(const float view_prev[16], const float view_cur[16]) {
     if (la < 1e-12 || lb < 1e-12) return false;
     return (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (la * lb) < 0.5;  // cos 60 degrees
 }
+
+// Motion is previous - current, so a static scene shows j_prev - j_cur; unjitter adds j_cur - j_prev.
+void temporal_unjitter_motion(const float motion_px[2], float jx_cur, float jy_cur,
+                              float jx_prev, float jy_prev, float out[2])
+{
+    out[0] = motion_px[0] + jx_cur - jx_prev;
+    out[1] = motion_px[1] + jy_cur - jy_prev;
+}

@@ -48,3 +48,7 @@ void temporal_motion_px(const double m[16], double vw, double vh, bool flip_y, d
 // A camera cut: the view direction turned more than 60 degrees since the last frame. Only the turn is checked, so a
 // camera that moves without turning is not a cut here. view: row-major view matrices (u[0..15]).
 bool temporal_camera_cut(const float view_prev[16], const float view_cur[16]);
+
+// The motion of a pixel with this frame's and the previous frame's jitter taken out, in render pixels.
+void temporal_unjitter_motion(const float motion_px[2], float jx_cur, float jy_cur,
+                              float jx_prev, float jy_prev, float out[2]);
