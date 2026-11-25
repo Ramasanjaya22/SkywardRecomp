@@ -8,6 +8,7 @@
 #include "paths.h"
 #include "platform.h"
 #include "save_backup.h"
+#include "save_emu.h"
 
 // (the platform file's crash handling, never reached here)
 void rt_crash_explain(char *out, size_t n, const char *log_path) { (void)log_path; if (n) out[0] = 0; }
@@ -41,6 +42,11 @@ int main(int argc, char **argv) {
     } else if (!strcmp(cmd, "update") && argc > 3) {
         bool ok = save_backup_on_update(root, argv[3], name, sizeof name);
         printf("UPDATE %d %s|\n", ok, name);
+    } else if (!strcmp(cmd, "emu-list")) {
+        SaveEmuHit hits[64];
+        int n = save_emu_find(hits, 64);
+        for (int i = 0; i < n; ++i)
+            printf("EMU %s|%s|%s|%s|%lld\n", hits[i].emu, hits[i].profile, hits[i].display, hits[i].path, hits[i].when);
     } else {
         return 2;
     }
