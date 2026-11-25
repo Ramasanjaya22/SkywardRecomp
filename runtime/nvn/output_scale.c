@@ -518,3 +518,9 @@ void output_scale(double dw, double dh, bool reshape_allowed, double now, double
     }
     o->vx = (dw - o->vw) / 2; o->vy = (dh - o->vh) / 2;
 }
+
+void output_window_crop(const int wc[4], uint32_t w, uint32_t h, float crop[4]) {
+    if (wc[2] <= 0 || wc[3] <= 0 || !w || !h) return;
+    float x = (float)wc[0] / w, y = (float)wc[1] / h, cw = (float)wc[2] / w, ch = (float)wc[3] / h;
+    crop[0] = x + crop[0] * cw, crop[1] = y + crop[1] * ch, crop[2] *= cw, crop[3] *= ch;
+}

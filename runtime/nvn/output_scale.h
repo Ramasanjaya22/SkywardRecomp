@@ -22,6 +22,10 @@ float output_scale_ao(float al);
 // The game's shadow map: is this texture it, and its scale (the Switch's size or twice it, at any render scale).
 bool output_scale_is_shadow_map(uint32_t target, uint32_t samples, uint32_t w, uint32_t h, uint32_t format, bool render_target);
 float output_scale_shadow(void);
+// The part of a w x h game image its window's crop shows (nvnWindowSetCrop: x, y, w, h in texels; no size = all),
+// applied to `crop` (uv origin and size within the image, widescreen_present_crop): SS HD's own dynamic resolution
+// draws into the top-left part (1600x900 of 1920x1080) and lets the crop scale it to the screen.
+void output_window_crop(const int wc[4], uint32_t w, uint32_t h, float crop[4]);
 // (diagnostics) "[scale] frame f drawable WxH -> render scale sx x sy" whenever the render scale or the window changes
 void output_scale_log(unsigned long long frame, double dw, double dh, const OutScale *o);  // the frame rate Dynamic holds (60 out of reach), else 0
 
