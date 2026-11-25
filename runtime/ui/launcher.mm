@@ -25,6 +25,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"  // (SetKeyOwner)
 #include "option_rows.h"
+#include "palette.h"
 #include "extract_current.h"
 #include "osk.h"
 #include "pad_nav.h"
@@ -1086,7 +1087,7 @@ static int onedrive_notice(float s, float w, bool ready) {
     }
     double gb = g_od_gb;
     if (gb < 0) return 0;
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.03f, 0.04f, 0.05f, 0.86f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, PAL_PANEL_DARK_V4(0.86f));
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14 * s);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24 * s, 18 * s));
     ImGui::BeginChild("##onedrive", ImVec2(w, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeY,
@@ -1094,8 +1095,8 @@ static int onedrive_notice(float s, float w, bool ready) {
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
     ImGui::PushTextWrapPos(0);
-    ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "!  This folder is synced by OneDrive");
-    ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), "All game files (about %.0f GB) will be uploaded to your OneDrive.",
+    ImGui::TextColored(PAL_WARN_V4, "!  This folder is synced by OneDrive");
+    ImGui::TextColored(PAL_TEXT2_V4, "All game files (about %.0f GB) will be uploaded to your OneDrive.",
                        fmax(1.0, gb));
     ImGui::PopTextWrapPos();
     ImGui::Dummy(ImVec2(0, 4 * s));
@@ -1325,7 +1326,7 @@ static bool aspect_prompt(float s) {
     ImGui::SetNextWindowSize(ImVec2(fminf(ds.x * 0.8f, 760 * s), 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(36 * s, 28 * s));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 16 * s);
-    ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.03f, 0.04f, 0.05f, 0.94f));
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, PAL_PANEL_DARK_V4(0.94f));
     bool open = ImGui::BeginPopupModal("##aspect", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                                        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize);
     ImGui::PopStyleColor();
@@ -1364,7 +1365,7 @@ static bool menu_tip(float s) {
     ImGui::SetNextWindowSize(ImVec2(fminf(ds.x * 0.8f, 760 * s), 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(36 * s, 28 * s));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 16 * s);
-    ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.03f, 0.04f, 0.05f, 0.94f));
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, PAL_PANEL_DARK_V4(0.94f));
     bool open = ImGui::BeginPopupModal("##menutip", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                                        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize);
     ImGui::PopStyleColor();
@@ -1416,10 +1417,10 @@ static void draw_folder_example(float w) {
     w = fminf(w, fs * 15);
     float h = folder_example_height();
     ImVec2 a = ImGui::GetCursorScreenPos(), b(a.x + w, a.y + h);
-    const ImU32 body = IM_COL32(24, 28, 27, 255), title = IM_COL32(40, 45, 43, 255), edge = IM_COL32(255, 255, 255, 38),
-                text = IM_COL32(220, 216, 205, 255), dim = IM_COL32(150, 152, 144, 255),
-                gold = IM_COL32(236, 194, 84, 255), gold_tab = IM_COL32(200, 160, 62, 255),
-                paper = IM_COL32(226, 224, 216, 255), fold = IM_COL32(160, 158, 150, 255),
+    const ImU32 body = IM_COL32(14, 32, 66, 255), title = IM_COL32(26, 52, 100, 255), edge = IM_COL32(255, 255, 255, 38),
+                text = PAL_TEXT, dim = PAL_DIM,
+                gold = PAL_ACCENT, gold_tab = IM_COL32(90, 170, 235, 255),
+                paper = IM_COL32(222, 234, 250, 255), fold = IM_COL32(140, 165, 205, 255),
                 select = IM_COL32(32, 84, 176, 255), text_sel = IM_COL32(250, 250, 255, 255);
     dl->AddRectFilled(ImVec2(a.x, a.y + fs * 0.12f), ImVec2(b.x, b.y + fs * 0.22f), IM_COL32(0, 0, 0, 70), r);  // shadow
     dl->AddRectFilled(a, b, body, r);
@@ -1427,7 +1428,7 @@ static void draw_folder_example(float w) {
     dl->AddLine(ImVec2(a.x, a.y + bar), ImVec2(b.x, a.y + bar), IM_COL32(0, 0, 0, 90), 1.0f);
     dl->AddRect(a, b, edge, r, 0, 1.0f);
     // the title bar: three dots on the left, the folder it's in (a typical one) in the middle
-    static const ImU32 dots[] = {IM_COL32(255, 95, 87, 255), IM_COL32(254, 188, 46, 255), IM_COL32(40, 200, 64, 255)};
+    static const ImU32 dots[] = {IM_COL32(120, 175, 235, 255), IM_COL32(120, 175, 235, 255), IM_COL32(120, 175, 235, 255)};
     float dr = fs * 0.21f, cy = a.y + bar * 0.5f;
     for (int i = 0; i < 3; i++) dl->AddCircleFilled(ImVec2(a.x + fs * 0.65f + i * fs * 0.62f, cy), dr, dots[i]);
     const char *t = "Documents";
@@ -1506,8 +1507,8 @@ static void sparkle(ImDrawList *dl, ImVec2 c, float r, float k, float spin) {
         float a = spin + i * 3.14159265f / 4, rr = (i & 1 ? r * 0.22f : r) * k;
         pts[i] = ImVec2(c.x + cosf(a) * rr, c.y + sinf(a) * rr);
     }
-    dl->AddCircleFilled(c, r * 0.55f * k, IM_COL32(255, 230, 150, (int)(60 * k)));  // soft glow
-    dl->AddConvexPolyFilled(pts, 8, IM_COL32(255, 248, 215, (int)(235 * k)));
+    dl->AddCircleFilled(c, r * 0.55f * k, IM_COL32(190, 230, 255, (int)(60 * k)));  // soft glow
+    dl->AddConvexPolyFilled(pts, 8, IM_COL32(235, 248, 255, (int)(235 * k)));
 }
 
 // split .. split_end: that part of the label in its own colour (PLAY's choice: Vanilla in vanilla cream)
@@ -1526,12 +1527,12 @@ static bool menu_item(const char *label, bool enabled, bool *hovered = NULL, con
     bool hot = ImGui::IsItemFocused() || ImGui::IsItemHovered();
     ImGui::PopID();
     if (hovered) *hovered = hot;
-    ImU32 col = !enabled ? IM_COL32(170, 175, 200, 140) : hot ? IM_COL32(255, 214, 64, 255) : IM_COL32(250, 250, 255, 255);
+    ImU32 col = !enabled ? IM_COL32(170, 175, 200, 140) : hot ? PAL_ACCENT : IM_COL32(250, 250, 255, 255);
     ImDrawList *dl = ImGui::GetWindowDrawList();
     if (hot && enabled) {  // a shadow band behind the item (like the version corner's), feathered, with a warm glow
         float x0 = ImGui::GetWindowPos().x, x1 = at.x + sz.x * 0.75f, x2 = at.x + sz.x + sz.y * 3.5f;
         float f = sz.y * 0.22f, y0 = at.y - f * 0.4f, y1 = y0 + f, y3 = at.y + sz.y + f * 0.2f, y2 = y3 - f;
-        ImU32 c = IM_COL32(6, 10, 34, 150), g = IM_COL32(255, 190, 80, 34), n = IM_COL32(6, 10, 34, 0), ng = IM_COL32(255, 190, 80, 0);
+        ImU32 c = IM_COL32(6, 10, 34, 150), g = IM_COL32(120, 200, 255, 34), n = IM_COL32(6, 10, 34, 0), ng = IM_COL32(120, 200, 255, 0);
         for (int pass = 0; pass < 2; pass++) {  // dark band, then the glow over it
             ImU32 a = pass ? g : c, z = pass ? ng : n;
             dl->AddRectFilledMultiColor(ImVec2(x0, y1), ImVec2(x1, y2), a, a, a, a);
@@ -1542,7 +1543,7 @@ static bool menu_item(const char *label, bool enabled, bool *hovered = NULL, con
             dl->AddRectFilledMultiColor(ImVec2(x1, y2), ImVec2(x2, y3), a, z, z, z);
         }
     }
-    ImU32 col_b = hot && enabled ? IM_COL32(255, 160, 50, 255) : col;
+    ImU32 col_b = hot && enabled ? IM_COL32(90, 170, 245, 255) : col;
     if (split && enabled) {
         std::string head(label, split - label);
         text_fx(dl, ImGui::GetFont(), ImGui::GetFontSize(), at, col, col_b, head.c_str(), sz.y * 0.05f);
@@ -1598,7 +1599,7 @@ static void draw_home_chip(const char *text, bool ready, float s) {
     float pad = 12 * s, h = 28 * s;
     float w = ImGui::CalcTextSize(text).x + 2 * pad;
     ImGui::GetWindowDrawList()->AddRectFilled(at, ImVec2(at.x + w, at.y + h),
-                                              ready ? IM_COL32(44, 126, 82, 230) : IM_COL32(126, 80, 38, 230),
+                                              ready ? IM_COL32(32, 120, 190, 235) : IM_COL32(40, 64, 104, 230),
                                               h * 0.5f);
     ImGui::SetCursorScreenPos(ImVec2(at.x + pad, at.y + (h - ImGui::GetFontSize()) * 0.5f));
     ImGui::TextColored(ImVec4(1, 1, 1, 1), "%s", text);
@@ -1616,11 +1617,11 @@ static bool draw_home_primary(const char *label, float s, bool *hovered, bool en
     ImVec2 m = ImGui::GetIO().MousePos;
     bool hot = enabled && m.x >= at.x && m.x <= at.x + size.x && m.y >= at.y && m.y <= at.y + size.y;
     ImGui::GetWindowDrawList()->AddRectFilled(at, ImVec2(at.x + size.x, at.y + size.y),
-                                              !enabled ? IM_COL32(60, 66, 80, 200)
-                                              : hot ? IM_COL32(66, 136, 204, 245) : IM_COL32(38, 90, 148, 235),
+                                              !enabled ? PAL_SKY_OFF
+                                              : hot ? PAL_SKY_HI : PAL_SKY,
                                               12 * s);
     ImGui::GetWindowDrawList()->AddRect(at, ImVec2(at.x + size.x, at.y + size.y),
-                                        IM_COL32(255, 220, 140, 170), 12 * s, 0, 2 * s);
+                                        PAL_ACCENT_A(170), 12 * s, 0, 2 * s);
     ImGui::SetCursorScreenPos(ImVec2(at.x + pad, at.y + (h - ImGui::GetFontSize()) * 0.5f));
     bool clicked = menu_item(label, enabled, hovered);
     ImGui::SetCursorScreenPos(ImVec2(at.x, at.y + size.y));
@@ -1637,7 +1638,7 @@ static int draw_home_seed(float s, float center_x, const std::vector<std::string
     ImVec2 size = ImGui::CalcTextSize(line.c_str());
     ImVec2 at(center_x - size.x * 0.5f, ImGui::GetCursorScreenPos().y);
     ImGui::SetCursorScreenPos(at);
-    ImGui::TextColored(ImVec4(0.86f, 0.88f, 0.94f, 1), "%s", line.c_str());
+    ImGui::TextColored(PAL_TEXT2_V4, "%s", line.c_str());
     ImVec2 lsz = ImGui::CalcTextSize(lt), rsz = ImGui::CalcTextSize(rt);
     float lx = at.x, rx = at.x + size.x - rsz.x, pad = 10 * s;
     ImVec2 m = ImGui::GetIO().MousePos;
@@ -1749,31 +1750,31 @@ static void draw_busy_overlay(ImVec2 ds, const std::string &job, bool test_busy,
     float ph = bar_y + 24 * sc + 26 * sc + line_h + (nnotes ? 14 * sc + nnotes * line_h : 0) + 40 * sc +
                (preparing ? line_h + 28 * sc : recompiling ? 54 * sc : 0);  // (Skip / Cancel)
     ImVec2 a(o.x + (ds.x - pw) * 0.5f, o.y + (ds.y - ph) * 0.5f), b(a.x + pw, a.y + ph);
-    fg->AddRectFilled(a, b, IM_COL32(15, 23, 20, 250), 14 * sc);
-    fg->AddRect(a, b, IM_COL32(236, 194, 84, 140), 14 * sc, 0, 1.5f * sc);
-    fg->AddText(g_font_menu, tfs, ImVec2((a.x + b.x - ts.x) * 0.5f, a.y + 36 * sc), IM_COL32(236, 194, 84, 255), title);
+    fg->AddRectFilled(a, b, PAL_NAVY, 14 * sc);
+    fg->AddRect(a, b, PAL_ACCENT_A(140), 14 * sc, 0, 1.5f * sc);
+    fg->AddText(g_font_menu, tfs, ImVec2((a.x + b.x - ts.x) * 0.5f, a.y + 36 * sc), PAL_ACCENT, title);
     ImVec2 ba(a.x + 48 * sc, a.y + bar_y), bb(b.x - 48 * sc, a.y + bar_y + 24 * sc);
     fg->AddRectFilled(ba, bb, IM_COL32(255, 255, 255, 25), 12 * sc);
-    if (f > 0) fg->AddRectFilled(ba, ImVec2(ba.x + (bb.x - ba.x) * f, bb.y), IM_COL32(236, 194, 84, 255), 12 * sc);
+    if (f > 0) fg->AddRectFilled(ba, ImVec2(ba.x + (bb.x - ba.x) * f, bb.y), PAL_ACCENT, 12 * sc);
     char line[200];
     if (preparing) snprintf(line, sizeof line, "%d%%", (int)(f * 100));  // (the title says it)
     else snprintf(line, sizeof line, "%s   %d%%", test_busy ? "Setting up the game files..." : job.c_str(),
                   (int)(f * 100));
     ImVec2 ls = g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, line);
-    fg->AddText(g_font_small, sfs, ImVec2((a.x + b.x - ls.x) * 0.5f, bb.y + 26 * sc), IM_COL32(220, 216, 205, 255), line);
+    fg->AddText(g_font_small, sfs, ImVec2((a.x + b.x - ls.x) * 0.5f, bb.y + 26 * sc), PAL_TEXT, line);
     for (int i = 0; i < nnotes; i++) {
         ImVec2 ns = g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, notes[i]);
         fg->AddText(g_font_small, sfs, ImVec2((a.x + b.x - ns.x) * 0.5f, bb.y + 26 * sc + (i + 1) * line_h + 14 * sc),
-                    IM_COL32(150, 148, 140, 255), notes[i]);
+                    PAL_DIM, notes[i]);
     }
     if (recompiling) {  // Shader preparation has its own Skip action; cancellation only stops the game-code build.
         ImVec2 ca((a.x + b.x) * 0.5f - 150 * sc, b.y - 66 * sc), cb(ca.x + 300 * sc, ca.y + 44 * sc);
         bool hover = !g_cancel_build && ImGui::IsMouseHoveringRect(ca, cb, false);
-        fg->AddRectFilled(ca, cb, hover ? IM_COL32(80, 80, 55, 255) : IM_COL32(45, 55, 45, 255), 8 * sc);
+        fg->AddRectFilled(ca, cb, hover ? IM_COL32(40, 90, 160, 255) : IM_COL32(24, 52, 100, 255), 8 * sc);
         const char *cancel = g_cancel_build ? "Cancelling..." : "Cancel";  // (B / Circle and Esc too)
         ImVec2 cs = g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, cancel);
         fg->AddText(g_font_small, sfs, ImVec2((ca.x + cb.x - cs.x) * 0.5f, (ca.y + cb.y - cs.y) * 0.5f),
-                    IM_COL32(236, 194, 84, 255), cancel);
+                    PAL_ACCENT, cancel);
         if ((hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) ||
             ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
             g_cancel_build = true;
@@ -1784,9 +1785,9 @@ static void draw_busy_overlay(ImVec2 ds, const std::string &job, bool test_busy,
         ImVec2 ka((a.x + b.x - ks.x) * 0.5f - 22 * sc, b.y - 40 * sc - line_h - 10 * sc);
         ImVec2 kb(ka.x + ks.x + 44 * sc, ka.y + line_h + 16 * sc);
         bool hover = !g_prep_skip && !g_prep_skip_ask && ImGui::IsMouseHoveringRect(ka, kb, false);
-        fg->AddRect(ka, kb, IM_COL32(236, 194, 84, hover ? 255 : 140), 8 * sc, 0, 1.5f * sc);
+        fg->AddRect(ka, kb, PAL_ACCENT_A(hover ? 255 : 140), 8 * sc, 0, 1.5f * sc);
         fg->AddText(g_font_small, sfs, ImVec2(ka.x + 22 * sc, ka.y + 8 * sc),
-                    hover ? IM_COL32(236, 194, 84, 255) : IM_COL32(220, 216, 205, 255), sk);
+                    hover ? PAL_ACCENT : PAL_TEXT, sk);
         if (!g_prep_skip && !g_prep_skip_ask &&
             ((hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) ||
              ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
@@ -1801,17 +1802,17 @@ static void draw_busy_overlay(ImVec2 ds, const std::string &job, bool test_busy,
         float qw = fminf(fmaxf(qs.x, 2 * bw + gap) + 96 * sc, ds.x - 32 * sc), qh = 40 * sc + line_h + 32 * sc + bh + 36 * sc;
         fg->AddRectFilled(a, b, IM_COL32(0, 0, 0, 120), 14 * sc);  // (the bar behind it dimmed)
         ImVec2 qa(o.x + (ds.x - qw) * 0.5f, o.y + (ds.y - qh) * 0.5f), qb(qa.x + qw, qa.y + qh);
-        fg->AddRectFilled(qa, qb, IM_COL32(15, 23, 20, 255), 14 * sc);
-        fg->AddRect(qa, qb, IM_COL32(236, 194, 84, 200), 14 * sc, 0, 1.5f * sc);
-        fg->AddText(g_font_small, sfs, ImVec2((qa.x + qb.x - qs.x) * 0.5f, qa.y + 40 * sc), IM_COL32(236, 232, 220, 255), q);
+        fg->AddRectFilled(qa, qb, PAL_NAVY, 14 * sc);
+        fg->AddRect(qa, qb, PAL_ACCENT_A(200), 14 * sc, 0, 1.5f * sc);
+        fg->AddText(g_font_small, sfs, ImVec2((qa.x + qb.x - qs.x) * 0.5f, qa.y + 40 * sc), PAL_TEXT, q);
         float by = qb.y - 36 * sc - bh, bx = (qa.x + qb.x) * 0.5f;
         ImVec2 ya(bx - gap * 0.5f - bw, by), yb(bx - gap * 0.5f, by + bh), na(bx + gap * 0.5f, by), nb(bx + gap * 0.5f + bw, by + bh);
         bool hy = ImGui::IsMouseHoveringRect(ya, yb, false), hn = ImGui::IsMouseHoveringRect(na, nb, false);
-        fg->AddRect(ya, yb, IM_COL32(236, 194, 84, hy ? 255 : 140), 8 * sc, 0, 1.5f * sc);
-        fg->AddRectFilled(na, nb, IM_COL32(236, 194, 84, hn ? 255 : 210), 8 * sc);  // (waiting: the default)
+        fg->AddRect(ya, yb, PAL_ACCENT_A(hy ? 255 : 140), 8 * sc, 0, 1.5f * sc);
+        fg->AddRectFilled(na, nb, PAL_ACCENT_A(hn ? 255 : 210), 8 * sc);  // (waiting: the default)
         fg->AddText(g_font_small, sfs, ImVec2((ya.x + yb.x - ys.x) * 0.5f, ya.y + 10 * sc),
-                    hy ? IM_COL32(236, 194, 84, 255) : IM_COL32(220, 216, 205, 255), yes);
-        fg->AddText(g_font_small, sfs, ImVec2((na.x + nb.x - ns.x) * 0.5f, na.y + 10 * sc), IM_COL32(15, 23, 20, 255), no);
+                    hy ? PAL_ACCENT : PAL_TEXT, yes);
+        fg->AddText(g_font_small, sfs, ImVec2((na.x + nb.x - ns.x) * 0.5f, na.y + 10 * sc), PAL_NAVY, no);
         bool click = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
         // A / Enter: the highlighted default (wait); B / Esc: also wait; Yes only by clicking it or Y / Space
         if ((hy && click) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || ImGui::IsKeyPressed(ImGuiKey_Space, false))
@@ -1885,7 +1886,7 @@ static void data_folder_popup(float s) {
     ImVec2 bw(240 * sc, 0);
     ImGui::PushFont(g_font_small);
     ImGui::PushFont(g_font_menu);
-    ImGui::TextColored(ImVec4(0.93f, 0.76f, 0.33f, 1), g_df == DF_MOVING ? "Moving your data" : "Data folder");
+    ImGui::TextColored(PAL_ACCENT_V4, g_df == DF_MOVING ? "Moving your data" : "Data folder");
     ImGui::PopFont();
     ImGui::PushTextWrapPos(900 * sc);
     bool close = false, esc = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
@@ -1897,7 +1898,7 @@ static void data_folder_popup(float s) {
     };
     if (g_df == DF_ASK) {
         ImGui::TextDisabled("%s", t.path);
-        if (g_df_onedrive) ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "This folder is synced by OneDrive too.");
+        if (g_df_onedrive) ImGui::TextColored(PAL_WARN_V4, "This folder is synced by OneDrive too.");
         ImGui::Spacing();
         if (t.refuse[0]) {
             ImGui::TextColored(red, "%s", t.refuse);
@@ -1905,7 +1906,7 @@ static void data_folder_popup(float s) {
             close = ImGui::Button("OK", bw) || esc;
         } else if (t.has_data && g_df_prev) {
             ImGui::Text("Use existing data in this folder (saves, game files, build cache)?");
-            ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "Use keeps your data in %s. Don't delete that folder.", t.path);
+            ImGui::TextColored(PAL_WARN_V4, "Use keeps your data in %s. Don't delete that folder.", t.path);
             ImGui::Spacing();
             if (ImGui::Button("Use existing data", bw)) use_it();
             ImGui::SameLine();
@@ -1992,14 +1993,14 @@ static void prelaunch_tab(float sc) {
     if (ImGui::Button("Delete game files") || shot_del) ImGui::OpenPopup("##delfiles"), shot_del = false;  // (test: :askdelete)
     if (ImGui::BeginPopupModal("##delfiles", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
         ImGui::PushFont(g_font_menu);
-        ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "Are you sure?");
+        ImGui::TextColored(PAL_WARN_V4, "Are you sure?");
         ImGui::PopFont();
         ImGui::Text("This deletes SkywardRecomp's copy of the game files (%.1f GB).", gb);
         ImGui::TextDisabled("Saves, seeds and settings are kept. Your own game files aren't touched.");
         if (rt_dev_mode()) {  // (a source checkout: the files are the project's own extracted/)
             bool abs = !g_root.empty() && (g_root[0] == '/' || (g_root.size() > 1 && g_root[1] == ':'));
             std::string where = abs ? g_root : std::string(rt_data_root()) + "/" + g_root;
-            ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "Dev checkout: this is %s", where.c_str());
+            ImGui::TextColored(PAL_ERR_V4, "Dev checkout: this is %s", where.c_str());
         }
         ImGui::Spacing();
         if (ImGui::Button("Delete", ImVec2(220 * sc, 0))) {
@@ -2123,12 +2124,12 @@ static StatusCheckRow status_check_configuration()
 static ImVec4 status_check_color(StatusCheckLevel level)
 {
     if (level == StatusCheckLevel::Ok)
-        return ImVec4(0.45f, 0.92f, 0.55f, 1);
+        return PAL_OK_V4;
     if (level == StatusCheckLevel::Warning)
-        return ImVec4(1, 0.72f, 0.35f, 1);
+        return PAL_WARN_V4;
     if (level == StatusCheckLevel::Neutral)
-        return ImVec4(0.62f, 0.64f, 0.70f, 1);
-    return ImVec4(1, 0.35f, 0.3f, 1);
+        return PAL_DIM_V4;
+    return PAL_ERR_V4;
 }
 
 // Bottom-anchored at `bottom` (window y) so the headline, 4 rows and the hint never run off the screen.
@@ -2174,7 +2175,7 @@ static void draw_status_checklist(const std::string &status, bool busy, float x0
             // The Switch font has no checkmark glyph; draw one with lines.
             const ImVec2 p = ImGui::GetCursorScreenPos();
             const float u = ImGui::GetTextLineHeight();
-            const ImU32 green = IM_COL32(140, 230, 140, 255);
+            const ImU32 green = PAL_OK;
             ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x, p.y + u * 0.55f),
                                                 ImVec2(p.x + u * 0.22f, p.y + u * 0.82f), green, 2);
             ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x + u * 0.22f, p.y + u * 0.82f),
@@ -2186,7 +2187,7 @@ static void draw_status_checklist(const std::string &status, bool busy, float x0
                                : row.level == StatusCheckLevel::Warning ? "!" : "-");
             ImGui::SameLine();
         }
-        ImGui::TextColored(ImVec4(0.87f, 0.90f, 1, 1), "%s", labels[i]);
+        ImGui::TextColored(PAL_TEXT2_V4, "%s", labels[i]);
         ImGui::SameLine();
         ImGui::TextDisabled("%s", row.detail.c_str());
     }
@@ -2243,10 +2244,11 @@ extern "C" void launcher_run(const char *root) {
     }
     if (!g_font_menu) g_font_small = g_font_menu = g_font_title = io.Fonts->AddFontDefault();
     ImGuiStyle &st = ImGui::GetStyle();
+    pal_apply_style(st);
     st.Colors[ImGuiCol_Header] = ImVec4(0, 0, 0, 0);
     st.Colors[ImGuiCol_HeaderHovered] = ImVec4(1, 1, 1, 0.08f);
     st.Colors[ImGuiCol_HeaderActive] = ImVec4(1, 1, 1, 0.14f);
-    st.Colors[ImGuiCol_NavCursor] = ImVec4(0.95f, 0.78f, 0.35f, 1);
+    st.Colors[ImGuiCol_NavCursor] = PAL_ACCENT_V4;
     st.FrameRounding = st.WindowRounding = 10;
 #ifdef __APPLE__
     ImGui_ImplSDL3_InitForMetal(win);
@@ -2488,10 +2490,10 @@ extern "C" void launcher_run(const char *root) {
                 else { float u = wa / ia; uv0.x = (1 - u) / 2; uv1.x = 1 - uv0.x; }
                 bg->AddImage(art_on ? ART_TEXID : BG_TEXID, ImVec2(0, 0), ds, uv0, uv1);
             } else if (update_only) {
-                bg->AddRectFilled(ImVec2(0, 0), ds, IM_COL32(40, 40, 40, 255));
+                bg->AddRectFilled(ImVec2(0, 0), ds, IM_COL32(10, 30, 70, 255));
             } else {
-                bg->AddRectFilledMultiColor(ImVec2(0, 0), ds, IM_COL32(18, 34, 40, 255), IM_COL32(40, 70, 64, 255),
-                                            IM_COL32(12, 20, 24, 255), IM_COL32(8, 12, 16, 255));
+                bg->AddRectFilledMultiColor(ImVec2(0, 0), ds, IM_COL32(18, 50, 110, 255), IM_COL32(50, 110, 190, 255),
+                                            IM_COL32(10, 28, 64, 255), IM_COL32(6, 16, 40, 255));
             }
             if (!update_only) {  // a shadow banner fading in from the left behind the menu, and one from the right behind the version
                 const float stops[][2] = {{0.0f, 225}, {0.3f, 215}, {0.44f, 165}, {0.55f, 95}, {0.64f, 35}, {0.74f, 0}};
@@ -2533,7 +2535,7 @@ extern "C" void launcher_run(const char *root) {
                 const char *title = "Skyward Sword HD";
                 ImVec2 tp = ImGui::GetCursorScreenPos();
                 text_fx(ImGui::GetWindowDrawList(), ImGui::GetFont(), ImGui::GetFontSize(), tp,
-                        IM_COL32(255, 232, 120, 255), IM_COL32(255, 138, 48, 255), title, 3 * s);
+                        IM_COL32(255, 255, 255, 255), IM_COL32(110, 190, 255, 255), title, 3 * s);
                 ImGui::Dummy(ImGui::CalcTextSize(title));
                 ImGui::PopFont();
 
@@ -2639,7 +2641,7 @@ extern "C" void launcher_run(const char *root) {
                                                           ImGui::GetWindowPos().y + ds.y), IM_COL32(0, 0, 0, 110));
                 ImVec2 wp = ImGui::GetWindowPos();
                 ImGui::SetCursorScreenPos(ImVec2(wp.x + (ds.x - w) * 0.5f, wp.y + (ds.y - h) * 0.5f));
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.06f, 0.09f, 0.08f, 0.96f));
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, PAL_PANEL_V4);
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14 * sc);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(28 * sc, 24 * sc));
                 ImGui::BeginChild("##settings", ImVec2(w, h), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NavFlattened);
@@ -2647,7 +2649,7 @@ extern "C" void launcher_run(const char *root) {
                 ImGui::PopStyleColor();
                 ImGui::PushFont(g_font_small);
                 ImGui::PushFont(g_font_menu);
-                ImGui::TextColored(ImVec4(0.93f, 0.76f, 0.33f, 1), "Settings");
+                ImGui::TextColored(PAL_ACCENT_V4, "Settings");
                 ImGui::PopFont();
                 bool back;
                 {  // close: a drawn X in the corner (B / Esc too)
@@ -2658,7 +2660,7 @@ extern "C" void launcher_run(const char *root) {
                     back = ImGui::InvisibleButton("##close", ImVec2(bx, bx), ImGuiButtonFlags_EnableNav);
                     ImGui::PopStyleColor();
                     bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
-                    ImU32 col = hot ? IM_COL32(236, 194, 84, 255) : IM_COL32(220, 216, 205, 255);
+                    ImU32 col = hot ? PAL_ACCENT : PAL_TEXT;
                     float m = bx * 0.3f, t = (hot ? 3.0f : 2.4f) * sc * 1.5f;
                     ImDrawList *dl = ImGui::GetWindowDrawList();
                     if (hot) dl->AddRectFilled(p, ImVec2(p.x + bx, p.y + bx), IM_COL32(255, 255, 255, 20), 8 * sc);
@@ -2699,7 +2701,7 @@ extern "C" void launcher_run(const char *root) {
                                                           ImGui::GetWindowPos().y + ds.y), IM_COL32(0, 0, 0, 110));
                 ImVec2 wp = ImGui::GetWindowPos();
                 ImGui::SetCursorScreenPos(ImVec2(wp.x + (ds.x - w) * 0.5f, wp.y + (ds.y - h) * 0.5f));
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.06f, 0.09f, 0.08f, 0.96f));
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, PAL_PANEL_V4);
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14 * sc);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(28 * sc, 24 * sc));
                 ImGui::BeginChild("##setup", ImVec2(w, h), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NavFlattened);
@@ -2707,7 +2709,7 @@ extern "C" void launcher_run(const char *root) {
                 ImGui::PopStyleColor();
                 ImGui::PushFont(g_font_small);
                 ImGui::PushFont(g_font_menu);
-                ImGui::TextColored(ImVec4(0.93f, 0.76f, 0.33f, 1), "Game Files");
+                ImGui::TextColored(PAL_ACCENT_V4, "Game Files");
                 ImGui::PopFont();
                 bool back = false;
                 if (!busy) {  // close: the drawn X in the corner, as Settings (B / Esc too)
@@ -2718,7 +2720,7 @@ extern "C" void launcher_run(const char *root) {
                     back = ImGui::InvisibleButton("##close", ImVec2(bx, bx), ImGuiButtonFlags_EnableNav);
                     ImGui::PopStyleColor();
                     bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
-                    ImU32 col = hot ? IM_COL32(236, 194, 84, 255) : IM_COL32(220, 216, 205, 255);
+                    ImU32 col = hot ? PAL_ACCENT : PAL_TEXT;
                     float m = bx * 0.3f, t = (hot ? 3.0f : 2.4f) * sc * 1.5f;
                     ImDrawList *dl = ImGui::GetWindowDrawList();
                     if (hot) dl->AddRectFilled(p, ImVec2(p.x + bx, p.y + bx), IM_COL32(255, 255, 255, 20), 8 * sc);
@@ -2753,7 +2755,7 @@ extern "C" void launcher_run(const char *root) {
                     ImVec2 rb = ImGui::GetItemRectMax(), ra = ImGui::GetItemRectMin();
                     float fs = ImGui::GetFontSize(), vw = ImGui::CalcTextSize(v.c_str()).x;
                     float x = rb.x - 16 * sc - vw - fs * 0.95f, cy = (ra.y + rb.y) * 0.5f, u = fs * 0.62f;
-                    ImU32 g = IM_COL32(120, 220, 120, 255);
+                    ImU32 g = PAL_OK;
                     ImDrawList *dl = ImGui::GetWindowDrawList();
                     dl->AddLine(ImVec2(x, cy), ImVec2(x + u * 0.35f, cy + u * 0.35f), g, fs * 0.11f);
                     dl->AddLine(ImVec2(x + u * 0.35f, cy + u * 0.35f), ImVec2(x + u, cy - u * 0.4f), g, fs * 0.11f);
@@ -2952,10 +2954,10 @@ extern "C" void launcher_run(const char *root) {
                 if (!job_line.empty()) {  // the current step / result
                     ImGui::Dummy(ImVec2(0, 14 * sc));
                     ImGui::PushTextWrapPos(0);
-                    ImGui::TextColored(failed ? ImVec4(1, 0.5f, 0.4f, 1) : busy ? ImVec4(0.93f, 0.76f, 0.33f, 1)
-                                              : ImVec4(0.45f, 0.95f, 0.55f, 1), "%s", job_line.c_str());
+                    ImGui::TextColored(failed ? PAL_ERR_V4 : busy ? PAL_ACCENT_V4
+                                              : PAL_OK_V4, "%s", job_line.c_str());
                     if (failed && !job_hint.empty())  // (what to do next, in the rows' own text colour)
-                        ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), "%s", job_hint.c_str());
+                        ImGui::TextColored(PAL_TEXT2_V4, "%s", job_hint.c_str());
                     if (failed && job_kind && !busy) {  // a setup failure: one primary action, the raw reason collapsed
                         ImGui::Dummy(ImVec2(0, 6 * sc));
                         // (the same picker as the Game files folder row; no new modal)
@@ -2963,7 +2965,7 @@ extern "C" void launcher_run(const char *root) {
                         if (!job_tech.empty()) {
                             ImGui::Dummy(ImVec2(0, 4 * sc));
                             if (ImGui::CollapsingHeader("Technical details"))  // (collapsed by default)
-                                ImGui::TextColored(ImVec4(0.65f, 0.66f, 0.62f, 1), "%s", job_tech.c_str());
+                                ImGui::TextColored(PAL_DIM_V4, "%s", job_tech.c_str());
                         }
                     }
                     ImGui::PopTextWrapPos();
@@ -2972,14 +2974,14 @@ extern "C" void launcher_run(const char *root) {
                     // opens this window instead of crashing on Play)
                     ImGui::Dummy(ImVec2(0, 14 * sc));
                     ImGui::PushTextWrapPos(0);
-                    ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", status.c_str());
-                    ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), "%s", status_hint(status));
+                    ImGui::TextColored(PAL_ERR_V4, "%s", status.c_str());
+                    ImGui::TextColored(PAL_TEXT2_V4, "%s", status_hint(status));
                     ImGui::PopTextWrapPos();
                 } else if (ready && files_changed(g_root)) {  // (playable, but a damaged or changed file: #391)
                     ImGui::Dummy(ImVec2(0, 14 * sc));
                     ImGui::PushTextWrapPos(0);
-                    ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "%s", CHANGED_HEAD);
-                    ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), "%s", CHANGED_HINT);
+                    ImGui::TextColored(PAL_WARN_V4, "%s", CHANGED_HEAD);
+                    ImGui::TextColored(PAL_TEXT2_V4, "%s", CHANGED_HINT);
                     ImGui::PopTextWrapPos();
                 }
                 if (!ready && g_onedrive > 0 && !g_settings.onedrive_kept) {  // (before the copy is the time to move)
@@ -2997,7 +2999,7 @@ extern "C" void launcher_run(const char *root) {
                     draw_folder_example(ew);
                     ImGui::Dummy(ImVec2(0, fs * 0.3f));  // (its shadow)
                     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ew);
-                    ImGui::TextColored(ImVec4(0.55f, 0.58f, 0.52f, 1), "%s", PICK_FOLDER_HINT);
+                    ImGui::TextColored(PAL_DIM_V4, "%s", PICK_FOLDER_HINT);
                     ImGui::PopTextWrapPos();
                     opt_split_end();
                 }
@@ -3095,8 +3097,8 @@ extern "C" void launcher_run(const char *root) {
                     bool click = ImGui::InvisibleButton("update", lsz);
                     bool hover = ImGui::IsItemHovered();
                     // the menu's hover colours (yellow to orange), lighter while the link itself is hovered
-                    ImU32 col = hover ? IM_COL32(255, 238, 150, 255) : IM_COL32(255, 214, 64, 255);
-                    ImU32 col_b = hover ? IM_COL32(255, 196, 110, 255) : IM_COL32(255, 160, 50, 255);
+                    ImU32 col = hover ? IM_COL32(220, 245, 255, 255) : PAL_ACCENT;
+                    ImU32 col_b = hover ? IM_COL32(150, 205, 255, 255) : IM_COL32(90, 170, 245, 255);
                     text_fx(dl, font, fs, lp, col, col_b, link.c_str(), 1.5f * s);
                     text_fx(dl, font, fs, ImVec2(lp.x + 0.7f * s, lp.y), col, col_b, link.c_str(), 0);  // (faux bold)
                     if (hover) {
