@@ -107,6 +107,19 @@
       "defaults": { "ambient_occlusion": "switch" }
     },
     {
+      "id": "fps", "label": "Frame Rate", "group": "Graphics",
+      "help": "Auto picks for your screen. 60, 90 and 120 fps are supported; 90, 120 and Unlocked are still experimental.",
+      "choices": [
+        { "label": "Auto", "set": { "fps": "auto" } },
+        { "label": "30 fps (Switch)", "set": { "fps": "30" } },
+        { "label": "60 fps", "set": { "fps": "60" } },
+        { "label": "90 fps", "set": { "fps": "90" } },
+        { "label": "120 fps", "set": { "fps": "120" } },
+        { "label": "Unlocked", "set": { "fps": "unlocked" } }
+      ],
+      "defaults": { "fps": "auto" }
+    },
+    {
       "id": "show_fps", "label": "Frame Rate Counter", "group": "Graphics", "advanced": true,
       "help": "Shows the frame rate in a corner.",
       "choices": [
