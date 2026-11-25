@@ -49,8 +49,8 @@ if [ ! -f "$P/lib/libavcodec.dylib" ]; then
         --extra-cflags="-mmacosx-version-min=$MIN" --extra-ldflags="-mmacosx-version-min=$MIN" \
         --disable-autodetect --disable-programs --disable-doc --disable-network --disable-avdevice --disable-avfilter \
         --disable-swresample --disable-everything \
-        --enable-protocol=file --enable-demuxer=matroska,mov \
-        --enable-decoder=vp9,vp8,vorbis,opus,h264,aac --enable-parser=vp9,vp8,vorbis,opus,h264,aac \
+        --enable-protocol=file --enable-demuxer=matroska,mov,image2,image_jpeg_pipe,image_png_pipe \
+        --enable-decoder=vp9,vp8,vorbis,opus,h264,aac,mjpeg,png --enable-parser=vp9,vp8,vorbis,opus,h264,aac,mjpeg,png \
         --install-name-dir='@rpath' && make -j"$JOBS" && rm -rf "$S/ffmpeg-root" && make install DESTDIR="$S/ffmpeg-root")
     cp -R "$S/ffmpeg-root$NEUTRAL"/. "$P"/
     sed -i '' "s|$NEUTRAL|$P|g" "$P"/lib/pkgconfig/lib{avformat,avcodec,avutil,swscale}.pc  # (pkg-config: the real place)
