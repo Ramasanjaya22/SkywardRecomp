@@ -40,6 +40,7 @@ jobs:
           mkdir -p build/movie-test
           build/test-movie-extractor build/movie-test
           python3 tools/test_movie_audio.py  # (webm part skips without ffmpeg; synthetic formats always run)
+          python3 tools/test_movie_frame_rate.py
       - name: Kernel condition-variable regression
         run: |
           clang -O2 -pthread tools/test_condvar.c -o build/test-condvar
