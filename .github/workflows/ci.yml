@@ -316,7 +316,7 @@ jobs:
         run: python tools/test_vulkan_overlay.py
       - name: Windows guest thread stack regression
         run: |
-          clang -std=gnu11 -O1 tools/test_windows_thread_stack.c -lpsapi -o build/test-thread-stack.exe
+          clang -std=gnu11 -O1 -Iruntime tools/test_windows_thread_stack.c -lpsapi -o build/test-thread-stack.exe
           build/test-thread-stack.exe
       - name: Windows lazy guest-memory commit race regression
         run: |

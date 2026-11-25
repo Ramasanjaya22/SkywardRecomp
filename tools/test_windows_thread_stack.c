@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <pthread.h>
 #include "../runtime/platform/windows_threads.h"
+void hotsample_thread(uintptr_t handle) { (void)handle; }  // (the sampler is runtime/hotsample.c: not under test)
 #include <psapi.h>
 
 static HANDLE ready;
