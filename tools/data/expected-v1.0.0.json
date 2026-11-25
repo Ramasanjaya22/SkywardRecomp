@@ -1,0 +1,19 @@
+{
+  "_comment": "Hashes of what the build produces from a genuine Skyward Sword HD 1.0.0 (no game data). tools/extract.py checks every step against them; a mismatch stops the build.",
+  "title_id": "01002DA013484000",
+  "version": 0,
+  "display_version": "1.0.0",
+  "program_nca": "c5ee456d9734d8d640d8b961fda42614.nca",
+  "exefs_sha256": {
+    "main": "ce2ef09525e0ccab19cade472e5914d83432e617f38230cbf58c352ad6af8824",
+    "main.npdm": "3793b60c777e4cec2f8d4ac0b08dc0ff40ef9ccc2b383313839b82cce95c75bf",
+    "rtld": "bc175ad9865adb48f9cbe9d7993ddb3367d3771bc06642c87d16ccf4f4dc9ff4",
+    "sdk": "85aaf84172367499c02cbb5c317c419b9c768658f5a44de743da40d4c6441a4b",
+    "subsdk0": "c0a7a238688caf191c7c40badcbeac4d037a95ccaed644ce7fe2e63b5f898a13",
+    "subsdk1": "773153d0734c8feaacd5a1e6b21bd1ede8c060a142f9d91452897776f31d9827"
+  },
+  "romfs": {
+    "size": 7552117724,
+    "sha256": "91f4ca4d141fc08a93eae4edbd3a65ba4b21ab3a6951455ae428965bdcfdbb23"
+  }
+}
