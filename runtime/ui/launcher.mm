@@ -343,31 +343,28 @@ static void set_job(const std::string &s, bool failed = false, const std::string
 
 // (the not-found failure's hint, and the caption over the game files page's example folder)
 static const char *const PICK_FOLDER_HINT =
-    "Choose the folder that has the game's exefs and romfs folders (or the .nsp package, and for 1.0.1 its update .nsp) in it.\n\n"
-    "Using a .nsp? It also needs your prod.keys (your Switch's encryption keys, dumped from your own console with "
-    "Lockpick_RCM): it's found by itself next to the .nsp, or choose it in the prod.keys row. Other files in the folder are fine.";
+    "Choose the folder with exefs and romfs, then press Set up game files.\n"
+    "A .nsp also needs prod.keys; choose it in the prod.keys row.";
 
 // Setup failures: a short headline and what to do next (also LARECOMP_LAUNCHER_SHOT=<f>:fail<1-6>, screenshots)
 enum { FAIL_NOT_FOUND = 1, FAIL_UNUSABLE, FAIL_COPY, FAIL_VERSION, FAIL_MISSING, FAIL_BUILD };
 static void set_failure(int k, int have = -1, const char *reason = NULL, int want = 0) {
-    static const char *const head[] = {"", "No game files found in that folder", "Those are game packages, not game files",
-                                       "Setup didn't finish", "Wrong version of the game", "Your game files are incomplete",
-                                       "The game code didn't build"};
-    static const char *const hint[] = {
+    static const char *const head[] = {"", "No game files found", "Game files are packaged",
+                                       "Could not copy the game files", "Wrong game version", "Game files incomplete",
+                                       "Game code not built"};
+    static const std::string hint[] = {
         "",
-        PICK_FOLDER_HINT,
-        "SkywardRecomp needs the game's own files (the exefs and romfs folders), not .xci / .nsp / .nca files.",
-        "Make sure there's about 12 GB free and try again.",
-        "SkywardRecomp needs version 1.0.0 of the game, or 1.0.1 (the base game with its update package). Other versions aren't supported.",
-        "Some of the game's files are missing - usually a copy or unzip that stopped partway. Copy the game files "
-        "again so none are missing, then choose the folder again.",
-        "Make sure there's about 2 GB free and try again. If it keeps happening, report it on GitHub."};
+        std::string("Why: no game files were found.\nNext: ") + PICK_FOLDER_HINT,
+        "Why: .xci, .nsp and .nca packages can't be read directly.\nNext: extract them into a folder, choose it, then press Set up game files.",
+        "Why: the destination is full or not writable.\nNext: check the destination folder, then press Set up game files.",
+        "Why: version 1.0.0 or 1.0.1 is required.\nNext: use the base game with its 1.0.1 update, then press Set up game files.",
+        "Why: some required files are missing.\nNext: copy the whole extracted game folder, then press Set up game files.",
+        "Why: the build stopped with an error.\nNext: check the log, then press Set up game files."};
     if (k < 1 || k > 6) return;
     if (k == FAIL_MISSING && have >= 0 && want) {
         char b[320];
-        snprintf(b, sizeof b, "The romfs folder has %d of the game's %d files - some are missing, usually from a copy or "
-                 "unzip that stopped partway. Copy the game files again so none are missing, then choose the folder "
-                 "again.", have, want);
+        snprintf(b, sizeof b, "Why: %d of %d romfs files are missing.\n"
+                 "Next: copy the whole extracted game folder, then press Set up game files.", have, want);
         set_job(head[k], true, b);
         return;
     }
