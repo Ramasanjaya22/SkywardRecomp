@@ -11,6 +11,9 @@ typedef struct { char name[64]; long long when; unsigned long long bytes; } Save
 
 // A backup of the saves now; its name in name_out. false: why says why (nothing to back up, a file can't be read...).
 bool save_backup_create(const char *root, char *name_out, size_t n, char *why, size_t cap);
+// At start: when this app version differs from the one that last ran here (backups/last_version.txt), an "-auto"
+// backup of the saves, then the version noted. true: one was made (its name in name_out).
+bool save_backup_on_update(const char *root, const char *version, char *name_out, size_t n);
 // The backups, newest first. Returns how many (at most max).
 int save_backup_list(const char *root, SaveBackup *out, int max);
 // The saves replaced by that backup (an "-auto" backup of the current ones first). false: why says why, the saves are

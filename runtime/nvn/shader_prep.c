@@ -619,10 +619,10 @@ static uint8_t *blob_read(const IdxEnt *e, ShaderBlob *b, FILE **files) {
 #ifndef SHADER_TRANSLATOR_ID
 #define SHADER_TRANSLATOR_ID "dev"
 #endif
-const char *larecomp_version(void);  // runtime/ui/launcher.mm
-
+// No app version in it: an update that leaves the translator alone keeps the caches (no stutter after updating).
+// Pipelines from changed host code just miss: Vulkan and Metal key their entries by the shader code and state.
 void shader_cache_tag(char *out, size_t n, const char *gpu) {
-    snprintf(out, n, "%s translator %s cache %d | %s", larecomp_version(), SHADER_TRANSLATOR_ID, SHADER_CACHE_VERSION, gpu);
+    snprintf(out, n, "translator %s cache %d | %s", SHADER_TRANSLATOR_ID, SHADER_CACHE_VERSION, gpu);
 }
 
 bool shader_cache_tag_ok(const char *tag_path, const char *tag) {

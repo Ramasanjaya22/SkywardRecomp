@@ -145,6 +145,8 @@ static int program(const Case *c, uint64_t prog[16]) {
     return m;
 }
 
+static ShaderInfo *bindless_program(uint64_t writer);
+
 static int write_glsl(const char *dir) {
     static const struct { int stage; const char *ext; } st[] = {
         {STAGE_VERTEX, "vert"}, {STAGE_FRAGMENT, "frag"}, {STAGE_COMPUTE, "comp"}};
@@ -209,9 +211,89 @@ static int write_glsl(const char *dir) {
         }
         maxwell_free(s);
     }
+    {   // (fragment, GLSL) a bindless sample: the handle word read from a constant buffer (check_bindless)
+        ShaderInfo *s = bindless_program(ldc(4, 255, 3, 0x10, 4));
+        fprintf(names, "%02d_frag TEX.B (handle from a constant buffer)\n", n + 1);
+        if (!s->msl) {
+            printf("FAIL TEX.B (frag): translation: %s\n", s->error);
+            bad++;
+        } else {
+            snprintf(path, sizeof path, "%s/%02d_frag.frag", dir, n + 1);
+            FILE *f = fopen(path, "w");
+            if (!f) { perror(path); return 2; }
+            fputs(s->msl, f);
+            fclose(f);
+        }
+        maxwell_free(s);
+    }
     fclose(names);
     printf("%d cases x 3 stages written to %s, %d translation failures\n", n, dir, bad);
     return bad != 0;
+}
+
+// TEX.B Rd, Ra, Rb (2D, all four components, no LOD): Rb holds the bindless handle
+static uint64_t tex_b(int d, int a, int b) {
+    return 0xdeb8000000000000ull | PT_GUARD | (uint64_t)d | (uint64_t)a << 8 | (uint64_t)b << 20 | 1ull << 29 | 0xFull << 31;
+}
+
+// Fragment program (GLSL) with a TEX.B whose handle register `writer` fills (`between`, when not 0, runs after it):
+// returns the translation (maxwell_free it)
+static ShaderInfo *bindless_program2(uint64_t writer, uint64_t between) {
+    Case c = {.name = "TEX.B", .insn = {writer, between ? between : tex_b(0, 2, 4), between ? tex_b(0, 2, 4) : 0, 0}};
+    uint64_t prog[16];
+    int m = program(&c, prog);
+    uint8_t buf[0x80 + sizeof prog] = {0};
+    buf[0x30 + 0x48] = 0xF;  // (fragment header: color target 0 written)
+    memcpy(buf + 0x80, prog, (size_t)m * 8);
+    ShaderKey key = {0};
+    key.glsl = 1;
+    return maxwell_translate(buf, 0x80 + (size_t)m * 8, STAGE_FRAGMENT, &key);
+}
+static ShaderInfo *bindless_program(uint64_t writer) { return bindless_program2(writer, 0); }
+
+// LDC R4 (the handle), then `between`: the handle is still tracked when `between` leaves R4 alone and refused when it
+// writes it (a multi-register write that covers R4 from R3)
+static int check_between(const char *name, uint64_t between, bool clobbers) {
+    ShaderInfo *s = bindless_program2(ldc(4, 255, 3, 0x10, 4), between);
+    int bad = 0;
+    if (clobbers && (s->msl || !strstr(s->error, "bindless tex (untracked)"))) {
+        printf("FAIL TEX.B after %s: %s\n", name, s->msl ? "translated with the handle of the LDC before it" : s->error);
+        bad++;
+    } else if (!clobbers && (!s->msl || s->ntex != 1 || !s->tex[0].bindless || s->tex[0].bindless_offset != 0x10)) {
+        printf("FAIL TEX.B after %s: %s\n", name, s->msl ? "handle not tracked" : s->error);
+        bad++;
+    }
+    maxwell_free(s);
+    return bad;
+}
+
+// TEX.B: a handle read by LDC from a constant buffer becomes a bindless ShaderTexture; any other source is refused
+static int check_bindless(void) {
+    int bad = 0;
+    ShaderInfo *s = bindless_program(ldc(4, 255, 3, 0x10, 4));  // LDC R4, c[3][RZ + 0x10]
+    if (!s->msl) { printf("FAIL TEX.B via LDC: translation: %s\n", s->error); bad++; }
+    else if (s->ntex != 1 || !s->tex[0].bindless || s->tex[0].bindless_cbuf != 3 || s->tex[0].bindless_offset != 0x10 ||
+             s->tex[0].type != TEXTYPE_2D) {
+        printf("FAIL TEX.B via LDC: ntex %d bindless %d cbuf %u offset %#x type %d\n", s->ntex, s->ntex ? s->tex[0].bindless : -1,
+               s->ntex ? s->tex[0].bindless_cbuf : 0, s->ntex ? s->tex[0].bindless_offset : 0, s->ntex ? s->tex[0].type : -1);
+        bad++;
+    }
+    maxwell_free(s);
+    s = bindless_program(mov32i(4, 0x123));  // a handle that is no constant buffer read
+    if (s->msl || !strstr(s->error, "bindless tex (untracked)")) {
+        printf("FAIL TEX.B via MOV32I: %s\n", s->msl ? "translated" : s->error);
+        bad++;
+    }
+    maxwell_free(s);
+    // writers between the LDC and the TEX.B: LDG.E.64 R3 writes R3+R4, LDG.E.64 R0 writes R0+R1, MOV32I R3 only R3
+    uint64_t ldg64_r3 = 0xeed0000000000000ull | 5ull << 48 | 1ull << 45 | PT_GUARD | 2ull << 8 | 3;
+    uint64_t ldg64_r0 = 0xeed0000000000000ull | 5ull << 48 | 1ull << 45 | PT_GUARD | 2ull << 8 | 0;
+    uint64_t ld_attr2_r3 = 0xefd8000000000000ull | 1ull << 47 | PT_GUARD | 255ull << 8 | 3;  // two attribute words
+    bad += check_between("LDG.64 R3 (covers R4)", ldg64_r3, true);
+    bad += check_between("LD a[] x2 R3 (covers R4)", ld_attr2_r3, true);
+    bad += check_between("LDG.64 R0", ldg64_r0, false);
+    bad += check_between("MOV32I R3", mov32i(3, 1), false);
+    return bad;
 }
 
 int main(int argc, char **argv) {
@@ -220,7 +302,7 @@ int main(int argc, char **argv) {
     FILE *o = fopen(argv[1], "w");
     if (!o) { perror(argv[1]); return 2; }
     fputs(prelude, o);
-    int n, bad = 0;
+    int n, bad = check_bindless();
     const Case *cs = cases(&n);
     for (int i = 0; i < n; i++) {
         uint64_t prog[16];

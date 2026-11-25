@@ -1350,7 +1350,7 @@ static struct { uint64_t key; void *prog; } prog_tab[PROG_TAB];
 // own shader cache warm, so the archive only helped when that cache was cleared without a macOS update. Off, a file
 // left by an earlier build is removed. (A check of Metal's queued entries before saving: branch metal-archive-crash.)
 // cache/shaders.metalarchive: the GPU code of every pipeline built here (prepared or at first use), kept across runs
-// (MTLBinaryArchive), used only with a matching cache/shaders.metalarchive.tag (shader_cache_tag: this build, the
+// (MTLBinaryArchive), used only with a matching cache/shaders.metalarchive.tag (shader_cache_tag: the
 // translator, the GPU and the macOS build; another one, or an archive that doesn't load: a new one, silently). Saved
 // (temp file + rename) when the preparation ends and 10 s after the last pipeline added at first use.
 // What it holds is the cheap half (pipelines from compiled functions: ~1 s of CPU for all 895 variants on an M3 Max);
