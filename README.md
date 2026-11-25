@@ -67,6 +67,8 @@ The percentage is a rough milestone estimate, not a measured figure.
 
 Start here: [docs/SETUP.md](docs/SETUP.md) (requirements, game files, prod.keys, troubleshooting).
 
+See [Saving and transferring data](docs/saves.md) for backups and emulator save transfers.
+
 ## Building (Windows)
 
 See [docs/BUILD-windows.md](docs/BUILD-windows.md) (MSYS2 UCRT64, clang, Vulkan 1.3 GPU, AVX2/FMA CPU).
