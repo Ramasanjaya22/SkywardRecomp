@@ -400,7 +400,9 @@ struct PickContext {
     bool update;         // the 1.0.1 update was found next to it
     std::string nsp_dir; // where to look for the key file
     std::string version; // the picked exefs' release ("1.0.0" / "1.0.1"), if known
+    std::string key_file; // prod.keys found near the NSP (scanned once, at pick time, off the render thread)
 };
+static std::string find_prod_keys(const std::string &nsp_dir);
 static PickContext g_pick;  // (g_lock)
 
 static void note_pick_context(const GameFind &f) {
@@ -414,6 +416,7 @@ static void note_pick_context(const GameFind &f) {
     }
     char label[32] = {};
     if (game_release_label(f.exefs, label, sizeof label)) c.version = label;
+    if (c.nsp) c.key_file = find_prod_keys(c.nsp_dir);
     pthread_mutex_lock(&g_lock);
     g_pick = c;
     pthread_mutex_unlock(&g_lock);
@@ -601,26 +604,20 @@ static bool picked_nsp_package() {
 
 static bool update_field_applies() {
     pthread_mutex_lock(&g_lock);
-    bool applies = g_pick.nsp && !g_pick.update && g_update_pick.empty();
+    bool applies = g_pick.nsp && !g_pick.update;  // (stays visible after a choice, to show and change it)
     pthread_mutex_unlock(&g_lock);
     return applies;
 }
 
-// The chosen key wins; otherwise use scan_for_keys()'s bounded search. Cached per folder so drawing stays cheap.
+// The chosen key wins; otherwise what picked() found near the package. Drawing only reads.
 static std::string detected_key_file() {
     pthread_mutex_lock(&g_lock);
-    std::string chosen = g_keys_pick, dir = g_pick.nsp_dir;
+    std::string chosen = g_keys_pick, found = g_pick.key_file;
     bool nsp = g_pick.nsp;
     pthread_mutex_unlock(&g_lock);
     if (!nsp) return "";
     if (!chosen.empty() && looks_like_prod_keys(chosen)) return chosen;
-    static std::string scanned_dir, scanned_keys;
-    static bool scanned = false;
-    if (scanned && scanned_dir == dir) return scanned_keys;
-    scanned_dir = dir;
-    scanned_keys = find_prod_keys(dir);
-    scanned = true;
-    return scanned_keys;
+    return found;
 }
 
 // What the picked files already are: the exefs build id, or the NSP plus its optional update.
@@ -630,7 +627,7 @@ static std::string detected_game_version() {
     bool update_chosen = !g_update_pick.empty();
     pthread_mutex_unlock(&g_lock);
     if (!c.version.empty()) return c.version;
-    if (c.nsp) return (c.update || update_chosen) ? "1.0.1" : "1.0.0";
+    if (c.nsp && (c.update || update_chosen)) return "1.0.1";  // (an NSP alone: version not detected)
     return "";
 }
 
@@ -2433,7 +2430,7 @@ extern "C" void launcher_run(const char *root) {
                 // explanation, and choosing again opens the picker again
                 std::string src_v = src.empty() ? "Choose..." : "Selected";
                 auto check_left_of_value = [&](const std::string &v) {
-                    if (v != "Selected") return;
+                    if (v != "Selected" && v != "Key file detected") return;
                     ImVec2 rb = ImGui::GetItemRectMax(), ra = ImGui::GetItemRectMin();
                     float fs = ImGui::GetFontSize(), vw = ImGui::CalcTextSize(v.c_str()).x;
                     float x = rb.x - 16 * sc - vw - fs * 0.95f, cy = (ra.y + rb.y) * 0.5f, u = fs * 0.62f;
