@@ -266,6 +266,10 @@ int main(int argc, char **argv) {
     path_of(p, sizeof p, "K", "game.xci"); write_file(p, "xci", 3);
     path_of(p, sizeof p, "K", ""); find(p, &g);
     CHECK(g.unusable && !g.nsp[0], "K: .xci is unusable");
+    if (!g_legacy) {  // (given directly: --prepare --game=<file>, as the .nsp in I)
+        path_of(p, sizeof p, "K", "game.xci"); game_find(p, NULL, &g);
+        CHECK(g.unusable && !g.nsp[0], "K: .xci given directly is unusable");
+    }
 
     // L: a package in a folder deeper than the search goes (5 levels) is not found, and a huge tree stops (no crash)
     path_of(p, sizeof p, "L", "1/2/3/4/5/6/deep.nsp"); pfs0(p, BASE, 4, 0);
