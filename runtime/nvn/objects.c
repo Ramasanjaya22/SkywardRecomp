@@ -837,7 +837,11 @@ NVN(nvnQueueAcquireTexture) {
 NVN(nvnQueuePresentTexture) {
     NvnWindow *w = HOST(NvnWindow, A(1));
     int i = (int)A(2);
-    if (i >= 0 && i < w->num) backend_present(HOST(NvnTexture, w->textures[i]));
+    if (i < 0 || i >= w->num) return;
+    NvnTexture *t = HOST(NvnTexture, w->textures[i]);
+    // (with the texture: the render thread presents it later, and the game may set another crop by then)
+    memcpy(t->present_crop, w->crop, sizeof t->present_crop);
+    backend_present(t);
 }
 
 // ================================================================== small state objects

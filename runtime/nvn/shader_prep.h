@@ -44,6 +44,7 @@ typedef struct {
     uint8_t topo;            // primitive class: 0 points, 1 lines, 2 triangles
     uint8_t poly_fill;       // filled polygons (0: lines)
     uint32_t local[3];       // compute: local size
+    uint16_t wide_k;         // Vulkan ultrawide: the vertex key's wide_k (exec.c draw_; 0: off), " w=" when set
 } ShaderRec;
 
 // The record's text form (one line, no newline) and back

@@ -88,6 +88,7 @@ void shader_rec_format(const ShaderRec *r, char *out, size_t n) {
         for (int k = 0; k < 8; k++) PUT("%02x", r->blend[i][k]);
     }
     PUT(" k=%u t=%u p=%u o=%u", r->a2c, r->topo, r->poly_fill, r->logic_op);
+    if (r->wide_k) PUT(" w=%u", r->wide_k);  // (last and only when set: older lines stay the same)
 #undef PUT
 }
 
@@ -173,6 +174,7 @@ bool shader_rec_parse(const char *line, ShaderRec *r) {
     }
     if ((v = field(line, "k"))) r->a2c = (uint8_t)strtoul(v, NULL, 16);
     r->topo = (v = field(line, "t")) ? (uint8_t)strtoul(v, NULL, 16) : 2;
+    if ((v = field(line, "w"))) r->wide_k = (uint16_t)strtoul(v, NULL, 10);
     r->poly_fill = (v = field(line, "p")) ? (uint8_t)strtoul(v, NULL, 16) : 1;
     r->logic_op = (v = field(line, "o")) ? (uint8_t)strtoul(v, NULL, 10) : 3;  // older records: NVN COPY
     return r->vs && r->fs;
@@ -462,6 +464,109 @@ static uint8_t *blob_read(const IdxEnt *e, ShaderBlob *b, FILE **files) {
     return d;
 }
 
+// ------------------------------------------------------------------ SS shader archive
+// Skyward Sword HD has no BNSH: its shaders are in one archive, Shaders/Shaders.arc.gz, a gzip'd U8 archive
+// (big-endian: node table at be32 @4, node count at +8 of the root node, nodes {type, name offset:24, data offset,
+// size}). Its program files (magic 91 68 86 19) hold the stage count at 0x4c and per stage, at 0x90 + 0x90 * i, the
+// block offset (+4), the code size (+0x38, which is the code's const_offset: no constants after it) and the code's
+// offset in the block (+0x3c). The code there is what the game hands NVN, its 0x30-byte header included.
+static uint32_t be32(const uint8_t *d) { return (uint32_t)d[0] << 24 | d[1] << 16 | d[2] << 8 | d[3]; }
+static uint32_t le32(const uint8_t *d) { uint32_t v; memcpy(&v, d, 4); return v; }
+
+// Calls add(ctx, off, size) for each stage code at a[off..off+size]; returns how many. Every offset is checked.
+static int ss_arc_each(const uint8_t *a, size_t n, void (*add)(void *ctx, uint32_t off, uint32_t size), void *ctx) {
+    if (n < 0x20 || memcmp(a, "\x55\xaa\x38\x2d", 4)) return 0;
+    uint32_t root = be32(a + 4);
+    if (root > n - 12) return 0;
+    uint32_t nodes = be32(a + root + 8), found = 0;
+    if (nodes > (n - root) / 12) return 0;
+    for (uint32_t i = 0; i < nodes; i++) {
+        const uint8_t *e = a + root + 12 * (size_t)i;
+        uint32_t off = be32(e + 4), sz = be32(e + 8);
+        if (e[0] != 0 || off > n || sz > n - off || sz < 0x50) continue;  // (files only)
+        const uint8_t *f = a + off;
+        if (memcmp(f, "\x91\x68\x86\x19", 4)) continue;
+        uint32_t ns = le32(f + 0x4c);
+        for (uint32_t s = 0; s < ns && s < 6; s++) {
+            uint32_t q = 0x90 + 0x90 * s;
+            if (q + 0x40 > sz) break;
+            uint32_t boff = le32(f + q + 4), csz = le32(f + q + 0x38), coff = le32(f + q + 0x3c);
+            if (csz <= 0x30 || boff > sz || coff > sz - boff || csz > sz - boff - coff) continue;
+            add(ctx, off + boff + coff, csz);
+            found++;
+        }
+    }
+    return (int)found;
+}
+// (end of the archive parser: tools/test_ss_shader_arc.py compiles the part above)
+
+// The archive's bytes, gunzipped (kept for the run: the index points into them); NULL: not there
+#include <zlib.h>
+#ifdef _WIN32
+#define SS_FSEEK _fseeki64  // (romfs.bin is several GB)
+#else
+#define SS_FSEEK fseeko
+#endif
+static uint8_t *ss_arc_read(const char *romfs, size_t *out) {
+    static const char name[] = "Shaders/Shaders.arc.gz";
+    char p[1100];
+    uint8_t *gz = NULL;
+    size_t gn = 0;
+    snprintf(p, sizeof p, "%s/%s", romfs, name);  // a romfs/ folder, or the romfs.bin image and its index.json
+    FILE *f = fopen(p, "rb");
+    long long at = 0, len = -1;
+    if (f) fseek(f, 0, SEEK_END), len = ftell(f);
+    else {
+        snprintf(p, sizeof p, "%s/../index.json", romfs);
+        FILE *j = fopen(p, "rb");
+        char *js = NULL;
+        if (j) {
+            fseek(j, 0, SEEK_END);
+            long jn = ftell(j);
+            fseek(j, 0, SEEK_SET);
+            js = jn > 0 && jn < (64 << 20) ? calloc(1, (size_t)jn + 1) : NULL;
+            if (js && fread(js, 1, (size_t)jn, j) != (size_t)jn) js[0] = 0;
+            fclose(j);
+        }
+        char *e = js ? strstr(js, "\"Shaders/Shaders.arc.gz\"") : NULL;  // {"path": ..., "offset": N, "size": N}
+        char *o = e ? strstr(e, "\"offset\":") : NULL, *s = e ? strstr(e, "\"size\":") : NULL;
+        if (o && s) at = strtoll(o + 9, NULL, 10), len = strtoll(s + 7, NULL, 10);
+        free(js);
+        snprintf(p, sizeof p, "%s/../romfs.bin", romfs);
+        if (len > 0) f = fopen(p, "rb");
+    }
+    if (f && len > 18 && len < (256 << 20) && (gz = malloc((size_t)len)) &&
+        !SS_FSEEK(f, at, SEEK_SET) && fread(gz, 1, (size_t)len, f) == (size_t)len)
+        gn = (size_t)len;
+    if (f) fclose(f);
+    uint8_t *a = NULL;
+    size_t an = gn ? le32(gz + gn - 4) : 0;  // (gzip's trailer: the size, mod 4 GiB)
+    z_stream z = {0};
+    if (an && an < (512u << 20) && (a = malloc(an)) && inflateInit2(&z, 16 + MAX_WBITS) == Z_OK) {
+        z.next_in = gz, z.avail_in = (uInt)gn, z.next_out = a, z.avail_out = (uInt)an;
+        int r = inflate(&z, Z_FINISH);
+        inflateEnd(&z);
+        if (r != Z_STREAM_END || z.total_out != an) free(a), a = NULL;
+    } else free(a), a = NULL;
+    free(gz);
+    *out = a ? an : 0;
+    return a;
+}
+
+static void ss_arc_add(void *ctx, uint32_t off, uint32_t size) {
+    const uint8_t *a = ctx;
+    idx_add(shader_code_hash(a + off, size), (uint32_t)idx_nfiles, off, size, size, 0);
+}
+
+static void idx_ss_arc(const char *romfs) {
+    size_t n;
+    uint8_t *a = ss_arc_read(romfs, &n);
+    if (a && ss_arc_each(a, n, ss_arc_add, a)) {
+        idx_files = realloc(idx_files, sizeof *idx_files * (size_t)(idx_nfiles + 1));
+        idx_files[idx_nfiles++] = (IdxSrc){NULL, a};
+    } else free(a);
+}
+
 // ------------------------------------------------------------------ cache tags
 #ifndef SHADER_TRANSLATOR_ID
 #define SHADER_TRANSLATOR_ID "dev"
@@ -572,6 +677,7 @@ static bool prep_run_locked(const char *romfs, void (*progress)(int done, int to
     if (progress) progress(0, total + 1);
     if (!idx_n) {
         idx_dir(romfs, 0);
+        idx_ss_arc(romfs);
         char main_nso[1100];  // (<game files>/exefs/main, next to romfs/)
         snprintf(main_nso, sizeof main_nso, "%s/../exefs/main", romfs);
         idx_nso(main_nso);

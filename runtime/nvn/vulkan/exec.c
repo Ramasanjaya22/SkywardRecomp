@@ -5377,6 +5377,7 @@ bool renderer_prepare(const ShaderRec *r, const ShaderBlob *vsb, const ShaderBlo
     vkey.flip_y = fkey.flip_y = (r->flags & SR_FLIP_Y) != 0;
     vkey.depth_minus_one = (r->flags & SR_DEPTH_MINUS_ONE) != 0;
     vkey.flip_x = fkey.flip_x = (r->flags & SR_FLIP_X) != 0;
+    vkey.wide_k = r->wide_k;
     for (int i = 0; i < r->nattrib; i++) vkey.attr_kind[i] = (uint8_t)attr_kind(r->attrib[i] & 0xFF);
     for (int i = 0; i < r->ncolor && i < 8; i++) if (r->color[i]) fkey.rt_kind[i] = (uint8_t)rt_kind(r->color[i]);
     if ((r->blend_on & 1) && dual_src_kind(r->blend[0])) fkey.rt_kind[1] = 3;
@@ -5849,6 +5850,7 @@ static void draw_(CmdRec *r, bool indexed) {
             if (shader_rec_recording()) {
                 ShaderRec rec;
                 rec_from_state(&rec, vkey.flip_x, mode);
+                rec.wide_k = vkey.wide_k;
                 shader_rec_note(&rec);
             }
             pp = prep_pipes_n ? PREP_GET(prep_pipes, ph) : NULL;  // prepared before the game
@@ -5859,6 +5861,7 @@ static void draw_(CmdRec *r, bool indexed) {
                 if (prep_check_on()) {
                     ShaderRec rec;
                     rec_from_state(&rec, vkey.flip_x, mode);
+                    rec.wide_k = vkey.wide_k;
                     prep_check(&k, vh, fh, &rec);
                 }
                 pp = calloc(1, sizeof *pp);

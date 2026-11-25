@@ -55,6 +55,24 @@ int main(void) {
     CHECK(NEAR(rt_frame_period(16.666667f), 25.0f));
     t_ns += 500000000ull;  // a stall: at most one step
     CHECK(NEAR(rt_frame_timestep(0.5f), 1.0f));
+    // the rest of the stall (14 steps) is not lost: later frames take up to a full step until the world has caught up
+    // with the time that passed, so cutscenes stay with their streamed sound (SKY-40)
+    {
+        float world = 0;
+        for (int i = 0; i < 28; i++) {
+            t_ns += 16666667ull;
+            float s = rt_frame_timestep(0.5f);
+            CHECK(s <= 1.0f + 1e-4f);
+            world += s;
+        }
+        CHECK(NEAR(world, 28 * 0.5f + 14.0f));
+        t_ns += 16666667ull;
+        CHECK(NEAR(rt_frame_timestep(0.5f), 0.5f));  // caught up: back on the target's step
+    }
+    t_ns += 3000000000ull;  // a load (over 2 s): nothing to keep in step with, nothing carried
+    CHECK(NEAR(rt_frame_timestep(0.5f), 1.0f));
+    t_ns += 16666667ull;
+    CHECK(NEAR(rt_frame_timestep(0.5f), 0.5f));
     g_settings.fps_target = FPS_120;
     t_ns += 12000000ull;  // 12 ms where 8.3 was wanted: 0.36
     CHECK(NEAR(rt_frame_timestep(0.5f), 0.36f));
@@ -66,6 +84,8 @@ int main(void) {
     rt_frame_timestep(0.5f);
     t_ns += 500000000ull;  // a 500 ms stall: at most one 1/30 s step
     CHECK(NEAR(rt_frame_timestep(0.5f), 1.0f));
+    t_ns += 3000000000ull;  // (a load: the stall's rest dropped)
+    rt_frame_timestep(0.5f);
     t_ns += 10000000ull;  // 10 ms: 0.3 steps
     CHECK(NEAR(rt_frame_timestep(0.5f), 0.3f));
     t_ns += 1000000ull;  // 1 ms: at least 1/8
