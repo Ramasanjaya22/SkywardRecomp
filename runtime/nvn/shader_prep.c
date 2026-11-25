@@ -8,6 +8,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <zlib.h>
 
 #include "nvn.h"
 #include "shader_prep.h"
@@ -382,13 +383,102 @@ static void idx_bnsh(const uint8_t *d, size_t n, size_t b, uint32_t file) {
     }
 }
 
-static bool idx_ext(const char *name, size_t l) {  // a shader archive, effect or UI archive
-    return (l > 5 && (!strcmp(name + l - 5, "bfsha") || !strcmp(name + l - 5, ".ptcl"))) ||
-           (l > 4 && !strcmp(name + l - 4, ".arc"));
+// Shaders/Shaders.arc.gz: gzip (one or more members) around a Wii U U8 archive of GLSLC outputs. Kept decompressed for
+// the run, as the code of its programs is read from it.
+static uint32_t rd32be(const uint8_t *d, size_t o) { return (uint32_t)d[o] << 24 | (uint32_t)d[o + 1] << 16 | (uint32_t)d[o + 2] << 8 | d[o + 3]; }
+static const uint8_t glslc_magic[4] = {0x91, 0x68, 0x86, 0x19};
+
+// The whole gzip stream in memory; NULL when it is damaged, so no part of a broken archive is indexed
+static uint8_t *gunzip_all(const uint8_t *z, size_t zn, size_t *outn) {
+    if (zn > 0x7FFFFFFF) return NULL;
+    z_stream s;
+    memset(&s, 0, sizeof s);
+    if (inflateInit2(&s, 15 + 16) != Z_OK) return NULL;  // gzip only
+    size_t cap = zn * 4 + 0x10000, len = 0;
+    uint8_t *o = malloc(cap);
+    s.next_in = (Bytef *)z, s.avail_in = (uInt)zn;
+    while (o) {
+        if (cap - len < 0x10000) {
+            uint8_t *t = realloc(o, cap * 2);
+            if (!t) { free(o); o = NULL; break; }
+            o = t, cap *= 2;
+        }
+        s.next_out = o + len, s.avail_out = (uInt)(cap - len);
+        int r = inflate(&s, Z_NO_FLUSH);
+        len = cap - s.avail_out;
+        if (r == Z_STREAM_END) {
+            if (!s.avail_in) break;
+            if (inflateReset(&s) != Z_OK) { free(o); o = NULL; break; }  // (the next member)
+        } else if (r != Z_OK) { free(o); o = NULL; break; }  // (Z_BUF_ERROR: the stream ends early)
+    }
+    inflateEnd(&s);
+    *outn = len;
+    return o;
 }
 
-// The BNSH containers in d[0..n), one game file at base in path
+// The GLSLC output at u[b..] (its header: total length +0x44, section count +0x4c; sections {size, data offset, type 0 =
+// GPU code} at 0x90 + 0x90 i, control and code {offset, length} at +0x30). A program's code is hashed like a BNSH one:
+// from its code up to the end of its constants (control +0x6FC size, +0x700 offset).
+static void idx_glslc(const uint8_t *u, size_t n, size_t b, uint32_t file) {
+    if (b + 0x90 > n) return;
+    uint32_t tot = rd32(u, b + 0x44), cnt = rd32(u, b + 0x4c);
+    if (!cnt || cnt > 16 || tot < 0x90 + 0x90 * (size_t)cnt || tot > n - b) return;
+    for (uint32_t i = 0; i < cnt; i++) {
+        size_t h = b + 0x90 + 0x90 * (size_t)i;
+        if (h + 0x40 > b + tot) break;
+        uint32_t dsz = rd32(u, h), doffs = rd32(u, h + 4), typ = rd32(u, h + 8);
+        uint32_t ctl_off = rd32(u, h + 0x30), code_off = rd32(u, h + 0x34), code_len = rd32(u, h + 0x38), ctl_len = rd32(u, h + 0x3c);
+        if (typ != 0 || ctl_len < 0x750 || doffs > tot || dsz > tot - doffs) continue;
+        if (ctl_off > dsz || ctl_len > dsz - ctl_off || code_off > dsz || code_len > dsz - code_off) continue;
+        size_t sec = b + doffs;
+        uint32_t coff = rd32(u, sec + ctl_off + 0x700), cs = rd32(u, sec + ctl_off + 0x6FC);
+        uint64_t len = (uint64_t)coff + cs;
+        if (!len || len > code_len) continue;
+        size_t code = sec + code_off;
+        idx_add(shader_code_hash(u + code, (size_t)len), file, (uint32_t)code, (uint32_t)len, coff, cs);
+    }
+}
+
+// The U8 archive u[0..n): the GLSLC outputs in its files, found at 16-aligned places (a file starts with one or with
+// data before it)
+static void idx_u8(const uint8_t *u, size_t n, uint32_t file) {
+    if (n < 0x20 || rd32be(u, 0) != 0x55AA382D) return;
+    size_t root = rd32be(u, 4), data = rd32be(u, 0x0C);
+    if (root + 12 > n || data > n) return;
+    size_t cnt = rd32be(u, root + 8);  // (the root node's next index: the node count)
+    if (cnt < 1 || cnt > (n - root) / 12) return;
+    for (size_t i = 1; i < cnt; i++) {
+        size_t o = root + i * 12;  // node: type (1 byte, 0 file), name offset (3), data offset, size
+        if (u[o] != 0) continue;
+        size_t a = rd32be(u, o + 4), s = rd32be(u, o + 8);
+        if (a > n - data || s > n - data - a) continue;
+        for (size_t p = 0; p + 0x90 <= s; p += 0x10)
+            if (!memcmp(u + data + a + p, glslc_magic, 4)) idx_glslc(u, n, data + a + p, file);
+    }
+}
+
+static void idx_shaders_gz(const uint8_t *z, size_t zn, const char *path) {
+    (void)path;
+    size_t n = 0;
+    uint8_t *u = gunzip_all(z, zn, &n);
+    if (!u) return;
+    uint32_t file = (uint32_t)idx_nfiles;
+    size_t before = idx_n;
+    idx_u8(u, n, file);
+    if (idx_n == before) { free(u); return; }
+    idx_files = realloc(idx_files, sizeof *idx_files * (size_t)(idx_nfiles + 1));
+    idx_files[idx_nfiles] = (IdxSrc){NULL, u, 0, idx_nfiles};
+    idx_nfiles++;
+}
+
+static bool idx_ext(const char *name, size_t l) {  // a shader archive, effect or UI archive
+    return (l > 5 && (!strcmp(name + l - 5, "bfsha") || !strcmp(name + l - 5, ".ptcl"))) ||
+           (l > 4 && !strcmp(name + l - 4, ".arc")) || (l > 7 && !strcmp(name + l - 7, ".arc.gz"));
+}
+
+// The BNSH containers in d[0..n), one game file at base in path (a gzip file: its U8 archive's GLSLC outputs)
 static void idx_buf(const uint8_t *d, size_t n, const char *path, uint64_t base, int fh) {
+    if (n > 2 && d[0] == 0x1f && d[1] == 0x8b) { idx_shaders_gz(d, n, path); return; }
     uint32_t file = (uint32_t)idx_nfiles;
     bool any = false;
     off_reset();

@@ -20,13 +20,14 @@ static void check(const char *hash, const char *code_path, FILE **files) {
 }
 
 int main(int argc, char **argv) {
-    assert(argc == 6);
+    assert(argc == 8);
     idx_game(argv[1]);  // (argv[1]/romfs doesn't exist: argv[1].bin is the game files)
     printf("indexed %zu shaders in %d files\n", idx_n, idx_nfiles);
-    assert(idx_n == 2 && idx_nfiles == 2);
+    assert(idx_n == 3 && idx_nfiles == 3);  // (the damaged gzip indexes nothing)
     assert(idx_files[1].fh == idx_files[0].fh);  // (one open handle for the image)
     FILE **files = calloc((size_t)idx_nfiles + 1, sizeof *files);
     check(argv[2], argv[4], files);
     check(argv[3], argv[5], files);
+    check(argv[6], argv[7], files);  // (from the gzip's decompressed archive, held in memory)
     return 0;
 }
