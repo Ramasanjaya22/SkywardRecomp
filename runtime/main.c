@@ -253,11 +253,14 @@ int main(int argc, char **argv) {
         extern int launcher_prepare(const char *root, const char *game, const char *keys, FILE *out);
         exit(launcher_prepare(root, game, keys, progress));
     }
-    {  // an update (another version than last time): the saves backed up first, in case the new one mishandles them
+    {  // an update (another version than last time): the saves backed up first; otherwise this session's automatic
+       // backup, which skips an unchanged save (so no duplicates) and keeps the newest SAVE_BACKUP_KEEP
         extern const char *larecomp_version(void);
         char made[64];
         if (save_backup_on_update(rt_data_root(), larecomp_version(), made, sizeof made))
             LOG("[save] new version %s: saves backed up to backups/%s\n", larecomp_version(), made);
+        else if (save_backup_auto(rt_data_root(), made, sizeof made))
+            LOG("[save] saves backed up to backups/%s\n", made);
     }
     for (bool title = !skip_launcher;;) {
         if (title && no_launcher) {

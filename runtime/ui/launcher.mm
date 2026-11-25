@@ -2262,9 +2262,11 @@ static void save_data_ui(float sc, bool busy) {
             if (ok) set_job("Save data imported."); else set_job("Could not import the save data.", true, why);
             report(ok, "Save data imported.", why);
         }
+        ImGui::PushFont(g_font_small);
         ImGui::PushTextWrapPos(0);
-        ImGui::TextDisabled("Detected from: %s/save (and %s/rando/<seed>/save)", rt_data_root(), rt_data_root());
+        ImGui::TextDisabled("Saves: %s/save", rt_data_root());
         ImGui::PopTextWrapPos();
+        ImGui::PopFont();
         if (opt_action("Back up now", "", "Copies your saves (and each randomizer seed's) to the backups "
                        "folder. An unchanged save is not backed up twice; the newest 20 are kept.", true)) {
             bool ok = save_backup_create(rt_data_root(), made, sizeof made, why, sizeof why);
@@ -2275,6 +2277,74 @@ static void save_data_ui(float sc, bool busy) {
                        "wiiking2.sav, savedataN.bin or zelda.sav (and skip.dat / screenshots). Your current saves "
                        "are backed up first.", true))
             SDL_ShowOpenFolderDialog(picked_saves, NULL, g_launcher_win, NULL, false);
+
+        // Emulator saves found on this PC (runtime/save_emu.c): the folders they were read from, and one Import a row.
+        static SaveEmuHit hits[8];
+        static int nhits = -1;
+        static double scanned;
+        if (nhits < 0 || ImGui::GetTime() - scanned > 15) nhits = save_emu_find(hits, 8), scanned = ImGui::GetTime();
+        opt_section("Emulator saves");
+        if (nhits > 0) {
+            ImGui::PushFont(g_font_small);
+            if (ImGui::BeginTable("##emusaves", 5,
+                                  ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("Emulator");
+                ImGui::TableSetupColumn("Profile");
+                ImGui::TableSetupColumn("Modified");
+                ImGui::TableSetupColumn("Folder");
+                ImGui::TableSetupColumn("Action");
+                ImGui::TableHeadersRow();
+                for (int i = 0; i < nhits; i++) {
+                    char when[32] = "";
+                    time_t t = (time_t)hits[i].when;
+                    struct tm *lt = t > 0 ? localtime(&t) : NULL;
+                    if (lt) strftime(when, sizeof when, "%Y-%m-%d %H:%M", lt);
+                    const char *name = hits[i].display[0] ? hits[i].display : hits[i].emu;
+                    ImGui::TableNextRow();
+                    ImGui::PushID(hits[i].path);
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::TextUnformatted(name);
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TextUnformatted(hits[i].profile);
+                    ImGui::TableSetColumnIndex(2);
+                    ImGui::TextUnformatted(when);
+                    ImGui::TableSetColumnIndex(3);
+                    ImGui::TextUnformatted(hits[i].path);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", hits[i].path);  // (clipped to the column)
+                    ImGui::TableSetColumnIndex(4);
+                    if (ImGui::SmallButton("Import")) {
+                        g_sb_confirm = std::string("emusave:") + hits[i].path;
+                        g_emu_pending = hits[i];
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndTable();
+            }
+            ImGui::PopFont();
+        } else {
+            char where[900] = "";
+            save_emu_where(where, sizeof where);
+            ImGui::PushTextWrapPos(0);
+            ImGui::TextDisabled("No emulator saves found in: %s", where[0] ? where : rt_data_root());
+            ImGui::PopTextWrapPos();
+        }
+        bool emu_asking = g_sb_confirm.rfind("emusave:", 0) == 0;
+        if (emu_asking && opt_action("Import it now", "", "Replaces your current saves. They are backed up first.", true)) {
+            g_sb_confirm.clear();
+            char running[48] = "";
+            if (save_emu_running(running, sizeof running))
+                set_job(std::string("Close ") + running + " first.", true, "The emulator may overwrite the save while it runs.");
+            else if (save_backup_import(rt_data_root(), g_emu_pending.path, why, sizeof why)) {
+                char saved[96];
+                snprintf(saved, sizeof saved, "Save imported from %s.", g_emu_pending.display);
+                set_job(saved);
+                report(true, saved, NULL);
+                nhits = -1;  // (the row's date changed: scan again)
+            } else {
+                set_job("Could not import the save.", true, why);
+                report(false, NULL, why);
+            }
+        }
         static SaveBackup list[SAVE_BACKUP_KEEP];
         int nb = save_backup_list(rt_data_root(), list, SAVE_BACKUP_KEEP);
         if (nb) {
@@ -2293,24 +2363,22 @@ static void save_data_ui(float sc, bool busy) {
                     strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S", localtime(&t));
                     snprintf(size, sizeof size, "%.1f MB", list[i].bytes / 1e6);
                     bool asking = g_sb_confirm == list[i].name;
+                    auto restore = [&] {
+                        g_sb_confirm.clear();
+                        bool ok = save_backup_restore(rt_data_root(), list[i].name, why, sizeof why);
+                        if (ok) set_job("Saves restored."); else set_job("Could not restore the saves.", true, why);
+                        report(ok, "Saves restored.", ok ? NULL : why);
+                    };
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);
                     ImGui::PushID(list[i].name);
-                    if (ImGui::Selectable(when, false)) {
-                        if (!asking) g_sb_confirm = list[i].name;
-                        else {
-                            g_sb_confirm.clear();
-                            bool ok = save_backup_restore(rt_data_root(), list[i].name, why, sizeof why);
-                            if (ok) set_job("Saves restored."); else set_job("Could not restore the saves.", true, why);
-                            report(ok, "Saves restored.", why);
-                        }
-                    }
+                    if (ImGui::Selectable(when, false)) asking ? restore() : (void)(g_sb_confirm = list[i].name);
                     ImGui::TableSetColumnIndex(1);
                     ImGui::TextUnformatted(strstr(list[i].name, "-auto") ? "Auto" : "Manual");
                     ImGui::TableSetColumnIndex(2);
                     ImGui::TextUnformatted(size);
                     ImGui::TableSetColumnIndex(3);
-                    ImGui::TextUnformatted(asking ? "Confirm" : "Select");
+                    if (ImGui::SmallButton(asking ? "Confirm" : "Restore")) asking ? restore() : (void)(g_sb_confirm = list[i].name);
                     ImGui::PopID();
                 }
                 ImGui::EndTable();
@@ -2321,7 +2389,7 @@ static void save_data_ui(float sc, bool busy) {
                       g_sb_confirm.rfind("export:", 0) != 0;
         if (asking && opt_action("Cancel", "", "Keeps your current saves.", true)) {
             g_sb_confirm.clear();
-            report(true, "Restore cancelled.", NULL);
+            report(true, "Cancelled.", NULL);
         }
         if (opt_action("Open backups folder", "", "Shows the folder the backups are kept in.", true)) {
             std::string dir = std::string(rt_data_root()) + "/backups";
@@ -3129,11 +3197,11 @@ extern "C" void launcher_run(const char *root) {
                         if (emu_scan(g_emu_dir) <= 0)
                             set_job("No save of the game there: start it once in the emulator and save.", true);
                     }
-                    if (opt_action("Import save…", "", "Copies an emulator's save into SkywardRecomp.", false)) {
+                    if (opt_action("Import from emulator...", "", "Copies an emulator's save into SkywardRecomp.", false)) {
                         g_emu_import = true;
                         SDL_ShowOpenFolderDialog(picked_emu, NULL, g_launcher_win, "Select the emulator's save folder", false);
                     }
-                    if (opt_action("Export save…", "", "Copies your save into an emulator's folder.", false)) {
+                    if (opt_action("Export to emulator...", "", "Copies your save into an emulator's folder.", false)) {
                         g_emu_import = false;
                         SDL_ShowOpenFolderDialog(picked_emu, NULL, g_launcher_win, "Select the emulator's save folder", false);
                     }

@@ -21,6 +21,9 @@ int save_emu_find_under(const char *dir, const char *emu, SaveEmuHit *out, int m
 /* True if a known emulator is running; puts its display name in display. */
 bool save_emu_running(char *display, size_t n);
 
+/* The data folders save_emu_find looked in that exist here, comma separated ("nothing found: where else to look"). */
+int save_emu_where(char *out, size_t cap);
+
 /* Copy this PC's save into an emulator's save folder, keeping its old save in
  * <root>/backups/export-<emu>-<stamp>/. False: why says why, nothing changed. */
 bool save_emu_export(const char *root, const char *dst, const char *emu,

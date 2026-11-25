@@ -15,6 +15,9 @@ bool save_backup_create(const char *root, char *name_out, size_t n, char *why, s
 // At start: when this app version differs from the one that last ran here (backups/last_version.txt), an "-auto"
 // backup of the saves, then the version noted. true: one was made (its name in name_out).
 bool save_backup_on_update(const char *root, const char *version, char *name_out, size_t n);
+// This session's automatic backup: an "-auto" one when the saves changed since the newest backup that matches them,
+// nothing when they didn't (no duplicates), pruned to the newest SAVE_BACKUP_KEEP. true: one was made.
+bool save_backup_auto(const char *root, char *name_out, size_t n);
 // The backups, newest first. Returns how many (at most max).
 int save_backup_list(const char *root, SaveBackup *out, int max);
 // The saves replaced by that backup (an "-auto" backup of the current ones first). false: why says why, the saves are

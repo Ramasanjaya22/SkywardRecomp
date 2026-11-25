@@ -283,23 +283,29 @@ bool save_backup_create(const char *root, char *name_out, size_t n, char *why, s
     return create(root, false, name_out, n, why, cap);
 }
 
+bool save_backup_auto(const char *root, char *name_out, size_t n) {
+    char name[64], why[300];
+    if (n) name_out[0] = 0;
+    bool made = create(root, true, name, sizeof name, why, sizeof why) && name[0];
+    if (made) prune(root, name, NULL);  // (the new one kept, as in create)
+    if (n) snprintf(name_out, n, "%s", made ? name : "");
+    return made;
+}
+
 bool save_backup_on_update(const char *root, const char *version, char *name_out, size_t n) {
-    char path[1100], have[128] = "", why[300];
+    char path[1100], have[128] = "";
     if (n) name_out[0] = 0;
     jn(path, sizeof path, root, "backups/last_version.txt");
     FILE *f = fopen(path, "rb");
     if (f) { have[fread(have, 1, sizeof have - 1, f)] = 0; fclose(f); }
     if (!strcmp(have, version)) return false;
     // (no file: a first run, or an update from a build that didn't write it - a backup either way, when there are saves)
-    char name[64];
-    bool made = create(root, true, name, sizeof name, why, sizeof why) && name[0];
+    bool made = save_backup_auto(root, name_out, n);
     if (made) {
-        prune(root, name, NULL);  // (the new one kept, as in create)
         // Only note the version once the backup exists: a failed one is retried next boot instead of being lost.
         parent_dirs(path);
         if ((f = fopen(path, "wb"))) { fputs(version, f); fclose(f); }
     }
-    if (n) snprintf(name_out, n, "%s", made ? name : "");
     return made;
 }
 

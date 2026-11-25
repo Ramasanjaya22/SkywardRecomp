@@ -305,6 +305,28 @@ static bool export_is_dir(const char *p)
     return stat(p, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
+int save_emu_where(char *out, size_t cap)
+{
+    char data[1100], root[1100];
+    size_t used = 0;
+    int n = 0, i;
+
+    if (!out || !cap) return 0;
+    out[0] = 0;
+    data_root(data, sizeof data);
+    if (!data[0]) return 0;
+    for (i = 0; i < (int)(sizeof EMUS / sizeof EMUS[0]); ++i) {
+        const EmuDef *def = &EMUS[i];
+        if (!strcmp(def->name, "ryujinx")) ryujinx_root(root, sizeof root, data);
+        else join(root, sizeof root, data, def->process);
+        if (!export_is_dir(root)) continue;
+        if (used + strlen(root) + 3 >= cap) break;
+        used += (size_t)snprintf(out + used, cap - used, "%s%s", used ? ", " : "", root);
+        n++;
+    }
+    return n;
+}
+
 static bool export_is_link(const char *p)
 {
 #ifdef _WIN32

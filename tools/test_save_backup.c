@@ -1,5 +1,5 @@
 // Save data backups (runtime/save_backup.c), driven by tools/test_save_backup.py:
-//   test_save_backup <root> create | list | restore <name> | import <dir> | update <version>
+//   test_save_backup <root> create | auto | list | restore <name> | import <dir> | update <version>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,6 +49,9 @@ int main(int argc, char **argv) {
     } else if (!strcmp(cmd, "update") && argc > 3) {
         bool ok = save_backup_on_update(root, argv[3], name, sizeof name);
         printf("UPDATE %d %s|\n", ok, name);
+    } else if (!strcmp(cmd, "auto")) {
+        bool ok = save_backup_auto(root, name, sizeof name);
+        printf("AUTO %d %s|\n", ok, name);
     } else if (!strcmp(cmd, "emu-export") && argc > 4) {
         char backup[1100] = "";
         bool ok = save_emu_export(root, argv[3], argv[4], backup, sizeof backup, why, sizeof why);

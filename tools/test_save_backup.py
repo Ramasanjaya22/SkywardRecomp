@@ -178,6 +178,19 @@ with tempfile.TemporaryDirectory() as directory:
     assert not ok_of(run('update', '9.9.1')[0], 'UPDATE')[0] and len(backups()) == min(n0 + 1, 20), 'unchanged saves duplicated'
     assert not subprocess.run([str(exe), str(empty), 'update', '1'], capture_output=True, text=True).stdout.startswith('UPDATE 1')
     print('update: changed saves backed up once; unchanged saves / same version / no saves: no duplicate')
+
+    # a session's automatic backup (main.c, every start): one when the saves changed since the newest backup that
+    # matches them, none when they did not - so repeated starts never pile up identical copies
+    n0 = len(backups())
+    put(data, SAVE, os.urandom(SIZE))
+    line = run('auto')[0]
+    made = line.split()[2].rstrip('|')
+    assert ok_of(line, 'AUTO')[0] and made.endswith('-auto') and len(backups()) == min(n0 + 1, 20), line
+    assert (data / 'backups' / made / SAVE).exists()
+    assert not ok_of(run('auto')[0], 'AUTO')[0] and len(backups()) == min(n0 + 1, 20), 'unchanged saves duplicated'
+    put(data, SEED, os.urandom(SIZE))  # a seed's save alone counts as a change
+    assert ok_of(run('auto')[0], 'AUTO')[0] and len(backups()) == min(n0 + 2, 20)
+    print('auto: a changed save is backed up once per session, an unchanged one never twice')
     # import from an emulator's save folder: wiiking2.sav (size-checked), skip.dat, N.screenshot (may be empty)
     W = 'save/save_0/wiiking2.sav'
     put(data, W, os.urandom(SIZE))
