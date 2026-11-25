@@ -2715,7 +2715,7 @@ extern "C" void launcher_run(const char *root) {
                 ImGui::Spacing();
 
                 pthread_mutex_lock(&g_lock);
-                std::string src = g_src, job = g_job, job_hint = g_job_hint, found = g_found, job_tech = g_job_tech;
+                std::string src = g_src, job = g_job, job_hint = g_job_hint, found = g_found, job_tech = g_job_tech, upick = g_update_pick, kpick = g_keys_pick;
                 bool failed = g_job_failed;
                 int job_kind = g_job_kind;
                 pthread_mutex_unlock(&g_lock);
@@ -2738,7 +2738,6 @@ extern "C" void launcher_run(const char *root) {
                                     "the extracted game files (exefs/romfs), or the game's .nsp package. Version 1.0.0 and "
                                     "1.0.1 are supported; for 1.0.1, keep the base game's .nsp and its update .nsp in this folder "
                                     "(or choose the update below). The game isn't included with SkywardRecomp.";
-                if (!src.empty()) src_d += "\n\nChosen: " + src + (found.empty() ? "" : "\n\n" + found);
                 if (std::string v = detected_game_version(); !v.empty()) src_d += "\n\nDetected version: " + v + ".";
                 // the step that's running / its result, under the rows and in the Set up row's explanation
                 const std::string &job_line = job;
@@ -2964,6 +2963,36 @@ extern "C" void launcher_run(const char *root) {
                     ImGui::TextColored(ImVec4(0.55f, 0.58f, 0.52f, 1), "%s", PICK_FOLDER_HINT);
                     ImGui::PopTextWrapPos();
                     opt_split_end();
+                }
+                // SKY-37: Level 3 diagnostics live here, never in the main flow (both states).
+                ImGui::Dummy(ImVec2(0, 10 * sc));
+                if (ImGui::CollapsingHeader("Advanced details")) {
+                    static std::string ver_label;  // (game_release_label reads files: only when the folder changes)
+                    static int ver_of = -1;
+                    static std::string ver_root;
+                    if (ver_of != g_files_changes.load() || ver_root != g_root) {
+                        ver_of = g_files_changes.load(), ver_root = g_root;
+                        char rel[64] = {0};
+                        const char *v = game_release_label((g_root + "/exefs").c_str(), rel, sizeof rel);
+                        ver_label = v ? v : "";
+                    }
+                    const ImVec4 dim_txt(0.55f, 0.58f, 0.52f, 1);
+                    const char *dash = "-";
+                    ImGui::PushTextWrapPos(0);
+                    ImGui::TextColored(dim_txt, "Game path\n%s", src.empty() ? dash : src.c_str());
+                    ImGui::TextColored(dim_txt, "Version\n%s", ver_label.empty() ? dash : ver_label.c_str());
+                    ImGui::TextColored(dim_txt, "ExeFS\n%s", g_root.empty() ? dash : (g_root + "/exefs").c_str());
+                    ImGui::TextColored(dim_txt, "RomFS\n%s", g_root.empty() ? dash : (g_root + "/romfs").c_str());
+                    if (!found.empty())
+                        ImGui::TextColored(dim_txt, "Detection\n%s", found.c_str());
+                    ImGui::TextColored(dim_txt, "Update\n%s", upick.empty() ? "None" : upick.c_str());
+                    ImGui::TextColored(dim_txt, "Validation\n%s", status.empty() ? "OK" : status.c_str());
+                    if (!kpick.empty())
+                        ImGui::TextColored(dim_txt, "Keys\n%s", kpick.c_str());
+                    ImGui::TextColored(dim_txt, "Config\n%s/skywardrecomp.ini", rt_data_root());
+                    ImGui::TextColored(dim_txt, "Log\n%s/skywardrecomp.log", rt_data_root());
+                    ImGui::PopTextWrapPos();
+                    if (ImGui::SmallButton("Open data folder")) SDL_OpenURL((std::string("file:///") + rt_data_root()).c_str());
                 }
                 if (g_confirm_delete && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
                                          ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
