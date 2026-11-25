@@ -1337,8 +1337,9 @@ void mods_tab_draw(float sc) {
 
 // A big menu line: gold + a marker when focused / hovered (keyboard, gamepad or mouse), grey when disabled
 static bool g_menu_small;  // sub pages: buttons in the small font
-void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, void (*prelaunch)(float));  // menu.mm
+void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, void (*prelaunch)(float), void (*save_data)(float));  // menu.mm
 void menu_tabs_focus(bool first_tab);
+void menu_tabs_focus_tab(int id);
 extern int g_tab_request_ext;
 extern "C" void menu_apply_window_requests(void *sdl_window);
 extern "C" void input_cursor_event(const SDL_Event *e);  // runtime/hle/input.c
@@ -2263,6 +2264,105 @@ static void draw_status_checklist(const std::string &status, bool busy, float x0
     }
 }
 
+// Save data table and actions, shared by Game Files > More and Settings > Saves.
+static void save_data_ui(float sc, bool busy) {
+    (void)sc;
+    if (!busy) {
+        opt_section("Save data");
+        char why[512] = "", made[64] = "";
+        static char msg[512];
+        static bool bad;
+        auto report = [&](bool ok, const char *done, const char *err) {
+            bad = !ok;
+            snprintf(msg, sizeof msg, "%s", ok ? done : (err && *err ? err : done));
+        };
+        std::string picked_dir;
+        pthread_mutex_lock(&g_lock);
+        picked_dir.swap(g_sb_pick);
+        pthread_mutex_unlock(&g_lock);
+        if (!picked_dir.empty()) {
+            bool ok = save_backup_import(rt_data_root(), picked_dir.c_str(), why, sizeof why);
+            if (ok) set_job("Save data imported."); else set_job("Could not import the save data.", true, why);
+            report(ok, "Save data imported.", why);
+        }
+        ImGui::PushTextWrapPos(0);
+        ImGui::TextDisabled("Detected from: %s/save (and %s/rando/<seed>/save)", rt_data_root(), rt_data_root());
+        ImGui::PopTextWrapPos();
+        if (opt_action("Back up now", "", "Copies your saves (and each randomizer seed's) to the backups "
+                       "folder. An unchanged save is not backed up twice; the newest 20 are kept.", true)) {
+            bool ok = save_backup_create(rt_data_root(), made, sizeof made, why, sizeof why);
+            if (ok) set_job("Saves backed up."); else set_job("Could not back up the saves.", true, why);
+            report(ok, made[0] ? "Saves backed up." : "Save data unchanged; no new backup.", why);
+        }
+        if (opt_action("Import save...", "", "Takes saves from a folder: a backup folder, or one with "
+                       "wiiking2.sav, savedataN.bin or zelda.sav (and skip.dat / screenshots). Your current saves "
+                       "are backed up first.", true))
+            SDL_ShowOpenFolderDialog(picked_saves, NULL, g_launcher_win, NULL, false);
+        static SaveBackup list[SAVE_BACKUP_KEEP];
+        int nb = save_backup_list(rt_data_root(), list, SAVE_BACKUP_KEEP);
+        if (nb) {
+            opt_section("Backups");
+            ImGui::PushFont(g_font_small);
+            if (ImGui::BeginTable("##backups", 4,
+                                  ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("When");
+                ImGui::TableSetupColumn("Type");
+                ImGui::TableSetupColumn("Size");
+                ImGui::TableSetupColumn("Action");
+                ImGui::TableHeadersRow();
+                for (int i = 0; i < nb; i++) {
+                    char when[48], size[32];
+                    time_t t = (time_t)list[i].when;
+                    strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S", localtime(&t));
+                    snprintf(size, sizeof size, "%.1f MB", list[i].bytes / 1e6);
+                    bool asking = g_sb_confirm == list[i].name;
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::PushID(list[i].name);
+                    if (ImGui::Selectable(when, false)) {
+                        if (!asking) g_sb_confirm = list[i].name;
+                        else {
+                            g_sb_confirm.clear();
+                            bool ok = save_backup_restore(rt_data_root(), list[i].name, why, sizeof why);
+                            if (ok) set_job("Saves restored."); else set_job("Could not restore the saves.", true, why);
+                            report(ok, "Saves restored.", why);
+                        }
+                    }
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TextUnformatted(strstr(list[i].name, "-auto") ? "Auto" : "Manual");
+                    ImGui::TableSetColumnIndex(2);
+                    ImGui::TextUnformatted(size);
+                    ImGui::TableSetColumnIndex(3);
+                    ImGui::TextUnformatted(asking ? "Confirm" : "Select");
+                    ImGui::PopID();
+                }
+                ImGui::EndTable();
+            }
+            ImGui::PopFont();
+        }
+        bool asking = !g_sb_confirm.empty() && g_sb_confirm.rfind("import:", 0) != 0 &&
+                      g_sb_confirm.rfind("export:", 0) != 0;
+        if (asking && opt_action("Cancel", "", "Keeps your current saves.", true)) {
+            g_sb_confirm.clear();
+            report(true, "Restore cancelled.", NULL);
+        }
+        if (opt_action("Open backups folder", "", "Shows the folder the backups are kept in.", true)) {
+            std::string dir = std::string(rt_data_root()) + "/backups";
+            mkdir(dir.c_str(), 0755);
+            if (SDL_OpenURL(("file:///" + dir).c_str()) == 0) report(true, "Backups folder opened.", NULL);
+            else report(false, NULL, "Couldn't open the backups folder.");
+        }
+        if (msg[0]) {
+            ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.5f));
+            ImGui::PushTextWrapPos(0);
+            ImGui::TextColored(bad ? PAL_ERR_V4 : PAL_OK_V4, "%s", msg);
+            ImGui::PopTextWrapPos();
+        }
+    }
+}
+
+static void save_data_tab(float sc) { save_data_ui(sc, false); }
+
 extern "C" void launcher_run(const char *root) {
     g_root = root;
     g_start_screen = 1;
@@ -2710,6 +2810,11 @@ extern "C" void launcher_run(const char *root) {
                     if (g_refocus == SETUP) { ImGui::SetKeyboardFocusHere(), g_refocus = MAIN; }
                     if (link("GAME FILES", !busy)) page = SETUP;
                 }
+                if (g_refocus == SETTINGS) { ImGui::SetKeyboardFocusHere(), g_refocus = MAIN; }
+                if (link("SAVE DATA", true)) {
+                    menu_tabs_focus_tab(10);  // Settings opens straight on the Saves tab
+                    page = SETTINGS;
+                }
                 {  // a newer release opens its page; otherwise the row asks GitHub again
                     pthread_mutex_lock(&g_update_lock);
                     std::string upd = g_update_tag;
@@ -2770,7 +2875,7 @@ extern "C" void launcher_run(const char *root) {
                     dl->AddLine(ImVec2(p.x + bx - m, p.y + m), ImVec2(p.x + m, p.y + bx - m), col, t);
                 }
                 bool popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);  // (before the pages run, like the menu)
-                menu_tabs_draw(sc, g_font_small, g_font_menu, false, prelaunch_tab);
+                menu_tabs_draw(sc, g_font_small, g_font_menu, false, prelaunch_tab, save_data_tab);
                 int cap_dev;
                 bind_capture_active(&cap_dev, NULL, NULL);
                 if (!popup && !typing && cap_dev < 0 && !controls_ui_took_back() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
@@ -3061,97 +3166,9 @@ extern "C" void launcher_run(const char *root) {
                     }
                 }
                 if (!busy) {
-                    opt_section("Save data");
-                    char why[512] = "", made[64] = "";
-                    static char msg[512];
-                    static bool bad;
-                    auto report = [&](bool ok, const char *done, const char *err) {
-                        bad = !ok;
-                        snprintf(msg, sizeof msg, "%s", ok ? done : (err && *err ? err : done));
-                    };
-                    std::string picked_dir;
-                    pthread_mutex_lock(&g_lock);
-                    picked_dir.swap(g_sb_pick);
-                    pthread_mutex_unlock(&g_lock);
-                    if (!picked_dir.empty()) {
-                        bool ok = save_backup_import(rt_data_root(), picked_dir.c_str(), why, sizeof why);
-                        if (ok) set_job("Save data imported."); else set_job("Could not import the save data.", true, why);
-                        report(ok, "Save data imported.", why);
-                    }
-                    ImGui::PushTextWrapPos(0);
-                    ImGui::TextDisabled("Detected from: %s/save (and %s/rando/<seed>/save)", rt_data_root(), rt_data_root());
-                    ImGui::PopTextWrapPos();
-                    if (opt_action("Back up now", "", "Copies your saves (and each randomizer seed's) to the backups "
-                                   "folder. An unchanged save is not backed up twice; the newest 20 are kept.", true)) {
-                        bool ok = save_backup_create(rt_data_root(), made, sizeof made, why, sizeof why);
-                        if (ok) set_job("Saves backed up."); else set_job("Could not back up the saves.", true, why);
-                        report(ok, made[0] ? "Saves backed up." : "Save data unchanged; no new backup.", why);
-                    }
-                    if (opt_action("Import save...", "", "Takes saves from a folder: a backup folder, or one with "
-                                   "wiiking2.sav, savedataN.bin or zelda.sav (and skip.dat / screenshots). Your current saves "
-                                   "are backed up first.", true))
-                        SDL_ShowOpenFolderDialog(picked_saves, NULL, g_launcher_win, NULL, false);
-                    static SaveBackup list[SAVE_BACKUP_KEEP];
-                    int nb = save_backup_list(rt_data_root(), list, SAVE_BACKUP_KEEP);
-                    if (nb) {
-                        opt_section("Backups");
-                        ImGui::PushFont(g_font_small);
-                        if (ImGui::BeginTable("##backups", 4,
-                                              ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
-                            ImGui::TableSetupColumn("When");
-                            ImGui::TableSetupColumn("Type");
-                            ImGui::TableSetupColumn("Size");
-                            ImGui::TableSetupColumn("Action");
-                            ImGui::TableHeadersRow();
-                            for (int i = 0; i < nb; i++) {
-                                char when[48], size[32];
-                                time_t t = (time_t)list[i].when;
-                                strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S", localtime(&t));
-                                snprintf(size, sizeof size, "%.1f MB", list[i].bytes / 1e6);
-                                bool asking = g_sb_confirm == list[i].name;
-                                ImGui::TableNextRow();
-                                ImGui::TableSetColumnIndex(0);
-                                ImGui::PushID(list[i].name);
-                                if (ImGui::Selectable(when, false)) {
-                                    if (!asking) g_sb_confirm = list[i].name;
-                                    else {
-                                        g_sb_confirm.clear();
-                                        bool ok = save_backup_restore(rt_data_root(), list[i].name, why, sizeof why);
-                                        if (ok) set_job("Saves restored."); else set_job("Could not restore the saves.", true, why);
-                                        report(ok, "Saves restored.", why);
-                                    }
-                                }
-                                ImGui::TableSetColumnIndex(1);
-                                ImGui::TextUnformatted(strstr(list[i].name, "-auto") ? "Auto" : "Manual");
-                                ImGui::TableSetColumnIndex(2);
-                                ImGui::TextUnformatted(size);
-                                ImGui::TableSetColumnIndex(3);
-                                ImGui::TextUnformatted(asking ? "Confirm" : "Select");
-                                ImGui::PopID();
-                            }
-                            ImGui::EndTable();
-                        }
-                        ImGui::PopFont();
-                    }
-                    bool asking = !g_sb_confirm.empty() && g_sb_confirm.rfind("import:", 0) != 0 &&
-                                  g_sb_confirm.rfind("export:", 0) != 0;
-                    if (asking && opt_action("Cancel", "", "Keeps your current saves.", true)) {
-                        g_sb_confirm.clear();
-                        report(true, "Restore cancelled.", NULL);
-                    }
-                    if (opt_action("Open backups folder", "", "Shows the folder the backups are kept in.", true)) {
-                        std::string dir = std::string(rt_data_root()) + "/backups";
-                        mkdir(dir.c_str(), 0755);
-                        if (SDL_OpenURL(("file:///" + dir).c_str()) == 0) report(true, "Backups folder opened.", NULL);
-                        else report(false, NULL, "Couldn't open the backups folder.");
-                    }
-                    if (msg[0]) {
-                        ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.5f));
-                        ImGui::PushTextWrapPos(0);
-                        ImGui::TextColored(bad ? PAL_ERR_V4 : PAL_OK_V4, "%s", msg);
-                        ImGui::PopTextWrapPos();
-                    }
-                    std::string emu_pick;
+                save_data_ui(sc, busy);
+                char why[512] = "";  // (the emulator rows below use it)
+                std::string emu_pick;
                     pthread_mutex_lock(&g_lock);
                     emu_pick.swap(g_emu_pick);
                     pthread_mutex_unlock(&g_lock);

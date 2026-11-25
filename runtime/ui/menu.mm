@@ -302,10 +302,13 @@ static bool g_page_fresh_seen;  // (focus_check: the menu opened)
 static bool g_page_fresh;  // the page shown hasn't been entered yet: the first Down goes to its first enabled row
 static bool g_page_focus_next;  // (that page has no option rows: its first control takes the cursor next frame)
 static int g_shown_tab = -1000;  // the page drawn last (its id)
+int g_tab_request_ext = -1;
 void menu_tabs_focus(bool first_tab) {
     g_focus_tab = first_tab ? -1 : -100, g_focus_frames = 0, g_page_fresh = g_page_fresh_seen = true;
 }
-int g_tab_request_ext = -1;
+void menu_tabs_focus_tab(int id) {
+    g_tab_request_ext = id, menu_tabs_focus(false);
+}
 
 static void style_init(void) {
     ImGuiStyle &s = ImGui::GetStyle();
@@ -722,7 +725,7 @@ static void focus_check(bool down, bool up, bool any_down, int focused_tab, int 
 // The tab bar and its pages, into the current window: the in-game menu, and the start screen's Settings (in_game
 // false: nothing of the game is loaded yet - the tabs that need it are greyed out; prelaunch: the start screen's own
 // first tab, game files and fonts, drawn by launcher.mm).
-static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
+static void tabs_body(float scale, bool in_game, void (*prelaunch)(float), void (*save_data)(float)) {
     // (id: the page; -1 = Prelaunch)
     struct Tab { const char *name; int id; bool on; };
     Tab tabs[11];
@@ -732,9 +735,8 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                                   "Cosmetics", "Controls", "Quit", "Saves", "Mods"};
     static const int order[] = {8, 0, 11, 1, 6, 10, 9};  // Controls, Video, Mods, Audio, Gameplay, Saves, Quit (ids stay: test hooks;
                                                           // LA tabs 2-5 and 7 Cosmetics hidden: they read LA state)
-    for (int i : order)  // (Quit, Saves and Mods: in game only - the start screen has its own QUIT / Save data, and
-                         //  a tab too many cut names short)
-        if ((i != 9 && i != 10 && i != 11) || !prelaunch) tabs[ntabs++] = {names[i], i, true};
+    for (int i : order)  // (Quit and Mods: in game only - the start screen has its own QUIT, and a tab too many cut names short)
+        if ((i != 9 && i != 11) || !prelaunch) tabs[ntabs++] = {names[i], i, true};
     int cur = 0;  // g_tab / g_tab_request hold ids
     for (int i = 0; i < ntabs; i++) if (tabs[i].id == g_tab) cur = i;
     if (!tabs[cur].on) cur = 0;
@@ -840,7 +842,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 case 6: difficulty_draw(scale); break;
                 case 8: controls_tab_draw(scale); break;
                 case 9: tab_quit(scale, in_game); break;
-                case 10: tab_saves(); break;
+                case 10: if (save_data) save_data(scale); else tab_saves(); break;
                 case 11: mods_tab_draw(scale); break;  // (state shared with the launcher: mods.h)
                 }
                 static const char *scroll_test = getenv("LARECOMP_MENU_SCROLL");  // test hook: page scroll, 0..1
@@ -866,13 +868,13 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
         if (tabs[k].id == g_tab) focus_check(down1, up1, down, focused_tab, g_tab, tabs[k].name);
 }
 
-void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, void (*prelaunch)(float)) {
+void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, void (*prelaunch)(float), void (*save_data)(float)) {
     ImFont *f0 = g_font, *f1 = g_font_big;
     g_font = font, g_font_big = font_big;
     ImGuiStyle saved = ImGui::GetStyle();  // the menu's look (the start screen has its own style)
     style_init();
     ImGui::GetStyle().ScaleAllSizes(scale);
-    tabs_body(scale, in_game, prelaunch);
+    tabs_body(scale, in_game, prelaunch, save_data);
     ImGui::GetStyle() = saved;
     g_font = f0, g_font_big = f1;
 }
@@ -1039,7 +1041,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         }
 
         bool any_popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId), typing = ui_text_busy();  // (before the
-        tabs_body(scale, true, NULL);                                                                          //  pages run)
+        tabs_body(scale, true, NULL, NULL);                                                                        //  pages run)
         // B with nothing focused-deeper closes the menu (not the Esc / B that ends typing: typing is from the frame
         // before, so it's still true the frame a field lets go)
         if (!any_popup && !typing && !ui_text_busy() && !controls_ui_took_back() && !rando_tab_took_back() &&
