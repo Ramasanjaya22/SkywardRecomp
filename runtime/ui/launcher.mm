@@ -333,6 +333,60 @@ static bool g_busy, g_job_failed;
 static bool g_exit_after_setup;  // (test: LARECOMP_LAUNCHER_EXTRACT)
 static bool g_confirm_delete;       // game-files page: "Delete the game files?" shown
 
+// One launcher UI state, derived from the existing checks below; no build behavior here.
+enum class LauncherState {
+    Ready,               // game files present and unchanged
+    ReadyUpdateOptional, // ready; the 1.0.1 update can still be added
+    NeedsSetup,          // setup can fix the files
+    Blocked,             // wrong game version; setup cannot fix here
+};
+
+struct LauncherStateModel {
+    LauncherState state = LauncherState::NeedsSetup;
+    std::string status;   // check_game_files(), unchanged
+    std::string hint;     // status_hint(status), unchanged
+    std::string detected; // game_find_describe() text for the picked folder
+    bool ready = false;
+    bool changed = false;
+    bool optional_update = false;
+};
+
+// Table plan for current Game Files rows; actions stay actions.
+enum class GameFilesRowKind { Required, Optional, Detected };
+
+struct GameFilesRowPlan {
+    const char *label;
+    GameFilesRowKind kind;
+};
+
+[[maybe_unused]] static const GameFilesRowPlan kGameFilesRows[] = {
+    { "Game Files",                   GameFilesRowKind::Detected },
+    { "Game files folder",            GameFilesRowKind::Required },
+    { "Update 1.0.1 (optional .nsp)", GameFilesRowKind::Optional },
+    { "prod.keys (for a .nsp)",       GameFilesRowKind::Required },
+};
+
+static LauncherStateModel launcher_state_model(const std::string &status,
+                                               const std::string &root) {
+    LauncherStateModel m;
+    m.status = status;
+    m.hint = status_hint(status);
+    m.detected = g_found;
+    m.ready = status.empty();
+    m.changed = m.ready && files_changed(root);
+    if (m.ready) {
+        const GameVersion *v = game_version_of(root.c_str());
+        m.optional_update = v && strcmp(v->key, "v1_0_1") == 0;
+    }
+    if (!m.ready)
+        m.state = status == "Wrong version of the game" ? LauncherState::Blocked
+                                                        : LauncherState::NeedsSetup;
+    else
+        m.state = m.optional_update ? LauncherState::Ready
+                                   : LauncherState::ReadyUpdateOptional;
+    return m;
+}
+
 static void set_job(const std::string &s, bool failed = false, const std::string &hint = "") {
     pthread_mutex_lock(&g_lock);
     g_job = s;
@@ -2626,11 +2680,12 @@ extern "C" void launcher_run(const char *root) {
             if (page == MAIN) {
             ImGui::PushFont(g_font_small);
             ImGui::SetCursorPos(ImVec2(x0, ds.y - 118 * s));
-            if (status.empty() && files_changed(g_root)) {  // (playable, but a damaged or changed file: #391)
+            const LauncherStateModel state = launcher_state_model(status, g_root);
+        if (state.ready && state.changed) {  // (playable, but a damaged or changed file: #391)
                 ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "!  %s", CHANGED_HEAD);
                 ImGui::SetCursorPosX(x0);
                 ImGui::TextDisabled("%s", CHANGED_HINT);
-            } else if (status.empty()) {
+            } else if (state.ready) {
                 {  // a drawn check mark (the Switch font has no ✓)
                     ImVec2 p = ImGui::GetCursorScreenPos();
                     float u = ImGui::GetTextLineHeight();
