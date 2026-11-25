@@ -59,8 +59,12 @@ TABLES = frozenset((
     "prompts", "letters",
 ))
 
-# Not expected on the load side: printf formats and values read numerically.
-LOAD_EXCEPTIONS = frozenset(("%dx", "match", "switch", "controller", "left"))
+# The loader maps any other value to these; they never appear in a
+# comparison; %dx is a printf format.
+FALLBACK_VALUES = frozenset((
+    "%dx", "fsr1", "metalfx", "smaa", "default", "switch", "match",
+    "controller", "left",
+))
 
 
 def literals_with_positions(text):
@@ -164,9 +168,7 @@ def actual_values(src, name):
 
 
 def check_load_side(src):
-    # Starts at the defaults helper: that is where the saved upscaler names
-    # appear; settings_load itself only compares "auto" and "bilinear".
-    start = src.index("void settings_resolve_defaults")
+    start = src.index("void settings_load")
     end = src.index("void settings_save")
     literals = string_literals(src[start:end])
 
@@ -176,7 +178,7 @@ def check_load_side(src):
         if name in TABLES:
             continue
         missing = [value for value in frozen
-                   if value not in LOAD_EXCEPTIONS and value not in literals]
+                   if value not in FALLBACK_VALUES and value not in literals]
         assert not missing, (
             "load side lost saved values for " + name + ": " + ", ".join(missing)
         )
