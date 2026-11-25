@@ -1002,3 +1002,24 @@ if FRAME_CTRL_INTERVAL_SITE:  # (0: a version without the site - the setting sta
     PATCHES[FRAME_CTRL_INTERVAL_SITE] = _frame_avg
     PATCHES[FRAME_CTRL_INTERVAL_SITE + 0x64] = _frame_timestep
     PATCHES[FRAME_CTRL_INTERVAL_SITE + 0x88] = _frame_period
+
+
+# SS HD's g3d scene gather culls against its own frustum: `ldr s10, [x8, #0x1c4]` loads the current g3d camera's
+# projection aspect (CameraData +0xb0, set to the camera's width / height on its perspective path), and
+# tan(fovy / 2) x near x s10 becomes the frustum's right edge (left = -right) for FRUSTUM::Set; s10 has no other use.
+# The host draws the 3D view wider than 16:9 by scaling clip x (exec.c wide_k), so the game's 16:9 frustum culled
+# objects in the side bands while they were on screen. The frustum widens by the same factor; the projection, which
+# reads the same camera field elsewhere, stays 16:9.
+G3D_CULL_ASPECT_SITE = A.G3D_CULL_ASPECT_SITE
+
+
+def _g3d_cull_aspect(gen, a):
+    w = _word(gen, a)
+    assert w == 0xbd41c50a, hex(w)  # ldr s10, [x8, #0x1c4]
+    return ('{ extern float rt_g3d_cull_aspect(float); float o; memcpy(&o, (const void *)(uintptr_t)(c->x[8] + 0x1c4), 4); '
+            'float f = rt_g3d_cull_aspect(o); c->v[10] = 0; memcpy(&c->v[10], &f, 4); }'
+            f'  /* {a:#x}: ldr s10, [x8, #0x1c4] (culling frustum aspect) */')
+
+
+if G3D_CULL_ASPECT_SITE:
+    PATCHES[G3D_CULL_ASPECT_SITE] = _g3d_cull_aspect
