@@ -1228,12 +1228,15 @@ static void load_frame(GpuDevice dev, const std::string &path, double at, declty
                 av_packet_unref(pkt);
             }
             if (got) {
+                // a big picture is shrunk while converting: the window never shows more than ~2560 px of it, and the
+                // pixels (CPU copy, then the texture) cost RAM for nothing
                 int w = fr->width, h = fr->height;
+                if (w > 2560) h = (int)((int64_t)h * 2560 / w), w = 2560;
                 std::vector<uint8_t> rgba((size_t)w * h * 4);
-                SwsContext *sws = sws_getContext(w, h, (AVPixelFormat)fr->format, w, h, AV_PIX_FMT_RGBA, SWS_BILINEAR, NULL, NULL, NULL);
+                SwsContext *sws = sws_getContext(fr->width, fr->height, (AVPixelFormat)fr->format, w, h, AV_PIX_FMT_RGBA, SWS_BILINEAR, NULL, NULL, NULL);
                 uint8_t *dst[1] = {rgba.data()};
                 int dst_ls[1] = {w * 4};
-                sws_scale(sws, fr->data, fr->linesize, 0, h, dst, dst_ls);
+                sws_scale(sws, fr->data, fr->linesize, 0, fr->height, dst, dst_ls);
                 sws_freeContext(sws);
 #ifdef __APPLE__
                 MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
@@ -2242,7 +2245,9 @@ extern "C" void launcher_run(const char *root) {
         bool b2 = p == own.c_str() || getenv("LARECOMP_LAUNCHER_FONT");
         g_font_small = io.Fonts->AddFontFromFileTTF(p, 30 * (b2 ? 1.75f : 1), NULL, ranges);
         g_font_menu = io.Fonts->AddFontFromFileTTF(p, 52 * (b2 ? 1.85f : 1), NULL, ranges);
-        g_font_title = io.Fonts->AddFontFromFileTTF(p, 92 * (b2 ? 2.3f : 1), NULL, ranges);
+        // the title font (the biggest by far: ~210 px) draws only "Skyward Sword HD": a few glyphs, not the whole range
+        static const ImWchar title_ranges[] = {0x20, 0x20, 0x30, 0x39, 0x41, 0x5A, 0x61, 0x7A, 0};
+        g_font_title = io.Fonts->AddFontFromFileTTF(p, 92 * (b2 ? 2.3f : 1), NULL, title_ranges);
     }
     if (!g_font_menu) g_font_small = g_font_menu = g_font_title = io.Fonts->AddFontDefault();
     ImGuiStyle &st = ImGui::GetStyle();
@@ -2269,8 +2274,10 @@ extern "C" void launcher_run(const char *root) {
         rt_remove_game_file(g_root.c_str(), "romfs.bin"))
         fprintf(stderr, "[launcher] removed the old game data image (romfs.bin)\n");
     std::string status = check_game_files(g_root);
-    if (check_copied_files(g_root).empty()) load_background(dev);  // (also behind an update of the game code)
     load_art(dev);
+    // the title movie's still is only drawn when there is no artwork (and the bundled art is always there): don't hold
+    // a second full-size texture for nothing
+    if (!g_art && check_copied_files(g_root).empty()) load_background(dev);  // (also behind an update of the game code)
     std::vector<std::string> seeds = list_seeds();
     std::vector<std::string> choices = {"Vanilla"};
     choices.insert(choices.end(), seeds.begin(), seeds.end());
@@ -2453,7 +2460,7 @@ extern "C" void launcher_run(const char *root) {
                 fprintf(stderr, "[launcher] setup: %s -> %s\n", g_job.c_str(), status.empty() ? "READY" : "NOT READY");
                 exit(0);
             }
-            if (status.empty()) { if (!g_bg) load_background(dev); page = MAIN; }
+            if (status.empty()) { if (!g_bg && !g_art) load_background(dev); page = MAIN; }
             if (status.empty() && ap && getenv("LARECOMP_LAUNCHER_PREPARE")) play = true;
             g_auto_update = false;
         }
