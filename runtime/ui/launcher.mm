@@ -100,7 +100,7 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 // players move to it.
 #define LARECOMP_VERSION "v0.8.2"
 #define LARECOMP_TEST_OF "v0.8.0"
-extern "C" const char *larecomp_version(void) { return LARECOMP_VERSION; }  // (the shader caches' tag)
+extern "C" const char *larecomp_version(void) { return LARECOMP_VERSION; }
 
 // ------------------------------------------------------------------ update check
 // The start screen asks GitHub for the project's releases once per launch (a background curl, which macOS and

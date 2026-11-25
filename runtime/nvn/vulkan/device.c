@@ -576,7 +576,7 @@ static void create_device(void) {
     VK_CHECK(vkCreateCommandPool(g_vk.dev, &pi, NULL, &g_vk.pool));
 
     // pipeline cache: cache/vk_pipelines.bin (written by vk_pipeline_cache_save), used only with its tag
-    // (vk_pipelines.bin.tag: this build, the translator, the GPU and its driver - another one starts it empty)
+    // (vk_pipelines.bin.tag: the translator, the GPU and its driver - another one starts it empty)
     char tag[512];
     pipeline_cache_tag(tag, sizeof tag);
     size_t sz = 0;
