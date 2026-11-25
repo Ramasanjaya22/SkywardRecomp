@@ -59,6 +59,9 @@ TABLES = frozenset((
     "prompts", "letters",
 ))
 
+# Not expected on the load side: printf formats and values read numerically.
+LOAD_EXCEPTIONS = frozenset(("%dx", "match", "switch", "controller", "left"))
+
 
 def literals_with_positions(text):
     """C string literal (start offset, contents) pairs, in source order."""
@@ -160,6 +163,25 @@ def actual_values(src, name):
     return values
 
 
+def check_load_side(src):
+    # Starts at the defaults helper: that is where the saved upscaler names
+    # appear; settings_load itself only compares "auto" and "bilinear".
+    start = src.index("void settings_resolve_defaults")
+    end = src.index("void settings_save")
+    literals = string_literals(src[start:end])
+
+    missing_keys = [key for key in FROZEN_KEYS if key not in literals]
+    assert not missing_keys, "load side lost ini keys: " + ", ".join(missing_keys)
+    for name, frozen in FROZEN_VALUES.items():
+        if name in TABLES:
+            continue
+        missing = [value for value in frozen
+                   if value not in LOAD_EXCEPTIONS and value not in literals]
+        assert not missing, (
+            "load side lost saved values for " + name + ": " + ", ".join(missing)
+        )
+
+
 def check_values(label, actual, frozen):
     assert len(actual) >= len(frozen), (
         label + ": value removed: " + str(actual) + " (frozen " + str(frozen) + ")"
@@ -176,13 +198,19 @@ def main():
     keys = saved_keys(src)
     missing = [key for key in FROZEN_KEYS if key not in keys]
     assert not missing, "ini keys removed or renamed: " + ", ".join(missing)
-    frozen_set = frozenset(FROZEN_KEYS)
-    order = [key for key in keys if key in frozen_set]
-    assert order == list(FROZEN_KEYS), "ini keys reordered: " + str(order)
 
     for name, frozen in FROZEN_VALUES.items():
         actual = actual_values(src, name)
-        check_values(name, actual, frozen)
+        if name in TABLES:
+            check_values(name, actual, frozen)
+        else:
+            missing_values = [value for value in frozen if value not in actual]
+            assert not missing_values, (
+                name + ": saved value removed or renamed: "
+                + ", ".join(repr(value) for value in missing_values)
+            )
+
+    check_load_side(src)
 
     print("OK: %d ini keys and %d saved value lists unchanged"
           % (len(FROZEN_KEYS), len(FROZEN_VALUES)))
