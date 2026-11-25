@@ -3399,12 +3399,12 @@ static uint64_t snap_storage(uint64_t addr, uint64_t size, bool cs_slot) {
         // A write once (an initialisation: BowWow's skinning buffers at his spawn) stays in place; writes that keep
         // coming (within 8 frames of the previous one) are the CPU rewriting it: copied from now on (renderer.m 1ea4b16)
         int k = (int)(e - rs_tab);
-        if (!rs_store_frame[k] || f - rs_store_frame[k] > 8) { rs_store_frame[k] = f; return addr; }
-        e->mode = RS_COPY;
         {   // (written on a page wholly its own: the CPU rewrites the range itself - its allocation's other ranges count its pages now)
             uint64_t p1 = (addr + WATCH_PAGE - 1) & ~(WATCH_PAGE - 1), pe = (addr + size) & ~(WATCH_PAGE - 1);
             e->rewrites = p1 < pe && pages_seen_written(p1, pe - p1, since) == 1;
         }
+        if (!rs_store_frame[k] || f - rs_store_frame[k] > 8) { rs_store_frame[k] = f; return addr; }
+        e->mode = RS_COPY;
         {
             char why[160];
             snprintf(why, sizeof why, "-> copy (CPU writes keep coming on its own pages: %s; %s)", watch_why,  // (wclass: is it a GPU output?)
