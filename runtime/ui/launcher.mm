@@ -1813,7 +1813,7 @@ static void prelaunch_tab(float sc) {
 
 // SKY-32 status checklist rows. These read the same checks as the rest of the
 // launcher; when SKY-31 lands, swap these for the shared LauncherState value.
-enum class StatusCheckLevel { Ok, Warning, Error };
+enum class StatusCheckLevel { Ok, Warning, Error, Neutral };  // Neutral: not known, says nothing about "ready"
 
 struct StatusCheckRow {
     StatusCheckLevel level;
@@ -1824,10 +1824,14 @@ static StatusCheckRow status_check_game_files(const std::string &status)
 {
     if (status == "Wrong version of the game")
         return { StatusCheckLevel::Ok, "Ready" };  // the version row owns this
+    if (status.rfind("Game files incomplete", 0) == 0)
+        return { StatusCheckLevel::Error, "Incomplete, copy again" };
+    if (status == "Game code not built yet")
+        return { StatusCheckLevel::Error, "Set up to build" };
     if (!status.empty())
-        return { StatusCheckLevel::Error, "Fix needed" };
+        return { StatusCheckLevel::Error, "Not set up" };
     if (files_changed(g_root))
-        return { StatusCheckLevel::Warning, "Changed" };
+        return { StatusCheckLevel::Warning, "Damaged or changed" };
     return { StatusCheckLevel::Ok, "Ready" };
 }
 
@@ -1835,12 +1839,18 @@ static StatusCheckRow status_check_version(const std::string &status)
 {
     if (status == "Wrong version of the game")
         return { StatusCheckLevel::Error, "Wrong version" };
-    char label[64];
-    const std::string exefs = g_root.empty() ? std::string() : g_root + "/exefs";
-    const char *name = game_release_label(exefs.c_str(), label, sizeof(label));
-    if (!name)
+    static std::string version_label;  // cached: reading the release is not free per frame
+    static int label_of = -1;
+    if (label_of != g_files_changes.load()) {
+        label_of = g_files_changes.load();
+        char label[64];
+        const std::string exefs = g_root.empty() ? std::string() : g_root + "/exefs";
+        const char *name = game_release_label(exefs.c_str(), label, sizeof(label));
+        version_label = name ? name : "";
+    }
+    if (version_label.empty())
         return { StatusCheckLevel::Warning, "Unknown" };
-    return { StatusCheckLevel::Ok, name };
+    return { StatusCheckLevel::Ok, version_label };
 }
 
 static StatusCheckRow status_check_update()
@@ -1852,10 +1862,12 @@ static StatusCheckRow status_check_update()
     if (state == 1)
         return { StatusCheckLevel::Ok, "Checking" };
     if (state == 3)
-        return { StatusCheckLevel::Warning, "Check failed" };
+        return { StatusCheckLevel::Neutral, "Check failed" };  // no update known: not a reason to hedge the headline
     if (state == 2 && available)
         return { StatusCheckLevel::Warning, "Update available" };
-    return { StatusCheckLevel::Ok, "Up to date" };
+    if (state == 2)
+        return { StatusCheckLevel::Ok, "Up to date" };
+    return { StatusCheckLevel::Neutral, "Not checked" };  // state 0: never started or disabled
 }
 
 static StatusCheckRow status_check_configuration()
@@ -1873,31 +1885,49 @@ static ImVec4 status_check_color(StatusCheckLevel level)
         return ImVec4(0.45f, 0.92f, 0.55f, 1);
     if (level == StatusCheckLevel::Warning)
         return ImVec4(1, 0.72f, 0.35f, 1);
+    if (level == StatusCheckLevel::Neutral)
+        return ImVec4(0.62f, 0.64f, 0.70f, 1);
     return ImVec4(1, 0.35f, 0.3f, 1);
 }
 
-static void draw_status_checklist(const std::string &status)
+// Bottom-anchored at `bottom` (window y) so the headline, 4 rows and the hint never run off the screen.
+static void draw_status_checklist(const std::string &status, bool busy, float x0, float bottom, float wrap_w)
 {
-    const StatusCheckRow rows[4] = {
+    StatusCheckRow rows[4] = {
         status_check_game_files(status),
         status_check_version(status),
         status_check_update(),
         status_check_configuration(),
     };
+    if (busy)
+        rows[0] = { StatusCheckLevel::Warning, "Setting up..." };
     static const char *labels[4] = { "Game files", "Version", "Update", "Configuration" };
 
-    const bool blocked = rows[0].level == StatusCheckLevel::Error ||
-                         rows[1].level == StatusCheckLevel::Error ||
-                         rows[3].level == StatusCheckLevel::Error;
+    const bool blocked = !busy && (rows[0].level == StatusCheckLevel::Error ||
+                                   rows[1].level == StatusCheckLevel::Error ||
+                                   rows[3].level == StatusCheckLevel::Error);
+    const bool changed = !busy && !blocked && rows[0].level == StatusCheckLevel::Warning;
     const bool optional_update = rows[2].level == StatusCheckLevel::Warning;
-    const char *headline = blocked ? "Setup required"
-                                   : (optional_update ? "Playable, update optional" : "Ready to Play");
-    ImGui::TextColored(status_check_color(blocked ? StatusCheckLevel::Error
-                                                 : (optional_update ? StatusCheckLevel::Warning
-                                                                    : StatusCheckLevel::Ok)),
-                       "%s", headline);
+    const char *headline = busy ? "Setting up the game files..."
+                         : blocked ? "Setup required"
+                         : changed ? "Playable, check the game files"
+                         : optional_update ? "Playable, update optional" : "Ready to Play";
+    const StatusCheckLevel head_level = blocked ? StatusCheckLevel::Error
+                                      : (busy || changed || optional_update) ? StatusCheckLevel::Warning
+                                                                              : StatusCheckLevel::Ok;
+    const char *hint = busy ? "Set up the game files to play."
+                     : !status.empty() ? status_hint(status)
+                     : changed ? CHANGED_HINT : nullptr;
+
+    const float lh = ImGui::GetTextLineHeightWithSpacing();
+    float h = 5 * lh;
+    if (hint)
+        h += ImGui::CalcTextSize(hint, nullptr, false, wrap_w).y + 2;
+    ImGui::SetCursorPos(ImVec2(x0, bottom - h));
+    ImGui::TextColored(status_check_color(head_level), "%s", headline);
 
     for (int i = 0; i < 4; ++i) {
+        ImGui::SetCursorPosX(x0);
         const StatusCheckRow &row = rows[i];
         if (row.level == StatusCheckLevel::Ok) {
             // The Switch font has no checkmark glyph; draw one with lines.
@@ -1908,15 +1938,22 @@ static void draw_status_checklist(const std::string &status)
                                                 ImVec2(p.x + u * 0.22f, p.y + u * 0.82f), green, 2);
             ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x + u * 0.22f, p.y + u * 0.82f),
                                                 ImVec2(p.x + u * 0.68f, p.y + u * 0.18f), green, 2);
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + u * 1.25f);
+            ImGui::SetCursorPosX(x0 + u * 1.25f);
         } else {
             ImGui::TextColored(status_check_color(row.level), "%s",
-                               row.level == StatusCheckLevel::Warning ? "!" : "x");
+                               row.level == StatusCheckLevel::Error ? "x"
+                               : row.level == StatusCheckLevel::Warning ? "!" : "-");
             ImGui::SameLine();
         }
         ImGui::TextColored(ImVec4(0.87f, 0.90f, 1, 1), "%s", labels[i]);
         ImGui::SameLine();
         ImGui::TextDisabled("%s", row.detail.c_str());
+    }
+    if (hint) {
+        ImGui::SetCursorPosX(x0);
+        ImGui::PushTextWrapPos(x0 + wrap_w);
+        ImGui::TextDisabled("%s", hint);
+        ImGui::PopTextWrapPos();
     }
 }
 
@@ -2734,8 +2771,7 @@ extern "C" void launcher_run(const char *root) {
             // status (lower left) and version (lower right) - not under the Settings / Game Files windows
             if (page == MAIN) {
             ImGui::PushFont(g_font_small);
-            ImGui::SetCursorPos(ImVec2(x0, ds.y - 118 * s));
-            draw_status_checklist(status);
+            draw_status_checklist(status, busy, x0, ds.y - 70 * s, fminf(ds.x * 0.45f, 560 * s));
             if (g_onedrive > 0 && !g_settings.onedrive_kept) {
                 float w = fminf(ds.x * 0.42f, 560 * s);
                 ImGui::SetCursorPos(ImVec2(ds.x - w - 60 * s, 60 * s));
