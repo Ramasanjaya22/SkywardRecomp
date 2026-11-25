@@ -1811,6 +1811,115 @@ static void prelaunch_tab(float sc) {
     }
 }
 
+// SKY-32 status checklist rows. These read the same checks as the rest of the
+// launcher; when SKY-31 lands, swap these for the shared LauncherState value.
+enum class StatusCheckLevel { Ok, Warning, Error };
+
+struct StatusCheckRow {
+    StatusCheckLevel level;
+    std::string detail;
+};
+
+static StatusCheckRow status_check_game_files(const std::string &status)
+{
+    if (status == "Wrong version of the game")
+        return { StatusCheckLevel::Ok, "Ready" };  // the version row owns this
+    if (!status.empty())
+        return { StatusCheckLevel::Error, "Fix needed" };
+    if (files_changed(g_root))
+        return { StatusCheckLevel::Warning, "Changed" };
+    return { StatusCheckLevel::Ok, "Ready" };
+}
+
+static StatusCheckRow status_check_version(const std::string &status)
+{
+    if (status == "Wrong version of the game")
+        return { StatusCheckLevel::Error, "Wrong version" };
+    char label[64];
+    const std::string exefs = g_root.empty() ? std::string() : g_root + "/exefs";
+    const char *name = game_release_label(exefs.c_str(), label, sizeof(label));
+    if (!name)
+        return { StatusCheckLevel::Warning, "Unknown" };
+    return { StatusCheckLevel::Ok, name };
+}
+
+static StatusCheckRow status_check_update()
+{
+    pthread_mutex_lock(&g_update_lock);
+    const int state = g_update_state;
+    const bool available = !g_update_tag.empty();
+    pthread_mutex_unlock(&g_update_lock);
+    if (state == 1)
+        return { StatusCheckLevel::Ok, "Checking" };
+    if (state == 3)
+        return { StatusCheckLevel::Warning, "Check failed" };
+    if (state == 2 && available)
+        return { StatusCheckLevel::Warning, "Update available" };
+    return { StatusCheckLevel::Ok, "Up to date" };
+}
+
+static StatusCheckRow status_check_configuration()
+{
+    if (g_root.empty())
+        return { StatusCheckLevel::Error, "Not set" };
+    if (g_found.empty())
+        return { StatusCheckLevel::Warning, "Not detected" };
+    return { StatusCheckLevel::Ok, "Ready" };
+}
+
+static ImVec4 status_check_color(StatusCheckLevel level)
+{
+    if (level == StatusCheckLevel::Ok)
+        return ImVec4(0.45f, 0.92f, 0.55f, 1);
+    if (level == StatusCheckLevel::Warning)
+        return ImVec4(1, 0.72f, 0.35f, 1);
+    return ImVec4(1, 0.35f, 0.3f, 1);
+}
+
+static void draw_status_checklist(const std::string &status)
+{
+    const StatusCheckRow rows[4] = {
+        status_check_game_files(status),
+        status_check_version(status),
+        status_check_update(),
+        status_check_configuration(),
+    };
+    static const char *labels[4] = { "Game files", "Version", "Update", "Configuration" };
+
+    const bool blocked = rows[0].level == StatusCheckLevel::Error ||
+                         rows[1].level == StatusCheckLevel::Error ||
+                         rows[3].level == StatusCheckLevel::Error;
+    const bool optional_update = rows[2].level == StatusCheckLevel::Warning;
+    const char *headline = blocked ? "Setup required"
+                                   : (optional_update ? "Playable, update optional" : "Ready to Play");
+    ImGui::TextColored(status_check_color(blocked ? StatusCheckLevel::Error
+                                                 : (optional_update ? StatusCheckLevel::Warning
+                                                                    : StatusCheckLevel::Ok)),
+                       "%s", headline);
+
+    for (int i = 0; i < 4; ++i) {
+        const StatusCheckRow &row = rows[i];
+        if (row.level == StatusCheckLevel::Ok) {
+            // The Switch font has no checkmark glyph; draw one with lines.
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            const float u = ImGui::GetTextLineHeight();
+            const ImU32 green = IM_COL32(140, 230, 140, 255);
+            ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x, p.y + u * 0.55f),
+                                                ImVec2(p.x + u * 0.22f, p.y + u * 0.82f), green, 2);
+            ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x + u * 0.22f, p.y + u * 0.82f),
+                                                ImVec2(p.x + u * 0.68f, p.y + u * 0.18f), green, 2);
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + u * 1.25f);
+        } else {
+            ImGui::TextColored(status_check_color(row.level), "%s",
+                               row.level == StatusCheckLevel::Warning ? "!" : "x");
+            ImGui::SameLine();
+        }
+        ImGui::TextColored(ImVec4(0.87f, 0.90f, 1, 1), "%s", labels[i]);
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", row.detail.c_str());
+    }
+}
+
 extern "C" void launcher_run(const char *root) {
     g_root = root;
     g_start_screen = 1;
@@ -2626,35 +2735,7 @@ extern "C" void launcher_run(const char *root) {
             if (page == MAIN) {
             ImGui::PushFont(g_font_small);
             ImGui::SetCursorPos(ImVec2(x0, ds.y - 118 * s));
-            if (status.empty() && files_changed(g_root)) {  // (playable, but a damaged or changed file: #391)
-                ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "!  %s", CHANGED_HEAD);
-                ImGui::SetCursorPosX(x0);
-                ImGui::TextDisabled("%s", CHANGED_HINT);
-            } else if (status.empty()) {
-                {  // a drawn check mark (the Switch font has no ✓)
-                    ImVec2 p = ImGui::GetCursorScreenPos();
-                    float u = ImGui::GetTextLineHeight();
-                    ImU32 g = IM_COL32(140, 230, 140, 255);
-                    ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x + u * 0.1f, p.y + u * 0.55f), ImVec2(p.x + u * 0.35f, p.y + u * 0.8f), g, u * 0.12f);
-                    ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x + u * 0.35f, p.y + u * 0.8f), ImVec2(p.x + u * 0.85f, p.y + u * 0.2f), g, u * 0.12f);
-                    ImGui::SetCursorPosX(x0 + u * 1.3f);
-                }
-                ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1), "Game files ready.");
-                ImGui::SetCursorPosX(x0);
-                static std::string version_label;  // (the copied files' release: "1.0.1")
-                static int label_of = -1;
-                if (label_of != g_files_changes.load()) {
-                    label_of = g_files_changes.load();
-                    char label[32];
-                    const char *v = game_release_label((g_root + "/exefs").c_str(), label, sizeof label);
-                    version_label = v ? v : "?";
-                }
-                ImGui::TextColored(ImVec4(0.66f, 0.76f, 0.98f, 1), "Nintendo Switch  \xc2\xb7  v%s", version_label.c_str());
-            } else {
-                ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "!  %s", busy ? "Setting up the game files..." : status.c_str());
-                ImGui::SetCursorPosX(x0);
-                ImGui::TextDisabled("%s", busy ? "Set up the game files to play." : status_hint(status));
-            }
+            draw_status_checklist(status);
             if (g_onedrive > 0 && !g_settings.onedrive_kept) {
                 float w = fminf(ds.x * 0.42f, 560 * s);
                 ImGui::SetCursorPos(ImVec2(ds.x - w - 60 * s, 60 * s));
