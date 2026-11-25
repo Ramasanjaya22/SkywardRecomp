@@ -13,6 +13,7 @@
 #include "../../settings.h"
 #include "../../ui/menu.h"
 #include "../rqueue.h"
+#include "pcache_policy.h"
 #include "vk.h"
 #include "record.h"
 #include "../output_scale.h"
@@ -94,10 +95,12 @@ static bool lazy_heap_predicted(bool budget_ext, bool *probe) {
     uint64_t lim = g_vk.props.limits.maxStorageBufferRange;
     if (lim && lim < HEAP_MAX) return true;  // (UHD 770 main pass: lazy 8.4 ms, 512 MB windows 8.5)
 #ifdef _WIN32
-    // The Windows AMD integrated driver accepts one import of the whole heap (the probe writes both ends) and then
-    // faults a shader read of it: device lost, as soon as a save loads. Chunks stay inside the pages it maps.
-    if (g_vk.props.vendorID == 0x1002 && g_vk.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
-        return true;
+    // Chunks on every Windows GPU. The AMD integrated driver accepts one import of the whole heap (the probe writes both
+    // ends) and then faults a shader read of it: device lost, as soon as a save loads; chunks stay inside the pages it
+    // maps. On the others one import of the whole heap makes the driver pin all of it (RX 9060 XT: 3.2 GB
+    // of the guest heap, a 4.1 GB working set at the title screen); chunks imported as the game binds them hold
+    // 1.3-1.4 GB with the same fps. LARECOMP_VK_GMEM_LAZY=0 brings the whole import back.
+    return true;
 #endif
 #ifdef __linux__
     // RADV with the dma-buf heap (exec.c guest_heap_dmabuf): no import at all, so whole_import_fits doesn't apply; any
@@ -306,12 +309,18 @@ static void pipeline_cache_tag(char *out, size_t n) {
     shader_cache_tag(out, n, gpu);
 }
 
-static void *pipeline_cache_saver(void *a) {  // every 3 minutes, when it grew
+static uint64_t pcache_saved_ns;  // when (SDL_GetTicksNS) the file was last written, or the cache loaded
+
+// Looks every 10 s (a thread of its own, never the game's or the render thread): the cache is written when it grew
+// 1 MB, or a minute after it first grew (pcache_policy.h), so a crash loses seconds of shader work, not minutes.
+static void *pipeline_cache_saver(void *a) {
     (void)a;
     for (;;) {
-        SDL_Delay(180000);
+        SDL_Delay(10000);
         if (rq_stopping()) break;  // (quitting: backend_quit saves it)
-        vk_pipeline_cache_save();
+        size_t sz = 0;
+        if (vkGetPipelineCacheData(g_vk.dev, g_vk.pcache, &sz, NULL) != VK_SUCCESS) continue;
+        if (pcache_should_save(sz, pcache_saved, (double)(SDL_GetTicksNS() - pcache_saved_ns) * 1e-9)) vk_pipeline_cache_save();
     }
     return NULL;
 }
@@ -481,8 +490,12 @@ static void create_device(void) {
                                             .maintenance4 = VK_TRUE,
                                             .pNext = g_vk.custom_border ? (void *)&cbc : g_vk.divisor ? (void *)&div : NULL};
     VkPhysicalDeviceVulkan12Features f12 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
-                                            .timelineSemaphore = VK_TRUE, .shaderInt8 = VK_TRUE, .samplerMirrorClampToEdge = VK_TRUE,
-                                            .uniformAndStorageBuffer8BitAccess = VK_TRUE, .storageBuffer8BitAccess = VK_TRUE,
+                                            .timelineSemaphore = VK_TRUE, .samplerMirrorClampToEdge = VK_TRUE,
+                                            // no shader uses 8-bit types: ask only for what the driver has (Turnip on
+                                            // Adreno 830 lacks uniformAndStorageBuffer8BitAccess, #18)
+                                            .shaderInt8 = have12.shaderInt8,
+                                            .uniformAndStorageBuffer8BitAccess = have12.uniformAndStorageBuffer8BitAccess,
+                                            .storageBuffer8BitAccess = have12.storageBuffer8BitAccess,
                                             .scalarBlockLayout = VK_TRUE, .bufferDeviceAddress = g_vk.bda, .pNext = &f13};
     VkPhysicalDeviceVulkan11Features f11 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
                                             .storageBuffer16BitAccess = VK_TRUE, .pNext = &f12};
@@ -565,7 +578,7 @@ static void create_device(void) {
     VK_CHECK(vkCreateCommandPool(g_vk.dev, &pi, NULL, &g_vk.pool));
 
     // pipeline cache: cache/vk_pipelines.bin (written by vk_pipeline_cache_save), used only with its tag
-    // (vk_pipelines.bin.tag: this build, the translator, the GPU and its driver - another one starts it empty)
+    // (vk_pipelines.bin.tag: the translator, the GPU and its driver - another one starts it empty)
     char tag[512];
     pipeline_cache_tag(tag, sizeof tag);
     size_t sz = 0;
@@ -589,7 +602,8 @@ static void create_device(void) {
     free(data);
     if (pc.initialDataSize) LOG("[vk] pipeline cache: loaded %zu bytes\n", pc.initialDataSize);
     pcache_saved = pc.initialDataSize;
-    pthread_t t;  // (kept every few minutes while it grows, not only at a clean exit)
+    pcache_saved_ns = SDL_GetTicksNS();
+    pthread_t t;  // (kept while it grows, not only at a clean exit)
     pthread_create(&t, NULL, pipeline_cache_saver, NULL);
     pthread_detach(t);
 }
@@ -606,6 +620,7 @@ void vk_pipeline_cache_save(void) {
             pipeline_cache_tag(tag, sizeof tag);
             if (!shader_cache_tag_ok(PCACHE_TAG, tag)) shader_cache_tag_write(PCACHE_TAG, tag);
             pcache_saved = sz;
+            pcache_saved_ns = SDL_GetTicksNS();
             LOG("[vk] pipeline cache: saved %zu bytes\n", sz);
         }
         free(data);
@@ -614,6 +629,14 @@ void vk_pipeline_cache_save(void) {
 }
 
 // ================================================================== swapchain
+// the frame rate setting runs faster than the display (pace_fast): no FIFO, whose vsync wait would hold the frames at
+// the refresh rate and slow the game (its timestep is the target's); the swapchain's choice, to recreate on a change
+static bool sc_fast;
+static bool frames_fast(void) {
+    const SDL_DisplayMode *dm = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
+    return pace_fast(dm ? (int)(dm->refresh_rate + 0.5f) : 0);
+}
+
 static VkPresentModeKHR present_mode(void) {
     // MAILBOX by default: the game paces itself (vi.c's emulated 60 Hz vsync), and with FIFO every submission
     // queued behind the one waiting for a window image, so the game's fence waits followed the presentation engine:
@@ -627,7 +650,9 @@ static VkPresentModeKHR present_mode(void) {
     VkPresentModeKHR m[16];
     if (n > 16) n = 16;
     vkGetPhysicalDeviceSurfacePresentModesKHR(g_vk.phys, g_vk.surface, &n, m);
+    sc_fast = frames_fast();
     for (uint32_t i = 0; i < n; i++) if (m[i] == want) return want;
+    for (uint32_t i = 0; i < n && sc_fast && !e; i++) if (m[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) return m[i];  // (no mailbox)
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 
@@ -736,7 +761,7 @@ bool vk_frame_begin(const float clear[4]) {
     // The last present (the recorder's, record.c) must be done before the swapchain is used again - acquire and present
     // on the same swapchain are not allowed at the same time - and it may have asked for a new swapchain
     WAITING(rec_wait_presents(rec_presents_queued()));
-    if (rec_present_recreate()) recreate_swapchain();
+    if (rec_present_recreate() || (g_vk.swapchain && frames_fast() != sc_fast)) recreate_swapchain();
     if (!g_vk.swapchain || (uint32_t)w != g_vk.sc_extent.width || (uint32_t)h != g_vk.sc_extent.height) recreate_swapchain();
     if (!g_vk.swapchain) return false;
     static int trace = -1;
@@ -903,6 +928,11 @@ static void save_window_image(VkCommandBuffer cb, VkSpan *out) {
 }
 
 // End rendering into the window image and present it. shot_path: also save the window image as PNG.
+// The launcher draws ~10 frames a second when idle: with anti-lag on, AMD's driver thread then spins at ~50% of a core
+// (measured on a RX 9060 XT; 2.5% with anti-lag off), and a menu has no input latency to save. Mode off for its frames.
+static bool antilag_paused;
+void vk_antilag_pause(bool on) { antilag_paused = on; }
+
 void vk_frame_end(const char *shot_path) {
     if (!cur_frame.ok) return;
     VkCommandBuffer cb = vk_cmd();
@@ -918,7 +948,7 @@ void vk_frame_end(const char *shot_path) {
     if (g_vk.antilag && g_vk.antilag_update) {
         VkAntiLagPresentationInfoAMD pi = {.sType = VK_STRUCTURE_TYPE_ANTI_LAG_PRESENTATION_INFO_AMD,
                                             .stage = VK_ANTI_LAG_STAGE_PRESENT_AMD, .frameIndex = cur_frame.id};
-        VkAntiLagDataAMD ad = {.sType = VK_STRUCTURE_TYPE_ANTI_LAG_DATA_AMD, .mode = VK_ANTI_LAG_MODE_ON_AMD,
+        VkAntiLagDataAMD ad = {.sType = VK_STRUCTURE_TYPE_ANTI_LAG_DATA_AMD, .mode = antilag_paused ? VK_ANTI_LAG_MODE_OFF_AMD : VK_ANTI_LAG_MODE_ON_AMD,
                                .maxFPS = 0, .pPresentationInfo = &pi};
         g_vk.antilag_update(g_vk.dev, &ad);
     }
@@ -1057,11 +1087,14 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         OutScale os;
         output_scale(dw, dh, widescreen_allowed(), SDL_GetTicksNS() / 1e9, game_ms, win_ms, &os);
         double sx = os.sx, sy = os.sy, vx = os.vx, vy = os.vy, vw = os.vw, vh = os.vh, shape = os.shape;
+        extern void temporal_note_output(uint32_t display_w);  // (the camera jitter's phase count, vulkan/exec.c)
+        temporal_note_output((uint32_t)vw);
         output_scale_log((unsigned long long)frame, dw, dh, &os);  // (diagnostics: [scale] on a change)
         // interiors / dungeons: their 16:9 centre, or the part inside a room wider than one screen
         extern void widescreen_present_crop(uint64_t, double, float *, double *, double *, double *, double *);
         float crop[4];  // uv origin and size
         widescreen_present_crop(frame, shape, crop, &vx, &vy, &vw, &vh);
+        output_window_crop(t->present_crop, t->width, t->height, crop);
         widescreen_set_factor((float)shape);
         extern void renderer_set_alloc_scale(float ax, float ay);
         renderer_set_alloc_scale((float)os.ax, (float)os.ay);
@@ -1150,8 +1183,11 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         frames = 0;
         last_fps_time = now;
     }
-    static double mem_at = 60.0;  // (memory in steady state: a minute in, then every 10 minutes)
-    if (now >= mem_at) { vk_log_memory("playing"); mem_at = now + 600.0; }
+    // (memory in steady state: a minute in, then every 10 minutes; LARECOMP_VK_MEMLOG=<seconds>: that interval, to see
+    // what a heavy render scale holds per heap)
+    static double mem_at = 60.0, mem_iv = -1;
+    if (mem_iv < 0) { const char *e = getenv("LARECOMP_VK_MEMLOG"); mem_iv = e && atof(e) >= 1 ? atof(e) : 600.0; if (mem_iv < 600.0) mem_at = mem_iv; }
+    if (now >= mem_at) { vk_log_memory("playing"); mem_at = now + mem_iv; }
 }
 
 // The game thread's side of a present: the frame counters and the per-frame hooks (input, pacing, test hooks).
@@ -1334,6 +1370,12 @@ void backend_clear_window(void) {
     if (g_vk.dev && vk_frame_begin(black)) vk_frame_end(NULL);
 }
 
+static void mouse_mode_sync(void) {  // relative mouse mode while the mouse steers the game (runtime/hle/input.c)
+    static bool rel;
+    bool want = input_mouse_captured();
+    if (want != rel && SDL_SetWindowRelativeMouseMode(window, want)) rel = want;  // (a failed call retries next poll)
+}
+
 int ui_run(void) {
     ui_window_init();
     atomic_store(&ui_ready, true);
@@ -1341,6 +1383,7 @@ int ui_run(void) {
         if (rt_reboot_requested()) return rt_reboot_requested();  // (runtime/main.c tears the game down)
         SDL_Event e;
         while (SDL_WaitEventTimeout(&e, 16)) {
+            mouse_mode_sync();  // (also here: a steady stream of mouse motion keeps the loop out of the timeout)
             input_rumble_poll();
             if (e.type == SDL_EVENT_QUIT) {
                 input_rumble_stop();
@@ -1355,6 +1398,7 @@ int ui_run(void) {
             if (menu_handle_event(&e)) continue;
             input_handle_event(&e);
         }
+        mouse_mode_sync();
         menu_apply_window_requests(window);
         input_rumble_poll();
         input_led_poll();

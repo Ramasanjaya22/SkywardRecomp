@@ -122,6 +122,8 @@ typedef struct {
     bool ao_taps;          // the AO blur's taps follow rscale[65].y (ao_grid_fix)
     bool shadow_tap[2];    // the shadow map's texel size (x, y) is read: shadow_taps
     bool ao_pass;          // the AO pass: white while rscale[65].z > 0 (ao_grid_fix)
+    uint32_t cur_pc;       // the instruction being translated (byte offset)
+    const uint8_t *labels; // branch targets by instruction index (a block starts at each): track_bindless stops there
 } Ctx;
 
 static uint64_t bits(uint64_t w, int lo, int n) { return (w >> lo) & ((n == 64) ? ~0ull : ((1ull << n) - 1)); }
@@ -536,6 +538,73 @@ static int tex_slot(Ctx *c, uint32_t index, int type, bool shadow, bool array) {
     return s;
 }
 
+// How many consecutive registers an instruction writes from its destination field: loads wider than 32 bits (size field
+// 5 = 64, 6 = 128), attribute loads, texture fetches (one per mask bit); 1 for the rest. TEXS / TLDS also write a second
+// pair at bit 28 (track_bindless). shortcut: 64-bit float and conversion ops are not listed (a handle never goes through
+// them) - add them when a shader shows one between the LDC and the TEX.B.
+static int dest_span(uint64_t w) {
+    uint64_t top = w & 0xfff8000000000000ull;
+    int size = (int)bits(w, 48, 3);
+    if (top == 0xef90000000000000ull || top == 0xef40000000000000ull || top == 0xef48000000000000ull ||
+        ((top == 0xeed0000000000000ull || top == 0xeed8000000000000ull) && !bits(w, 51, 1)))  // LDC, LDL, LDS, LDG
+        return size == 5 ? 2 : size >= 6 ? 4 : 1;
+    if (top == 0xefd8000000000000ull) return 1 + (int)bits(w, 47, 2);                            // LD attribute
+    if ((w & 0xfc38000000000000ull) == 0xc038000000000000ull || top == 0xdeb8000000000000ull ||  // TEX, TEX.B
+        top == 0xdf48000000000000ull) {                                                          // TXQ
+        int n = 0;
+        for (int m = (int)bits(w, 31, 4); m; m >>= 1) n += m & 1;
+        return n > 1 ? n : 1;
+    }
+    if ((w & 0xf600000000000000ull) == 0xd000000000000000ull || (w & 0xf600000000000000ull) == 0xd200000000000000ull)
+        return 2;  // TEXS, TLDS
+    return 1;
+}
+
+// The constant buffer word a bindless handle comes from: walks back from instruction `i` inside its basic block to the
+// last write of `reg`; true only when that is an unguarded LDC.32 c[idx][RZ + off] (a handle chosen at run time, or
+// computed, stays untracked; so does one a multi-register writer (dest_span) covers).
+static bool track_bindless(Ctx *c, size_t i, int reg, uint32_t *cbuf, uint32_t *offset) {
+    const uint64_t *code = (const uint64_t *)c->code;
+    for (size_t k = i; k > 1;) {
+        if (c->labels && c->labels[k]) return false;  // a block starts here: other paths reach the TEX.B
+        if (--k % 4 == 0) continue;                   // (scheduling word)
+        uint64_t w = code[k];
+        int d = (int)bits(w, 0, 8);
+        bool ldc = (w & 0xfff8000000000000ull) == 0xef90000000000000ull;
+        int span = dest_span(w), d2 = (int)bits(w, 28, 8);
+        uint64_t t6 = w & 0xf600000000000000ull;
+        bool texs = t6 == 0xd000000000000000ull || t6 == 0xd200000000000000ull;
+        bool hit = (d != RZ && reg >= d && reg < d + span) || (texs && d2 != RZ && reg >= d2 && reg < d2 + 2);
+        if (!hit) continue;
+        if (!ldc || span != 1 || d != reg || bits(w, 48, 3) != 4 || bits(w, 8, 8) != RZ || bits(w, 16, 4) != 7) return false;  // (guard PT, not negated)
+        *cbuf = (uint32_t)bits(w, 36, 5);
+        *offset = (uint32_t)bits(w, 20, 16);
+        return true;
+    }
+    return false;
+}
+
+// A texture whose handle is the word at c[cbuf][offset] (TEX.B): one slot per word. Not in tex_slot's index table.
+static int tex_slot_bindless(Ctx *c, uint32_t cbuf, uint32_t offset, int type, bool shadow, bool array) {
+    for (int s = 0; s < c->info->ntex; s++) {
+        ShaderTexture *t = &c->info->tex[s];
+        if (!t->bindless || t->bindless_cbuf != cbuf || t->bindless_offset != offset) continue;
+        if (t->type != type || t->shadow != shadow) fail(c, "texture c%u[%#x] used as two types", cbuf, offset);
+        return s;
+    }
+    int s = c->info->ntex++;
+    if (s >= 31) { fail(c, "too many textures"); return 0; }
+    c->tex_weak[s] = false;
+    ShaderTexture *t = &c->info->tex[s];
+    t->bindless = true;
+    t->bindless_cbuf = cbuf;
+    t->bindless_offset = offset;
+    t->type = (uint8_t)type;
+    t->shadow = shadow;
+    t->is_array = array;
+    return s;
+}
+
 static const char *tex_type_name(int t) {
     switch (t) {
     case TEXTYPE_1D: return "1d";
@@ -823,17 +892,22 @@ static void emit_texs(Ctx *c, uint64_t w, bool fetch) {
 static void emit_tex(Ctx *c, uint64_t w, bool bindless) {
     int d = (int)bits(w, 0, 8), a = (int)bits(w, 8, 8), b = (int)bits(w, 20, 8);
     uint32_t index = bindless ? 0 : (uint32_t)bits(w, 36, 13);
+    uint32_t bl_cbuf = 0, bl_off = 0;
     int target = (int)bits(w, 29, 2);
     bool array = bits(w, 28, 1), dc = bits(w, 50, 1), aoffi = bindless ? bits(w, 36, 1) : bits(w, 54, 1);
     uint32_t mask = (uint32_t)bits(w, 31, 4);
     int lod_mode = bindless ? (int)bits(w, 37, 3) : (int)bits(w, 55, 3);  // 0 none, 1 lz, 2 lb, 3 ll, 6 lba, 7 lla
-    if (bindless) { fail(c, "bindless tex"); return; }
+    if (bindless) {  // Vulkan only: the handle is the first meta register, the other operands follow it
+        if (!c->glsl) { fail(c, "bindless tex"); return; }
+        if (!track_bindless(c, c->cur_pc / 8, b, &bl_cbuf, &bl_off)) { fail(c, "bindless tex (untracked)"); return; }
+        b++;
+    }
     int type = target == 0 ? (array ? TEXTYPE_1D_ARRAY : TEXTYPE_1D)
              : target == 1 ? (array ? TEXTYPE_2D_ARRAY : TEXTYPE_2D)
              : target == 2 ? TEXTYPE_3D
                            : (array ? TEXTYPE_CUBE_ARRAY : TEXTYPE_CUBE);
     int ncoord = target == 0 ? 1 : target == 1 ? 2 : 3;
-    int slot = tex_slot(c, index, type, dc, array);
+    int slot = bindless ? tex_slot_bindless(c, bl_cbuf, bl_off, type, dc, array) : tex_slot(c, index, type, dc, array);
     if (c->glsl) {  // same register layout as below
         char cs[3][40], lay[96], lodv[48], offv[96], drv[48], gcall[4096];
         const char *co[3], *layp = NULL, *lodp = NULL, *offp = NULL, *drp = NULL;
@@ -990,6 +1064,7 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
     int d = (int)bits(w, 0, 8), a = (int)bits(w, 8, 8);
     int pr = (int)bits(w, 16, 3);
     bool prn = bits(w, 19, 1);
+    c->cur_pc = pc;
     uint16_t op13 = (uint16_t)(w >> 51);  // top 13 bits
     // predicate guard. SSY/PBK/PCNT/PRET take no predicate: those bits are zero in the encoding,
     // which would otherwise read as @P0.
@@ -1556,7 +1631,13 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         // bits 37-38: 2 .U64 / 3 .S64 shift the full 64 bits (width 64), else 32. The immediate is 6 bits (20-25:
         // bits 37-38 of the 19-bit B immediate are the width field). .CC / .X / .HI (47-49) aren't modelled.
         bool right = (w >> 56) == 0x5c || (w >> 57) == (0x38 >> 1);
-        if (bits(w, 47, 3)) { fail(c, "shf cc/x/hi"); return; }
+        if (bits(w, 47, 3)) {
+            if (getenv("LARECOMP_SHF_LOG"))  // data only: the rejected word (docs/debug-hooks.md)
+                fprintf(stderr, "[shf] stage %d pc %#x bits47-49 %llu word %016llx\n", c->stage, pc,
+                        (unsigned long long)bits(w, 47, 3), (unsigned long long)w);
+            fail(c, "shf cc/x/hi");
+            return;
+        }
         char shb[16];
         const char *sh = ((w >> 60) == 3) ? (sprintf(shb, "%uu", (unsigned)bits(w, 20, 6)), shb) : R((int)bits(w, 20, 8));
         const char *hi = R((int)bits(w, 39, 8));
@@ -1966,7 +2047,13 @@ static const char glsl_prelude[] =
     "float fswzadd(float a, float b, uint swz, uint lane) { uint m = (swz >> ((lane & 3u) * 2u)) & 3u; float ma = m == 1u ? -1.0f : (m == 3u ? 0.0f : 1.0f); float mb = m == 2u ? -1.0f : 1.0f; return a * ma + b * mb; }\n"
     "uvec2 rsc(uvec2 c, vec4 s) { return (s.x == 1.0f && s.y == 1.0f) ? c : uvec2(floor((vec2(c) + 0.5f) * s.xy)); }\n"
     // a scaled texture whose contents occupy its top-left part (Dynamic resolution): sample that part
-    "vec2 uvs(vec2 uv, vec4 s) { return (s.z == 1.0f && s.w == 1.0f) ? uv : min(uv, 1.0f) * s.zw; }\n";
+    // ultrawide: a screen-space UV the vertex shader derived from the unwidened clip x, looked up in a scaled image, is
+    // mapped to the widened view: clip x * wide_k puts the world at (u - 0.5) * wide_k + 0.5 (WIDE_UK is 1 when off)
+    "vec2 uvn(vec2 uv, vec4 s) { return (s.z == 1.0f && s.w == 1.0f) ? uv : min(uv, 1.0f) * s.zw; }\n"
+    "vec2 uvs(vec2 uv, vec4 s) {\n"
+    "  if (s.x > 1.001f) uv.x = (uv.x - 0.5f) * WIDE_UK + 0.5f;\n"
+    "  return uvn(uv, s);\n"
+    "}\n";
 // The half <-> float helpers (glsl_finish: glsl_h2f_exact or glsl_h2f_native, then glsl_prelude_half).
 // Half -> float in vertex (and other pre-raster) shaders: by bits, not unpackHalf2x16. NVIDIA's driver recognises
 // unpacked halves and runs some of the fp32 math after them in native fp16, differently per shader, so a depth
@@ -2010,12 +2097,62 @@ static bool glsl_early_tests(const Ctx *c) {
            !maxwell_gmem_fs_miss && !c->info->uses_discard && !c->omap_depth && !c->uses_gmem_store;
 }
 
+// ultrawide (wide_k draws): a lookup's UV derived from FragCoord (in.pos) is already in the widened view; one the vertex
+// shader derived from the unwidened clip x is not and goes through uvs()'s remap. Tell them apart by following the
+// registers that are written from in.pos (last write wins; branches are not followed) and rename the lookups whose
+// coordinates read such a register to uvn() (no remap). Runs on the MSL-spelled body, before glsl_rewrite.
+static bool wide_expr_fc(const char *b, const char *e, const bool *taint) {
+    for (const char *j = b; j < e; j++) {
+        if (e - j > 7 && !strncmp(j, "in.pos[", 7)) return true;
+        if (*j == 'r' && (j == b || !id_char(j[-1])) && j[1] >= '0' && j[1] <= '9') {
+            const char *k = j + 1;
+            int n = 0;
+            while (k < e && *k >= '0' && *k <= '9') n = n * 10 + (*k++ - '0');
+            if ((k >= e || !id_char(*k)) && n < 256 && taint[n]) return true;
+        }
+    }
+    return false;
+}
+static void wide_uv_split(Ctx *c) {
+    const char *src = c->body.buf;
+    if (!src || !strstr(src, "in.pos[")) return;
+    bool taint[256] = {0};
+    Str o = {0};
+    const char *p = src, *flush = src;
+    while (*p) {
+        bool wb = p == src || !id_char(p[-1]);
+        if (wb && !strncmp(p, "uvs(", 4)) {
+            int depth = 0;
+            const char *q = p + 3;
+            do { if (*q == '(') depth++; else if (*q == ')') depth--; q++; } while (*q && depth > 0);
+            if (wide_expr_fc(p, q, taint)) { sp(&o, "%.*suvn(", (int)(p - flush), flush); flush = p + 4; }
+            p += 4;
+            continue;
+        }
+        if (wb && *p == 'r' && p[1] >= '0' && p[1] <= '9') {
+            const char *k = p + 1;
+            int n = 0;
+            while (*k >= '0' && *k <= '9') n = n * 10 + (*k++ - '0');
+            if (n < 256 && k[0] == ' ' && k[1] == '=' && k[2] == ' ') {
+                const char *e = strchr(k, ';');
+                if (e) taint[n] = wide_expr_fc(k + 3, e, taint);
+            }
+        }
+        p++;
+    }
+    if (!o.buf) return;
+    sp(&o, "%s", flush);
+    free(c->body.buf);
+    c->body = o;
+}
+
 // Declarations + entry point around the (rewritten) body; mirrors the MSL assembly in maxwell_translate.
 static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     ShaderInfo *info = c->info;
     const ShaderKey *key = c->key;
     int stage = c->stage;
     Str body = {0};
+    if (stage == STAGE_FRAGMENT && key && key->wide_k && !getenv("LARECOMP_VK_NO_WIDE_UV")) wide_uv_split(c);
     glsl_rewrite(c, &body, c->body.buf ? c->body.buf : "");
     if (info->uses_gmem && (info->cbuf_mask & (1u << GMEM_BUFFER_INDEX))) fail(c, "cbuf %d clashes with gmem", GMEM_BUFFER_INDEX);
     if (info->cbuf_mask >> 18) fail(c, "cbuf index out of range");
@@ -2026,6 +2163,7 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     Str s = {0};
     sp(&s, "#version 460\n");  // (the prelude's first line; an extension directive has to follow it)
     if (info->uses_gmem && maxwell_gmem_chunk_shift && maxwell_gmem_lazy) sp(&s, "#extension GL_EXT_buffer_reference : require\n");
+    sp(&s, "#define WIDE_UK %.6ff\n", stage == STAGE_FRAGMENT && key && key->wide_k && !getenv("LARECOMP_VK_NO_WIDE_UV") ? key->wide_k / 1000.0 : 1.0);
     sp(&s, "%s", glsl_prelude + sizeof "#version 460\n" - 1);
     static int exact = -1;
     if (exact < 0) exact = getenv("LARECOMP_VK_EXACT_H2F") && atoi(getenv("LARECOMP_VK_EXACT_H2F")) != 0;
@@ -2373,11 +2511,25 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
     static int annotate = -1;
     if (annotate < 0) annotate = getenv("LARECOMP_SAVE_MSL") != NULL;
     c->branchy = any_branch;
+    c->labels = label;
+    c->code = code;
     for (size_t i = 0; i < end && !c->fail; i++) {
         if (i % 4 == 0) continue;
         uint32_t pc = (uint32_t)(i * 8);
         if (any_branch && label[i]) sp(&c->body, "  case %uu:\n", pc);
         if (annotate) sp(&c->body, "    // pc %x: %016llx\n", pc, (unsigned long long)((const uint64_t *)code)[i]);
+        {   // LARECOMP_BINDLESS_LOG=1: data only, each TEX.B word and the words just before it (docs/debug-hooks.md)
+            static int blog = -1;
+            if (blog < 0) blog = getenv("LARECOMP_BINDLESS_LOG") ? 24 : 0;
+            if (blog > 0 && (((const uint64_t *)code)[i] & 0xfff8000000000000ull) == 0xdeb8000000000000ull) {
+                blog--;
+                fprintf(stderr, "[bindless] stage %d pc %#x word %016llx before:", stage, pc,
+                        (unsigned long long)((const uint64_t *)code)[i]);
+                for (size_t k = i; k-- > 0 && k + 12 >= i;)
+                    if (k % 4) fprintf(stderr, " %llx@%llx", (unsigned long long)((const uint64_t *)code)[k], (unsigned long long)(k * 8));
+                fprintf(stderr, "\n");
+            }
+        }
         emit_insn(c, ((const uint64_t *)code)[i], pc);
         light_tiles_fix(c, (const uint64_t *)code, end, pc);
         if (dbg && pc == maxwell_dbg_pc) {
@@ -2389,6 +2541,7 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
         info->num_insts++;
     }
     free(label);
+    c->labels = NULL;
     // (MSL: more textures than sampler slots take a slot table, at a buffer index the vertex stage's streams use)
     if (!c->glsl && stage == STAGE_VERTEX && info->ntex > MSL_MAX_SAMPLERS)
         fail(c, "%d textures in a vertex shader (Metal: %d samplers)", info->ntex, MSL_MAX_SAMPLERS);
@@ -2404,7 +2557,10 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
     sp(&s, "static inline uint bfi(uint ins, uint ctl, uint base) { uint pos = ctl & 0xFFu, len = (ctl >> 8) & 0xFFu; if (len == 0u || pos >= 32u) return base; return insert_bits(base, ins, pos, min(len, 32u - pos)); }\n");
     sp(&s, "static inline float fswzadd(float a, float b, uint swz, uint lane) { uint m = (swz >> ((lane & 3u) * 2u)) & 3u; float ma = m == 1u ? -1.0f : (m == 3u ? 0.0f : 1.0f); float mb = m == 2u ? -1.0f : 1.0f; return a * ma + b * mb; }\n");
     sp(&s, "static inline uint2 rsc(uint2 c, float4 s) { return (s.x == 1.0f && s.y == 1.0f) ? c : uint2(floor((float2(c) + 0.5f) * s.xy)); }\n");
-    sp(&s, "static inline float2 uvs(float2 uv, float4 s) { return (s.z == 1.0f && s.w == 1.0f) ? uv : min(uv, 1.0f) * s.zw; }\n");
+    // (as the GLSL prelude's uvs: the widened view's screen-space UV; inert while Metal leaves wide_k unset)
+    sp(&s, "constant float WIDE_UK = %.6ff;\n", c->stage == STAGE_FRAGMENT && c->key && c->key->wide_k ? c->key->wide_k / 1000.0 : 1.0);
+    sp(&s, "static inline float2 uvn(float2 uv, float4 s) { return (s.z == 1.0f && s.w == 1.0f) ? uv : min(uv, 1.0f) * s.zw; }\n");
+    sp(&s, "static inline float2 uvs(float2 uv, float4 s) { if (s.x > 1.001f) uv.x = (uv.x - 0.5f) * WIDE_UK + 0.5f; return uvn(uv, s); }\n");
     sp(&s, "static inline float2 hx(uint v, uint swz) { if (swz == 1u) return float2(as_type<float>(v)); float2 h = float2(as_type<half2>(v)); return swz == 2u ? h.xx : swz == 3u ? h.yy : h; }\n");
     // merges on half2 lanes rather than with integer masks: on an M1 (macOS 15.0.1) the Metal compiler miscompiled
     // (old & 0xFFFF0000u) | lo in Link's body shader - the merged low half read back as a constant 512.0 and Link

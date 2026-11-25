@@ -5,10 +5,13 @@
 //   1 Game Boy: the original's four greens (#0F380F #306230 #8BAC0F #9BBC0F), chosen by luminance
 //   2 Game Boy Color: more saturated and a little brighter, 6 levels a channel (its 15-bit colours, posterised)
 //   3 Grayscale: luminance only, no tint, contrast raised a little (a gentle S-curve)
+//   4 Vivid: luminance gamma 1.15 (mid-tones a little deeper, not brighter), vibrance (chroma x1.4 on dull colours
+//     falling to x1.0 on saturated ones, so they don't clip), then levels stretched a little (black 0.02 -> 0, white
+//     0.98 -> 1). No sharpen of its own (best with the Sharpen option on)
 #pragma once
 #include "../settings.h"
 
-enum { SCREEN_FILTER_OFF, SCREEN_FILTER_GB, SCREEN_FILTER_GBC, SCREEN_FILTER_GRAY };
+enum { SCREEN_FILTER_OFF, SCREEN_FILTER_GB, SCREEN_FILTER_GBC, SCREEN_FILTER_GRAY, SCREEN_FILTER_VIVID };
 
 // pf for the present shader (x: the mode)
 static inline void screen_filter_params(float pf[4]) {
@@ -26,6 +29,11 @@ static inline void screen_filter_params(float pf[4]) {
     "    } else if (pf.x < 2.5) {\n"                                                                                   \
     "      c = clamp(mix(" V3 "(l), c, 1.4) * 1.06, 0.0, 1.0);\n"                                                      \
     "      c = floor(c * 5.0 + 0.5) / 5.0;\n"                                                                          \
+    "    } else if (pf.x > 3.5) {\n"                                                                                   \
+    "      float s = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));\n"                                             \
+    "      float y = pow(max(l, 0.0), 1.15);\n"                                                                        \
+    "      c = mix(" V3 "(y), c + (y - l), 1.0 + 0.4 * (1.0 - s));\n"                                                  \
+    "      c = clamp((c - 0.02) / 0.96, 0.0, 1.0);\n"                                                                  \
     "    } else {\n"                                                                                                   \
     "      l = clamp((l - 0.5) * 1.2 + 0.5, 0.0, 1.0);\n"                                                              \
     "      c = " V3 "(l * l * (3.0 - 2.0 * l) * 0.35 + l * 0.65);\n"                                                   \

@@ -87,6 +87,7 @@ with tempfile.TemporaryDirectory() as directory:
     want = snapshot(home)
     env = dict(os.environ, LARECOMP_DATA_HOME=str(home))
     env.pop('LARECOMP_DATA_ROOT', None)
+    env['LOCALAPPDATA'] = str(S / 'localappdata')  # (where Windows remembers the last data folder: never the real one)
 
     def run(*args, stall=False, extra_env=None):
         p = subprocess.Popen([str(exe), *map(str, args)], cwd=start, env=dict(env, **(extra_env or {})),
@@ -179,4 +180,39 @@ with tempfile.TemporaryDirectory() as directory:
     assert r['USE'].startswith('ok'), r
     check_in(home, 'switched back')
     print('start fresh: the old data stays; back to it as it is; never moved into a folder with data')
+
+    # pull (the launcher's "Move here" for the folder used before): the data in A moves into this install's folder B
+    for fresh_ini in (False, True):
+        a, b = S / f'pull_a{fresh_ini}', S / f'pull_b{fresh_ini}'
+        populate(a)
+        b.mkdir()
+        if fresh_ini:
+            (b / 'skywardrecomp.ini').write_text('[fresh]')  # (this start's own settings: not data)
+        wa = snapshot(a)
+        r = run('pull', a, extra_env={'LARECOMP_DATA_HOME': str(b)})
+        assert r['PULL'].startswith('ok'), r
+        assert snapshot(b) == wa and ours_left(a) == [] and not any((a / e).exists() for e in ENTRIES), r
+    c, d = S / 'pull_c', S / 'pull_d'
+    populate(c)
+    (d / 'save').mkdir(parents=True)
+    (d / 'save' / 'mine.sav').write_bytes(b'mine')
+    wc, wd = snapshot(c), snapshot(d)
+    r = run('pull', c, extra_env={'LARECOMP_DATA_HOME': str(d)})
+    assert r['PULL'].startswith('failed') and 'already has' in r['PULL'], r  # (never merged into other data)
+    assert snapshot(c) == wc and snapshot(d) == wd
+    print('pull: the old folder moves into an empty one (or one with only a fresh settings file); never into one with data')
+
+    # a new version in another folder (Windows portable: the data folder is the program's): the last one is offered
+    assert run('previous')['PREV'] == ''  # (this is the last one)
+    new = {'LARECOMP_DATA_HOME': str(S / 'new_version')}
+    for _ in range(2):  # (an empty folder's start doesn't forget it)
+        prev = run('previous', extra_env=new)['PREV']
+        assert (Path(prev) == home) if os.name == 'nt' else prev == '', prev
+    populate(S / 'new_version')  # (this folder has data too: alternating between two installs is not asked again)
+    assert run('previous', extra_env=new)['PREV'] == ''
+    shutil.rmtree(S / 'new_version')
+    home.rename(S / 'home_gone')
+    assert run('previous', extra_env=new)['PREV'] == ''
+    print('a new folder: the data folder used before is offered while it holds data' if os.name == 'nt' else
+          'previous data folder: Windows only')
     print(f'{plat}: data folder moves never lose data')

@@ -116,6 +116,8 @@ def main():
     path, base = sys.argv[1], int(sys.argv[2], 0)
     count = int(sys.argv[3]) if len(sys.argv) > 3 else 3000
     seed = int(sys.argv[4]) if len(sys.argv) > 4 else 1
+    # optional 5th word on: the game code's flags to check, e.g. "-O2 -fwrapv -ffp-contract=off" (default -O1)
+    cflags = sys.argv[5].split() if len(sys.argv) > 5 else ['-O1']
     r = random.Random(seed)
     n = Nso(path)
     lo, hi = n.text[0], n.text[0] + n.text[1]
@@ -157,7 +159,7 @@ def main():
         f.write(f'int ntests = {len(picks)};\n')
     harness = os.path.join(ROOT, 'tools', 'test_harness.c')
     exe = os.path.join(work, 'harness')
-    subprocess.check_call(['clang', '-O1', '-Wno-deprecated-declarations', '-fno-strict-aliasing', '-I', os.path.join(ROOT, 'runtime'),
+    subprocess.check_call(['clang', *cflags, '-Wno-deprecated-declarations', '-fno-strict-aliasing', '-I', os.path.join(ROOT, 'runtime'),
                            '-o', exe, harness, os.path.join(work, 'tests.c')])
 
     mu = uc.Uc(uc.UC_ARCH_ARM64, uc.UC_MODE_ARM)

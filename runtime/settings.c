@@ -18,18 +18,22 @@ static const char *settings_file(void) {
 }
 
 const char *const g_enemy_colour_modes[N_ENEMY_COLOUR_MODES] = {"Off", "Random per seed", "Random every load"};
+// Saved value names/positions frozen in tools/test_settings_keys.py: append only.
 static const char *const k_enemy_colour_keys[N_ENEMY_COLOUR_MODES] = {"off", "seed", "load"};  // (skywardrecomp.ini)
-const char *const g_screen_filters[N_SCREEN_FILTERS] = {"Off", "Game Boy", "Game Boy Color", "Grayscale"};
-static const char *const k_screen_filter_keys[N_SCREEN_FILTERS] = {"off", "gameboy", "gameboy_color", "grayscale"};  // (else: off)
+const char *const g_screen_filters[N_SCREEN_FILTERS] = {"Off", "Game Boy", "Game Boy Color", "Grayscale", "Vivid"};
+// Saved value names/positions frozen in tools/test_settings_keys.py: append only.
+static const char *const k_screen_filter_keys[N_SCREEN_FILTERS] = {"off", "gameboy", "gameboy_color", "grayscale", "vivid"};  // (else: off)
 
 Settings g_settings = {
     .aspect = ASPECT_UNLOCKED,
     .fullscreen = false,
     .volume = 1.0f,
     .free_cam_sens = 1.0f,
+    .mouse_sens = 1.0f,
     .reverb = true,
     .movie_audio = true,
     .rumble = true,
+    .skip_launcher = false,
     .rumble_strength = 100,
     .controller_light = true,
     .menu_confirm = MENU_CONFIRM_CONTROLLER,
@@ -56,6 +60,7 @@ Settings g_settings = {
 // regionJP/JPja, regionKR/KRkr, regionTW/TWch, regionCN/CNch), and the game picks one from the system language it
 // reads back (runtime/services/am.c), exactly as it does on the console. Codes as the Switch reports them, except for
 // the Chinese ones: the game only recognizes zh-Hans / zh-Hant and falls back to Japanese when told zh-CN / zh-TW.
+// Saved value names/positions frozen in tools/test_settings_keys.py: append only.
 const char *const g_language_codes[N_LANGUAGES] = {"auto", "ja", "en-US", "es", "fr", "de", "it", "nl", "ru", "ko",
                                                    "zh-Hans", "zh-Hant"};
 const char *const g_language_names[N_LANGUAGES] = {"Auto", "Japanese", "English", "Spanish", "French", "German",
@@ -165,6 +170,11 @@ void settings_load(void) {
         else if (!strcmp(key, "reverb")) g_settings.reverb = atoi(val) != 0;
         else if (!strcmp(key, "movie_audio")) g_settings.movie_audio = atoi(val) != 0;
         else if (!strcmp(key, "show_fps")) g_settings.show_fps = atoi(val) != 0;
+        else if (!strcmp(key, "fps")) {  // (auto, 30, 60, 90, 120, unlocked: anything else is auto)
+            int n = atoi(val);
+            g_settings.fps_target = !strcmp(val, "unlocked") ? FPS_UNLOCKED
+                                  : n == 30 || n == 60 || n == 90 || n == 120 ? n : FPS_AUTO;
+        }
         else if (!strcmp(key, "anisotropy")) {  // (0, 2, 4, 8, 16: other values round down)
             int n = atoi(val);
             g_settings.anisotropy = n >= 16 ? 16 : n >= 8 ? 8 : n >= 4 ? 4 : n >= 2 ? 2 : 0;
@@ -192,7 +202,11 @@ void settings_load(void) {
         else if (!strcmp(key, "free_cam")) g_settings.free_cam = atoi(val) != 0;
         else if (!strcmp(key, "zr_attack")) g_settings.zr_attack = atoi(val) != 0;
         else if (!strcmp(key, "free_cam_sens")) g_settings.free_cam_sens = (float)atof(val);
+        else if (!strcmp(key, "mouse_camera")) g_settings.mouse_camera = atoi(val) != 0;
+        else if (!strcmp(key, "mouse_combat")) g_settings.mouse_combat = atoi(val) != 0;
+        else if (!strcmp(key, "mouse_sens")) g_settings.mouse_sens = (float)atof(val);
         else if (!strcmp(key, "rumble")) g_settings.rumble = atoi(val) != 0;
+    else if (!strcmp(key, "skip_launcher")) g_settings.skip_launcher = atoi(val) != 0;
         else if (!strcmp(key, "rumble_strength")) g_settings.rumble_strength = atoi(val);
         else if (!strcmp(key, "controller_light")) g_settings.controller_light = atoi(val) != 0;
         else if (!strcmp(key, "background_input")) g_settings.bg_input = atoi(val) != 0;
@@ -257,6 +271,9 @@ void settings_load(void) {
     if (!isfinite(g_settings.free_cam_sens)) g_settings.free_cam_sens = 1.0f;  // a hand-edited nan/inf must not reach the ini
     if (g_settings.free_cam_sens < 0.25f) g_settings.free_cam_sens = 0.25f;
     if (g_settings.free_cam_sens > 2.0f) g_settings.free_cam_sens = 2.0f;
+    if (!isfinite(g_settings.mouse_sens)) g_settings.mouse_sens = 1.0f;
+    if (g_settings.mouse_sens < 0.25f) g_settings.mouse_sens = 0.25f;
+    if (g_settings.mouse_sens > 4.0f) g_settings.mouse_sens = 4.0f;
     if (g_settings.rumble_strength < 25 || g_settings.rumble_strength > 100) g_settings.rumble_strength = 100;
     LOG("[settings] loaded %s\n", SETTINGS_FILE);
 }
@@ -271,6 +288,8 @@ void settings_save(void) {
     fprintf(f, "reverb = %d\n", g_settings.reverb);
     fprintf(f, "movie_audio = %d\n", g_settings.movie_audio);
     fprintf(f, "show_fps = %d\n", g_settings.show_fps);
+    if (g_settings.fps_target > 0) fprintf(f, "fps = %d\n", g_settings.fps_target);
+    else fprintf(f, "fps = %s\n", g_settings.fps_target == FPS_UNLOCKED ? "unlocked" : "auto");
     fprintf(f, "anisotropy = %d\n", g_settings.anisotropy);
     fprintf(f, "lod_bias = %.2f\n", g_settings.lod_bias);
     fprintf(f, "upscaler = %s\n", g_settings.upscaler_auto ? "auto" : g_settings.upscaler == UPSCALE_METALFX ? "metalfx" :
@@ -285,12 +304,16 @@ void settings_save(void) {
     fprintf(f, "free_cam = %d\n", g_settings.free_cam);
     fprintf(f, "zr_attack = %d\n", g_settings.zr_attack);
     fprintf(f, "free_cam_sens = %.2f\n", g_settings.free_cam_sens);
+    fprintf(f, "mouse_camera = %d\nmouse_combat = %d\nmouse_sens = %.2f\n", g_settings.mouse_camera, g_settings.mouse_combat,
+            g_settings.mouse_sens);
     fprintf(f, "rumble = %d\n", g_settings.rumble);
+    fprintf(f, "skip_launcher = %d\n", g_settings.skip_launcher);
     fprintf(f, "rumble_strength = %d\n", g_settings.rumble_strength);
     fprintf(f, "controller_light = %d\n", g_settings.controller_light);
     fprintf(f, "background_input = %d\n", g_settings.bg_input);
     fprintf(f, "move_360 = %d\nblur_removal = %d\nhide_hero_icon = %d\n", g_settings.move_360, g_settings.blur_removal,
             g_settings.hide_hero_icon);
+    // Saved value names/positions frozen in tools/test_settings_keys.py: append only.
     static const char *const prompts[] = {"auto", "nintendo", "xbox", "playstation"};
     fprintf(f, "prompts = %s\n", prompts[g_settings.prompts & 3]);
     fprintf(f, "menu_confirm = %s\n", g_settings.menu_confirm == MENU_CONFIRM_CONTROLLER ? "controller" : "game");
@@ -302,6 +325,7 @@ void settings_save(void) {
     fprintf(f, "aspect_asked = %d\n", g_settings.aspect_asked);
     fprintf(f, "menu_tip_seen = %d\n", g_settings.menu_tip_seen);
     fprintf(f, "onedrive_kept = %d\n", g_settings.onedrive_kept);
+    // Saved value names/positions frozen in tools/test_settings_keys.py: append only.
     static const char *const letters[] = {"off", "explored", "map"};
     fprintf(f, "chaos_letters = %s\n", letters[g_settings.chaos_letters]);
     fprintf(f, "cheat_hearts = %d\ncheat_ammo = %d\ncheat_rupees = %d\n", g_settings.cheat_hearts, g_settings.cheat_ammo,

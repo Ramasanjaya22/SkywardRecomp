@@ -109,7 +109,7 @@ bool rt_dev_mode(void) { return g_dev; }
 #define NOTE_FROM ".skywardrecomp_move_from"        // in a move's destination: the old folder, still to be emptied
 #define MARK_PARTIAL ".skywardrecomp_incomplete"    // in a move's destination until its copy was checked
 // What a data folder holds (and a move takes along). Logs stay where they are.
-static const char *const DATA_ENTRIES[] = {"save", "rando", "skywardrecomp.ini", "fonts", "gamecontrollerdb.txt", "cache",
+static const char *const DATA_ENTRIES[] = {"save", "rando", "skywardrecomp.ini", "fonts", "gamecontrollerdb.txt", "cache", "backups",
                                            "extracted"};
 #define N_ENTRIES (sizeof DATA_ENTRIES / sizeof *DATA_ENTRIES)
 static char g_home[1024];  // the platform's folder (where POINTER_FILE lives)
@@ -215,6 +215,43 @@ static bool pointer_root(const char *home, char *out, size_t n) {
         return false;
     }
     return true;
+}
+
+// ---- the last data folder that held data, remembered outside it: on Windows the data folder is the program's own,
+// so a new version unpacked into another folder starts empty while the old one still holds everything
+static bool holds_data(const char *dir) {
+    char p[1100];
+    join(p, sizeof p, dir, "skywardrecomp.ini");
+    if (exists(p)) return true;
+    join(p, sizeof p, dir, "extracted");
+    return is_dir(p);
+}
+
+static bool recall_file(char *out, size_t n) {
+#ifdef _WIN32
+    const char *l = getenv("LOCALAPPDATA");
+    return l && *l && (size_t)snprintf(out, n, "%s" SEP "SkywardRecomp" SEP POINTER_FILE, l) < n;
+#else
+    (void)out, (void)n;
+    return false;  // (the data folder is the same for every version)
+#endif
+}
+
+// an empty folder is never remembered: it would forget the one with the data
+static void remember(const char *root) {
+    char f[1100], r[1100];
+    if (!recall_file(f, sizeof f) || !holds_data(root) || !resolve(root, r, sizeof r)) return;
+    char d[1100];
+    snprintf(d, sizeof d, "%s", f);
+    *strrchr(d, SEP[0]) = 0;
+    mkdirs(d);
+    if (!write_line(f, r)) fprintf(stderr, "[paths] can't write %s\n", f);
+}
+
+bool rt_previous_data_root(char *out, size_t n) {
+    char f[1100];
+    return !rt_data_root_fixed() && recall_file(f, sizeof f) && read_line(f, out, n) && is_dir(out) && holds_data(out) &&
+           !same_dir(out, g_root) && !holds_data(g_root);  // (not when this folder has data: alternating installs)
 }
 
 bool rt_data_root_early(char *out, size_t n) {
@@ -331,7 +368,7 @@ void rt_paths_init(void) {
     }
     if (!getcwd(g_root, sizeof g_root)) snprintf(g_root, sizeof g_root, "%s", root);
     fprintf(stderr, "[paths] data: %s\n", g_root);
-    if (!g_dev && !(env && *env)) finish_moves(g_root, NULL);
+    if (!g_dev && !(env && *env)) finish_moves(g_root, NULL), remember(g_root);
 }
 
 const char *rt_data_root(void) { return g_root; }
@@ -555,6 +592,7 @@ typedef struct {
     char *err;
     size_t errn;
     char *buf, *buf2;
+    bool no_links;  // (always copy: a backup must not share bytes with a file the game writes in place)
 } Move;
 
 static void moved(Move *m, unsigned long long n) {
@@ -585,9 +623,9 @@ static bool copy_file(Move *m, const char *s, const char *d, const struct stat *
     static const char *no_links;  // (tests: LARECOMP_MOVE_NO_LINKS=1 copies as if to another drive)
     if (!no_links) no_links = getenv("LARECOMP_MOVE_NO_LINKS") ? "1" : "";
 #ifdef _WIN32
-    if (!*no_links && CreateHardLinkA(d, s, NULL)) { moved(m, st->st_size); return true; }  // (same volume: a second
+    if (!m->no_links && !*no_links && CreateHardLinkA(d, s, NULL)) { moved(m, st->st_size); return true; }  // (same volume: a second
 #else                                                                                       //  name, no copy)
-    if (!*no_links && link(s, d) == 0) { moved(m, st->st_size); return true; }
+    if (!m->no_links && !*no_links && link(s, d) == 0) { moved(m, st->st_size); return true; }
 #endif
     FILE *in = fopen(s, "rb"), *out = in ? fopen(d, "wb") : NULL;
     bool ok = in && out;
@@ -635,6 +673,15 @@ static bool copy_tree(Move *m, const char *s, const char *d) {
         ok = copy_tree(m, cs, cd);
     }
     closedir(dir);
+    return ok;
+}
+
+bool rt_copy_tree(const char *src, const char *dst, char *err, size_t n) {
+    err[0] = 0;
+    Move m = {NULL, 0, 0, 0, err, n, malloc(MOVE_BUF), NULL, true};
+    bool ok = m.buf && copy_tree(&m, src, dst);
+    if (!m.buf) snprintf(err, n, "Out of memory");
+    free(m.buf);
     return ok;
 }
 
@@ -722,13 +769,14 @@ bool rt_data_use(const char *to, char *err, size_t n) {
         return false;
     }
     fprintf(stderr, "[paths] data folder: %s from the next start\n", to);
+    remember(to);
     return true;
 }
 
-bool rt_data_move(const char *to, void (*progress)(int step, double frac), char *err, size_t n) {
+static bool move_data(const char *src, const char *to, void (*progress)(int step, double frac), char *err, size_t n) {
     err[0] = 0;
     char from[1024], p[1100], q[1100], abs_to[1100];
-    snprintf(from, sizeof from, "%s", g_root);
+    snprintf(from, sizeof from, "%s", src);
     if (!prepare_target(to, err, n)) return false;
     if (!resolve(to, abs_to, sizeof abs_to) || overlap(abs_to, from)) {
         snprintf(err, n, "That folder is inside the data folder.");
@@ -772,8 +820,27 @@ bool rt_data_move(const char *to, void (*progress)(int step, double frac), char 
         return false;
     }
     fprintf(stderr, "[paths] data moved to %s\n", abs_to);
+    remember(abs_to);
     finish_moves(abs_to, progress);  // (the old copy; interrupted, the next start finishes it)
     return true;
+}
+
+bool rt_data_move(const char *to, void (*progress)(int step, double frac), char *err, size_t n) {
+    return move_data(g_root, to, progress, err, n);
+}
+
+bool rt_data_pull(const char *from, void (*progress)(int step, double frac), char *err, size_t n) {
+    // a fresh settings file (this start wrote it) is no data: the source's settings win
+    bool only_ini = true;
+    char ini[1100];
+    join(ini, sizeof ini, g_root, "skywardrecomp.ini");
+    for (size_t i = 0; i < N_ENTRIES; i++) {
+        char e[1100];
+        join(e, sizeof e, g_root, DATA_ENTRIES[i]);
+        if (strcmp(DATA_ENTRIES[i], "skywardrecomp.ini") && (exists(e) || is_link(e))) only_ini = false;
+    }
+    if (only_ini && exists(ini) && !same_dir(from, g_root)) remove(ini);
+    return move_data(from, g_root, progress, err, n);
 }
 
 void rt_paths_restart(void) {

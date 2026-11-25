@@ -44,6 +44,25 @@ with tempfile.TemporaryDirectory() as directory:
         for line in ('free_cam = ' + enabled, 'free_cam_sens = ' + sens):
             assert line + '\n' in saved, (lines, saved)
         count += 1
+    # keyboard+mouse: both toggles default off and round-trip; sensitivity clamps to 0.25..4.0, nan -> 1.0
+    for lines, camera, combat, sens in [
+        ([], '0', '0', '1.00'),
+        (['mouse_camera = 1', 'mouse_combat = 1'], '1', '1', '1.00'),
+        (['mouse_camera = 1'], '1', '0', '1.00'),
+        (['mouse_combat = 1'], '0', '1', '1.00'),
+        (['mouse_sens = 1.50'], '0', '0', '1.50'),
+        (['mouse_sens = 5.0'], '0', '0', '4.00'),
+        (['mouse_sens = 0.01'], '0', '0', '0.25'),
+        (['mouse_sens = nan'], '0', '0', '1.00'),
+    ]:
+        ini = directory / 'test.ini'
+        ini.write_text('\n'.join(lines) + '\n')
+        subprocess.run([str(exe), 'mouse', camera, combat, sens], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)), check=True,
+                       capture_output=True)
+        saved = ini.read_text()
+        for line in ('mouse_camera = ' + camera, 'mouse_combat = ' + combat, 'mouse_sens = ' + sens):
+            assert line + '\n' in saved, (lines, saved)
+        count += 1
     # ZR sword jab: the toggle round-trips and stays off unless the file asks for it
     for lines, enabled in [(['zr_attack = 1'], '1'), (['zr_attack = 0'], '0'), ([], '0'), (['zr_attack = 2'], '1')]:
         ini = directory / 'test.ini'
@@ -52,6 +71,27 @@ with tempfile.TemporaryDirectory() as directory:
                        capture_output=True)
         saved = ini.read_text()
         assert 'zr_attack = ' + enabled + '\n' in saved, (lines, saved)
+        count += 1
+    # Frame rate: each value round-trips; none or an unknown one is Auto (the game's own 60 / 30)
+    for lines, fps, saved_as in [(['fps = 30'], '30', '30'), (['fps = 60'], '60', '60'), (['fps = 90'], '90', '90'),
+                                 (['fps = 120'], '120', '120'), (['fps = unlocked'], '-1', 'unlocked'),
+                                 (['fps = auto'], '0', 'auto'), ([], '0', 'auto'), (['fps = 45'], '0', 'auto')]:
+        ini = directory / 'test.ini'
+        ini.write_text('\n'.join(lines) + '\n')
+        subprocess.run([str(exe), 'fps', fps], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)), check=True,
+                       capture_output=True)
+        saved = ini.read_text()
+        assert 'fps = ' + saved_as + '\n' in saved, (lines, saved)
+        count += 1
+    # Screen filter: each key round-trips (Vivid = 4); none or an unknown one is Off
+    for lines, index, saved_as in [(['screen_filter = grayscale'], '3', 'grayscale'), (['screen_filter = vivid'], '4', 'vivid'),
+                                   (['screen_filter = gameboy'], '1', 'gameboy'), ([], '0', 'off'), (['screen_filter = neon'], '0', 'off')]:
+        ini = directory / 'test.ini'
+        ini.write_text('\n'.join(lines) + '\n')
+        subprocess.run([str(exe), 'screen-filter', index], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)), check=True,
+                       capture_output=True)
+        saved = ini.read_text()
+        assert 'screen_filter = ' + saved_as + '\n' in saved, (lines, saved)
         count += 1
     for newline in ['\n', '\r\n']:
         for setting, locale, code in cases:
@@ -113,4 +153,14 @@ with tempfile.TemporaryDirectory() as directory:
         saved = ini.read_text()
         assert (f'rando_options = {value}\n' in saved) if value else 'rando_options' not in saved, saved
         count += 1
+    # Skip start screen: persisted bool round-trips, defaults off.
+    ini = directory / 'test.ini'
+    for desired, expected in [([], '0'), (['skip_launcher = 1'], '1')]:
+        ini.write_text(''.join(line + chr(10) for line in desired))
+        subprocess.run([str(exe), 'skip-launcher', expected],
+                       env=dict(os.environ, LARECOMP_SETTINGS=str(ini)),
+                       check=True, capture_output=True)
+        assert 'skip_launcher = ' + expected + chr(10) in ini.read_text(), ini.read_text()
+        count += 1
+
     print(f'{count} parser, locale, upscaler / resolution default and roundtrip cases passed (LF/CRLF, empty/nonempty seeds)')

@@ -949,3 +949,97 @@ HOOKS = {
 # the vanilla lift runs with no hooks and no hand patches at all.
 PATCHES.clear()
 HOOKS.clear()
+
+
+# SS HD's frame controller (runtime/hle/framepace.c, the frame rate setting): `fdiv s0, s0, s1` is its 10-frame
+# average in vsyncs (1.5 or more: present interval 2, a 1.0 timestep and a 33.33 ms period; else 1, 0.5, 16.67 - the
+# same flags pick all three), and `str s0, [x8, #0xd38]` 0x64 on stores the timestep (1/30 s units) to FRAME_TIMESTEP;
+# s0 then feeds the game's accumulator, so both get the setting's value; the period follows (_frame_period). Auto: the
+# game's own values.
+FRAME_CTRL_INTERVAL_SITE = A.FRAME_CTRL_INTERVAL_SITE
+
+
+def _word(gen, a):
+    return struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+
+
+def _frame_avg(gen, a):
+    w = _word(gen, a)
+    assert w == 0x1e211800, hex(w)  # fdiv s0, s0, s1
+    return ('{ extern float rt_frame_interval_avg(float); float n, d; memcpy(&n, &c->v[0], 4); memcpy(&d, &c->v[1], 4); '
+            'float f = rt_frame_interval_avg(n / d); c->v[0] = 0; memcpy(&c->v[0], &f, 4); }'
+            f'  /* {a:#x}: fdiv s0, s0, s1 (frame controller average) */')
+
+
+def _x8_page(gen, a):
+    adrp = _word(gen, a)
+    assert adrp & 0x9f00001f == 0x90000008, hex(adrp)  # adrp x8, FRAME_TIMESTEP's page
+    off = ((adrp >> 5 & 0x7ffff) << 2 | adrp >> 29 & 3) << 12
+    return (a & ~0xfff) + (off - (1 << 33) if off & 1 << 32 else off)
+
+
+def _frame_timestep(gen, a):
+    w = _word(gen, a)
+    assert w == 0xbd0d3900, hex(w)  # str s0, [x8, #0xd38]
+    assert _x8_page(gen, a - 0x10) + 0xd38 == A.FRAME_TIMESTEP
+    return ('{ extern float rt_frame_timestep(float); float o; memcpy(&o, &c->v[0], 4); float f = rt_frame_timestep(o); '
+            'c->v[0] = 0; memcpy(&c->v[0], &f, 4); memcpy((void *)(uintptr_t)(c->x[8] + 0xd38), &f, 4); }'
+            f'  /* {a:#x}: str s0, [x8, #0xd38] (frame timestep) */')
+
+
+# 0x88 on, `str s1, [x8, #0xd3c]` stores the period in ms (x8 reloaded by the same adrp 0x8 before): its readers add
+# rate x period every frame, so it follows the timestep too
+def _frame_period(gen, a):
+    w = _word(gen, a)
+    assert w == 0xbd0d3d01, hex(w)  # str s1, [x8, #0xd3c]
+    assert _x8_page(gen, a - 0x8) + 0xd3c == A.FRAME_TIMESTEP + 4
+    return ('{ extern float rt_frame_period(float); float o; memcpy(&o, &c->v[1], 4); float f = rt_frame_period(o); '
+            'c->v[1] = 0; memcpy(&c->v[1], &f, 4); memcpy((void *)(uintptr_t)(c->x[8] + 0xd3c), &f, 4); }'
+            f'  /* {a:#x}: str s1, [x8, #0xd3c] (frame period) */')
+
+
+if FRAME_CTRL_INTERVAL_SITE:  # (0: a version without the site - the setting stays Auto, framepace.c)
+    PATCHES[FRAME_CTRL_INTERVAL_SITE] = _frame_avg
+    PATCHES[FRAME_CTRL_INTERVAL_SITE + 0x64] = _frame_timestep
+    PATCHES[FRAME_CTRL_INTERVAL_SITE + 0x88] = _frame_period
+
+
+# SS HD's g3d scene gather culls against its own frustum: `ldr s10, [x8, #0x1c4]` loads the current g3d camera's
+# projection aspect (CameraData +0xb0, set to the camera's width / height on its perspective path), and
+# tan(fovy / 2) x near x s10 becomes the frustum's right edge (left = -right) for FRUSTUM::Set; s10 has no other use.
+# The host draws the 3D view wider than 16:9 by scaling clip x (exec.c wide_k), so the game's 16:9 frustum culled
+# objects in the side bands while they were on screen. The frustum widens by the same factor; the projection, which
+# reads the same camera field elsewhere, stays 16:9.
+G3D_CULL_ASPECT_SITE = A.G3D_CULL_ASPECT_SITE
+
+
+def _g3d_cull_aspect(gen, a):
+    w = _word(gen, a)
+    assert w == 0xbd41c50a, hex(w)  # ldr s10, [x8, #0x1c4]
+    return ('{ extern float rt_g3d_cull_aspect(float); float o; memcpy(&o, (const void *)(uintptr_t)(c->x[8] + 0x1c4), 4); '
+            'float f = rt_g3d_cull_aspect(o); c->v[10] = 0; memcpy(&c->v[10], &f, 4); }'
+            f'  /* {a:#x}: ldr s10, [x8, #0x1c4] (culling frustum aspect) */')
+
+
+if G3D_CULL_ASPECT_SITE:
+    PATCHES[G3D_CULL_ASPECT_SITE] = _g3d_cull_aspect
+
+
+# The camera's own frustum (camera +0xf0, FRUSTUM::Set from the camera update) is a second, separate cull: actors test
+# their world box against its box and planes (1.0.1 0x7000df58d4, from the actor draw gate; doors use it) and are not
+# drawn when it says outside. Its right edge is tan(fovy / 2) x near x s10, with s10 = viewport width / height
+# (`fdiv s10, s1, s2`; s10 has no other use). At 16:9 a door turning into an ultrawide side band was skipped while on
+# screen. Widened like the g3d frustum; the projection is built elsewhere and stays 16:9.
+ACTOR_CULL_ASPECT_SITE = A.ACTOR_CULL_ASPECT_SITE
+
+
+def _actor_cull_aspect(gen, a):
+    w = _word(gen, a)
+    assert w == 0x1e22182a, hex(w)  # fdiv s10, s1, s2
+    return ('{ extern float rt_actor_cull_aspect(float); float n, d; memcpy(&n, &c->v[1], 4); memcpy(&d, &c->v[2], 4); '
+            'float f = rt_actor_cull_aspect(n / d); c->v[10] = 0; memcpy(&c->v[10], &f, 4); }'
+            f'  /* {a:#x}: fdiv s10, s1, s2 (camera culling frustum aspect) */')
+
+
+if ACTOR_CULL_ASPECT_SITE:
+    PATCHES[ACTOR_CULL_ASPECT_SITE] = _actor_cull_aspect

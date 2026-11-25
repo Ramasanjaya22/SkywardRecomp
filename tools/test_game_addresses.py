@@ -40,7 +40,7 @@ parser.add_argument('--seeds', type=Path)
 args = parser.parse_args()
 
 # ---- every version: the same names, one header each, distinct non-zero values
-SS_NAMES = set()  # names with a verified SS value; every other name must be 0
+SS_NAMES = {'FRAME_CTRL_INTERVAL_SITE', 'FRAME_TIMESTEP', 'G3D_CULL_ASPECT_SITE', 'ACTOR_CULL_ASPECT_SITE'}  # names with a verified SS value; every other name must be 0
 assert list(VERSIONS)[0] == 'v1_0_0'
 tables = {}
 for key in VERSIONS:
@@ -77,7 +77,37 @@ sys.modules.pop('patches', None)
 select_version('v1_0_0')
 import patches  # noqa: E402
 patch_values, runtime_values = tables['v1_0_0']
-assert not patches.PATCHES and not patches.HOOKS, 'SS has no LA patches or hooks (tools/patches.py clears both)'
+frame_ctrl = patch_values['FRAME_CTRL_INTERVAL_SITE']  # (SS's own: the frame rate setting's two sites, nothing of LA's)
+g3d_cull = patch_values['G3D_CULL_ASPECT_SITE']  # (and the culling frustum's aspect, ultrawide)
+actor_cull = patch_values['ACTOR_CULL_ASPECT_SITE']  # (and the camera's own culling frustum, ultrawide)
+assert frame_ctrl and g3d_cull and actor_cull and not patches.HOOKS and \
+    set(patches.PATCHES) == {frame_ctrl, frame_ctrl + 0x64, frame_ctrl + 0x88, g3d_cull, actor_cull}, \
+    'SS patches only its frame controller and culling aspects (tools/patches.py clears LA\'s patches and hooks)'
+# the culling aspect patch: checks its word, reads the camera field s10 was loaded from and writes s10 only
+_img = bytearray(16)
+struct.pack_into('<I', _img, 4, 0xbd41c50a)  # ldr s10, [x8, #0x1c4]
+_gen = SimpleNamespace(nso=SimpleNamespace(image=_img), base=g3d_cull - 4)
+_code = patches.PATCHES[g3d_cull](_gen, g3d_cull)
+assert 'c->x[8] + 0x1c4' in _code and 'rt_g3d_cull_aspect(o)' in _code and 'memcpy(&c->v[10], &f, 4)' in _code, _code
+struct.pack_into('<I', _img, 4, 0xbd41c50b)  # (another register: refused)
+try:
+    patches.PATCHES[g3d_cull](_gen, g3d_cull)
+except AssertionError:
+    pass
+else:
+    raise AssertionError('the culling aspect patch accepted a different instruction')
+# the camera culling aspect patch: checks its word, divides s1 by s2 as the fdiv did and writes s10 only
+struct.pack_into('<I', _img, 4, 0x1e22182a)  # fdiv s10, s1, s2
+_gen = SimpleNamespace(nso=SimpleNamespace(image=_img), base=actor_cull - 4)
+_code = patches.PATCHES[actor_cull](_gen, actor_cull)
+assert 'rt_actor_cull_aspect(n / d)' in _code and 'memcpy(&c->v[10], &f, 4)' in _code, _code
+struct.pack_into('<I', _img, 4, 0x1e22182b)  # (another register: refused)
+try:
+    patches.PATCHES[actor_cull](_gen, actor_cull)
+except AssertionError:
+    pass
+else:
+    raise AssertionError('the camera culling aspect patch accepted a different instruction')
 assert addr_text('f_@HAS_ITEM@(c);') == f'f_{ADDRESS.HAS_ITEM:x}(c);'
 try:
     addr_text('@UNKNOWN_ADDRESS@')

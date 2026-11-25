@@ -127,7 +127,7 @@ Use it with `LARECOMP_INPUT` (to get into a save) and `LARECOMP_SAVE_DIR` (so th
 
 | Variable | Values | What it does |
 |---|---|---|
-| `LARECOMP_SETTING_AT` | `frame:key=value,...` | Change an in-game menu setting at that frame. Keys: `move_360`, `blur_removal` (0 / 1), `dpad_mode` (0-2), `enemy_colours` (0-2), `screen_filter` (0-3), and the colour rows `tunic`, `hearts`, `hair`, `shield`, `skin`, `leaves`, `grass`, `sand` (palette name or `#RRGGBB`). |
+| `LARECOMP_SETTING_AT` | `frame:key=value,...` | Change an in-game menu setting at that frame. Keys: `move_360`, `blur_removal` (0 / 1), `dpad_mode` (0-2), `enemy_colours` (0-2), `screen_filter` (0-4), and the colour rows `tunic`, `hearts`, `hair`, `shield`, `skin`, `leaves`, `grass`, `sand` (palette name or `#RRGGBB`). |
 | `LARECOMP_COSMETICS` | `frame:tunic:hearts,...` | Set the tunic and heart colours (palette name or `#RRGGBB`) at that frame. |
 | `LARECOMP_DAMAGE` | multiplier, or `ohko` | Override the damage taken setting. |
 | `LARECOMP_WALK_SPEED` | multiplier | Override the walk speed setting. |
@@ -143,7 +143,7 @@ Use it with `LARECOMP_INPUT` (to get into a save) and `LARECOMP_SAVE_DIR` (so th
 | `LARECOMP_WEATHER_HARM` | 1 | Lightning shocks Link, as the randomizer option will. |
 | `LARECOMP_WEATHER_PUSH` | 1 | Blizzard wind pushes Link, as the randomizer option will. |
 | `LARECOMP_MENU_AT` | frame | Open the overlay menu at that frame. |
-| `LARECOMP_MENU_TAB` | tab number | The tab the overlay menu opens on. |
+| `LARECOMP_MENU_TAB` | tab number | The tab the overlay menu opens on (0 Video, 1 Audio, 6 Gameplay, 8 Controls, 9 Quit, 10 Saves). |
 | `LARECOMP_FONT` | font file | Use this file for the system fonts the game asks for (.ttf, .otf, .ttc, .bfttf). |
 
 ## Logging and diagnostics
@@ -171,6 +171,8 @@ All of these write to the log (`skywardrecomp.log` in the data folder, or the ru
 | `LARECOMP_SKIP_FSHASH` | `hash,hash,...` (hex) | Drop draws that use these fragment shaders, to find which draw makes what. |
 | `LARECOMP_DUMP_SHADERS` | 1 | Write each program's game shader code to `build/shaders/` (Metal). |
 | `LARECOMP_SAVE_MSL` | 1 | Write translated shaders to `build/msl/` (Metal) or `build/glsl/` (Vulkan), with the source pc as comments. |
+| `LARECOMP_SHF_LOG` | 1 | Print a `[shf]` line to stderr for each shader the translator rejects at a funnel shift (SHF) with bits 47-49 set: `stage` (STAGE_* in `shader.h`), `pc`, `bits47-49` (that 3-bit value, bit 47 lowest) and the raw instruction `word`. The translator stops at the first reject, so one line per shader. Data only: the translation is unchanged. |
+| `LARECOMP_BINDLESS_LOG` | 1 | Print a `[bindless]` line to stderr for the first 24 TEX.B (bindless texture) instructions the translator meets: `stage`, `pc`, the TEX.B `word`, and the words just before it as `word@byteoffset` (what wrote the handle register). Data only. `tools/perf_sweep.py run` passes it through, so a room sweep collects samples without playing. |
 | `LARECOMP_HLE_SKIP` | text | Turn off the host replacement of game functions whose name contains this text. |
 
 ## Rendering (shared)
@@ -249,6 +251,8 @@ The per-GPU default switches are explained, with the GPUs they were tested on, i
 | `LARECOMP_GPUPROF_AT` | `frame,frame,...` | Log a GPU pass profile of those frames. |
 | `LARECOMP_LOG_SKIPS` | 0 / 1 | Log skipped draws and dispatches and why. |
 | `LARECOMP_VK_DEVLOST_TRACE` | 0 / 1 | Log the steps before a device lost. |
+| `LARECOMP_VK_JITTER` | 0 / 1 | Jitter the scene camera by a sub-pixel each frame (`runtime/nvn/temporal.h`), when the game renders below the output size. For a temporal upscaler that accumulates frames; none reads it yet, so alone it shimmers. The Y sign follows the window origin (`temporal_jitter_camera`): `tools/test_temporal.py` checks the math, the game does not. |
+| `LARECOMP_VK_MOTION` | 0 / 1 | Motion vectors: the last world draw's camera and depth, reprojected into post image 5 (`motion_run`, `runtime/nvn/vulkan/exec.c`). Nothing reads image 5 yet. Logs `[motion]` lines on each change: `reset: <reason>`, or `running`. The Y sign and the reset rules are not checked in game. |
 | `LARECOMP_WRITE_TRACKING` | 0 | Linux: turn off write tracking of guest memory. |
 
 ## Frame pacing and performance
@@ -267,6 +271,13 @@ The per-GPU default switches are explained, with the GPUs they were tested on, i
 | `LARECOMP_PCORE` | 0 | Linux / Windows: no pinning to performance cores. |
 | `LARECOMP_PCORE_GUEST` | 0 | Linux: let game threads run on all cores. |
 | `LARECOMP_THREAD_QOS` | 0 | macOS: don't raise game threads' QoS class. |
+
+To compare two builds, copy `build/` (exe plus game library) to `build_a/` and `build_b/` and run
+`python tools/perf_sweep.py ab build_a/skywardrecomp.exe build_b/skywardrecomp.exe [rooms] [rounds]`. It runs one
+warm-up of each (thrown away), then A,B,A,B on the first rooms of `build/sweep_targets.json` with a fresh save each run,
+and `build/sweep/ab.txt` gets the median of the per-run minimum fps per room. A room that was still compiling shaders
+in a run is left out of that run. Run a build against a copy of itself first: that spread is the noise floor, and a
+change smaller than it is not a result.
 
 ## Game-code build
 

@@ -14,3 +14,8 @@ void pace_hitch(const char *why);
 // any thread: a user setting that changes the GPU's load ("resolution", "upscaler", "anti-aliasing"; not Dynamic's own
 // steps): the 30 fps hold and its backoff start over, and 60 gets a fresh try (pace.c)
 void pace_settings_changed(const char *what);
+// the frame rate setting in effect (FPS_*, settings.h): FPS_AUTO when the game version has no frame controller site
+// (runtime/hle/framepace.c)
+int rt_fps_target(void);
+// the presents run faster than the display (Unlocked, or a target over its refresh): no vsync wait (the backends)
+bool pace_fast(int refresh_hz);

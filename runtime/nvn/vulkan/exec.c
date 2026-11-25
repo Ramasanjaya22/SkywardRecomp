@@ -25,6 +25,7 @@
 #include "../recolour.h"
 #include "../screen_filter.h"
 #include "../shader_prep.h"
+#include "../temporal.h"
 #include "../../settings.h"
 
 static uint64_t stat_draws, stat_skipped, stat_passes, stat_dispatches, stat_wait_ns, stat_flushes, stat_feedback_copies;
@@ -59,7 +60,7 @@ uint64_t prof_views_created;  // textures.c vk_image_view cache misses
 uint64_t prof_up_ns = ~0ull;  // textures.c upload checks (~0: profiling off)
 #define PROF_T0() uint64_t prof_t0_ = prof ? SDL_GetTicksNS() : 0
 #define PROF_ADD(v) do { if (prof) v += SDL_GetTicksNS() - prof_t0_; } while (0)
-static _Atomic int stat_compiles;
+static _Atomic int stat_compiles, builds_running;
 static uint64_t op_counts[CMD_COUNT];
 bool g_debug_frame;
 static char stats_text[2048];
@@ -944,9 +945,9 @@ void vk_prof_frame(uint64_t frame, uint64_t present_ns) {
     if (last_t && now - last_t > 50000000) {
         uint64_t dt = now - last_t, ex = cum_exec - l_exec, wt = cum_wait - l_wait;
         LOG("[hitch] frame %llu: %.0f ms = backend exec %.1f (of which GPU waits %.1f) + present %.1f + other %.1f; %llu draws, "
-            "%llu submits, compiles %d pending\n", (unsigned long long)frame, dt / 1e6, ex / 1e6, wt / 1e6, present_ns / 1e6,
+            "%llu submits, compiles %d pending, %d builds running\n", (unsigned long long)frame, dt / 1e6, ex / 1e6, wt / 1e6, present_ns / 1e6,
             ((double)dt - ex - present_ns) / 1e6, (unsigned long long)(cum_draws - l_draws), (unsigned long long)(cum_submits - l_subs),
-            atomic_load(&stat_compiles));
+            atomic_load(&stat_compiles), atomic_load(&builds_running));
     }
     last_t = now; l_exec = cum_exec; l_wait = cum_wait; l_draws = cum_draws; l_subs = cum_submits;
 }
@@ -1025,6 +1026,43 @@ static void skip_log(void) {
     skip_ntop = k;
 }
 
+// Translation failures: a program whose translator failed is skipped for good. Its draws and dispatches are counted by
+// the translator's message (e.g. "shf cc/x/hi"), and renderer_stats logs the counts each stats interval, so a texture
+// that vanishes can be traced to the instruction that failed to translate.
+#define XW_MAX 32  // (slot XW_MAX - 1 is "other": the table is full)
+static pthread_mutex_t xw_lock = PTHREAD_MUTEX_INITIALIZER;
+static char xw_msg[XW_MAX][96];
+static int xw_n;
+static uint64_t xw_skips[XW_MAX];  // (render thread) draws and dispatches skipped this interval, by slot
+static int xw_intern(const char *msg) {  // (translator thread) the slot of a failure message
+    pthread_mutex_lock(&xw_lock);
+    int i = 0;
+    while (i < xw_n && strcmp(xw_msg[i], msg)) i++;
+    if (i == xw_n) {
+        if (xw_n < XW_MAX - 1) { snprintf(xw_msg[i], sizeof xw_msg[i], "%s", msg); xw_n++; }
+        else i = XW_MAX - 1;
+    }
+    pthread_mutex_unlock(&xw_lock);
+    return i;
+}
+static void xw_stats(void) {  // (renderer_stats) "[vk] draws skipped: translation failure N/s (message count, ...)" if any
+    static uint64_t last;
+    uint64_t now = SDL_GetTicksNS(), n = 0;
+    for (int i = 0; i < XW_MAX; i++) n += xw_skips[i];
+    if (n && last) {
+        LOG("[vk] draws skipped: translation failure %.1f/s (", (double)n * 1e9 / (double)(now - last));
+        bool first = true;
+        for (int i = 0; i < XW_MAX; i++) {
+            if (!xw_skips[i]) continue;
+            LOG("%s%s %llu", first ? "" : ", ", i == XW_MAX - 1 ? "other" : xw_msg[i], (unsigned long long)xw_skips[i]);
+            first = false;
+        }
+        LOG(")\n");
+    }
+    memset(xw_skips, 0, sizeof xw_skips);
+    last = now;
+}
+
 // Builds in flight (programs, graphics / compute pipelines): one still running after 10 s is logged once, with its
 // shaders' code addresses. "[shader] slow build" only comes when a build finishes, so one that never does (its draws
 // or dispatches skipped for good, compile 0 in the stats) left no trace.
@@ -1032,6 +1070,7 @@ static void skip_log(void) {
 static pthread_mutex_t builds_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct { const char *what; uint64_t c0, c1, t0; bool logged; } builds[BUILDS_MAX];
 static int build_begin(const char *what, uint64_t c0, uint64_t c1) {
+    atomic_fetch_add(&builds_running, 1);
     pthread_mutex_lock(&builds_lock);
     int s = 0;
     while (s < BUILDS_MAX && builds[s].what) s++;
@@ -1040,6 +1079,7 @@ static int build_begin(const char *what, uint64_t c0, uint64_t c1) {
     return s < BUILDS_MAX ? s : -1;
 }
 static void build_end(int s) {
+    atomic_fetch_sub(&builds_running, 1);  // (one per build_begin, failure paths too; s < 0: the table was full)
     if (s < 0) return;
     pthread_mutex_lock(&builds_lock);
     builds[s].what = NULL;
@@ -1059,6 +1099,7 @@ static void builds_check(void) {
 
 const char *renderer_stats(void) {
     skip_log();
+    xw_stats();
     builds_check();
     static int dumps;
     if (dumps++ < 3) {
@@ -1067,11 +1108,11 @@ const char *renderer_stats(void) {
         LOG("\n");
     }
     snprintf(stats_text, sizeof stats_text,
-             "%llu draws, %llu skipped, %llu passes, %llu dispatches, %llu flushes, wait %.0fms, compile %d, fbcopy %llu, upload %.1fMB, "
+             "%llu draws, %llu skipped, %llu passes, %llu dispatches, %llu flushes, wait %.0fms, compile %d, builds %d running, fbcopy %llu, upload %.1fMB, "
              "deferred %llu, snap %lluKB/%llu",
              (unsigned long long)stat_draws, (unsigned long long)stat_skipped, (unsigned long long)stat_passes,
              (unsigned long long)stat_dispatches, (unsigned long long)stat_flushes, (double)stat_wait_ns / 1e6,
-             atomic_exchange(&stat_compiles, 0), (unsigned long long)stat_feedback_copies, (double)stat_upload_bytes / 1048576.0,
+             atomic_exchange(&stat_compiles, 0), atomic_load(&builds_running), (unsigned long long)stat_feedback_copies, (double)stat_upload_bytes / 1048576.0,
              (unsigned long long)__atomic_exchange_n(&stat_deferred, 0, __ATOMIC_RELAXED), (unsigned long long)(stat_snap_bytes >> 10),
              (unsigned long long)stat_snap_copies);  // (overlap: SyncWaits returned early; storage copies made)
     stat_feedback_copies = stat_upload_bytes = stat_snap_bytes = stat_snap_copies = 0;
@@ -1254,6 +1295,7 @@ static uint32_t tex_wh[2][64][2];
 
 // ================================================================== render passes
 static VkFormat pass_color[8], pass_depth, pass_stencil;
+static TexBackend *pass_depth_tb;  // (begin_pass) the pass's depth image: a clear of it makes a motion capture stale
 static uint32_t pass_ncolor, pass_samples = 1, pass_w, pass_h;
 static int debug_pass_no;
 
@@ -1428,6 +1470,7 @@ static void begin_pass(void) {
             LOG("[vk] pass with an empty color slot %u of %u (texture %s)\n", i, pass_ncolor, st.rt.color[i] ? "without a view" : "none");
         }
     pass_depth = pass_stencil = VK_FORMAT_UNDEFINED;
+    pass_depth_tb = NULL;
     bool has_d = false, has_s = false;
     if (st.rt.depth) {
         renderer_mark_gpu_owned(st.rt.depth);
@@ -1437,7 +1480,7 @@ static void begin_pass(void) {
             VkRenderingAttachmentInfo a = {.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = v,
                                            .imageLayout = VK_IMAGE_LAYOUT_GENERAL, .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
                                            .storeOp = VK_ATTACHMENT_STORE_OP_STORE};
-            if (b->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) { da = a; has_d = true; pass_depth = b->format; }
+            if (b->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) { da = a; has_d = true; pass_depth = b->format; pass_depth_tb = b; }
             if (b->aspect & VK_IMAGE_ASPECT_STENCIL_BIT) { sa = a; has_s = true; pass_stencil = b->format; }
             uint32_t lv = st.rt.has_dview && (st.rt.dview.setmask & 1) ? st.rt.dview.base_level : 0;
             uint32_t ew = level_extent(b->width, lv), eh = level_extent(b->height, lv);
@@ -1674,6 +1717,27 @@ static VkPipeline clear_pipeline(int index, int kind, uint32_t mask, bool depth,
     return p;
 }
 
+// Motion vectors (LARECOMP_VK_MOTION=1; motion_run, from post_process): the last world draw into the presented image, with its
+// unjittered camera and depth. stale: a clear of that depth came after it, so the depth is no longer the world's.
+static int mot_on = -1;
+static struct { bool valid, stale, flip, minus_one; TexBackend *color, *depth; double vp[16]; float view[16]; float vx, vy, vw, vh, zn, zf; } mot_cap;
+static bool motion_on(void) {
+    if (mot_on < 0) { const char *e = getenv("LARECOMP_VK_MOTION"); mot_on = e && atoi(e) != 0; }
+    return mot_on;
+}
+// u: the scene camera UBO (view u[0..15], view-projection u[32..47]); vx..vh and zn, zf as set_viewport got them
+static void motion_capture(const float *u, float vx, float vy, float vw, float vh, float zn, float zf, TexBackend *color,
+                           TexBackend *depth) {
+    mot_cap.valid = true; mot_cap.stale = false;
+    mot_cap.color = color; mot_cap.depth = depth;
+    memcpy(mot_cap.view, u, sizeof mot_cap.view);
+    for (int i = 0; i < 16; i++) mot_cap.vp[i] = u[32 + i];
+    mot_cap.vx = vx; mot_cap.vy = vy; mot_cap.vw = vw; mot_cap.vh = vh;
+    mot_cap.zn = fminf(fmaxf(zn, 0), 1); mot_cap.zf = fminf(fmaxf(zf, 0), 1);  // (set_viewport clamps the same way)
+    mot_cap.minus_one = nvn_depth_mode() == 0; mot_cap.flip = renderer_origin_lower_left();
+}
+// textures.c backend_texture_destroyed: a capture of that image is dropped, its pointers would dangle
+void motion_forget(TexBackend *b) { if (mot_cap.color == b || mot_cap.depth == b) mot_cap.valid = false; }
 static void clear(int index, int kind, const void *color, uint32_t mask, bool depth, float dval, bool stencil, uint32_t sval,
                   uint32_t smask) {
     begin_pass();
@@ -1682,6 +1746,7 @@ static void clear(int index, int kind, const void *color, uint32_t mask, bool de
     VkRect2D rect = scissor_rect();
     if (!rect.extent.width || !rect.extent.height) return;
     if (index >= 0 && (index >= (int)pass_ncolor || pass_color[index] == VK_FORMAT_UNDEFINED)) return;
+    if (depth && pass_depth && mot_cap.valid && pass_depth_tb == mot_cap.depth) mot_cap.stale = true;  // (motion: the world's depth is cleared)
     bool simple = (index < 0 || (mask & 0xF) == 0xF) && (!stencil || (smask & 0xFF) == 0xFF);
     if (simple) {
         VkClearAttachment a[2];
@@ -1742,7 +1807,11 @@ typedef struct {
     struct PipeMemo *pmemo;     // (render thread) draw_'s pipeline key memo for this program
     bool reuse;                 // set reuse (stage_set): some uniform buffers are dynamic, sets are kept while their contents repeat
     struct SetCache *scache[2]; // (render thread) stage_set's last set per set index
+    bool xfail;                 // the translator failed (state 2): xwhy is the failure's slot (xw_intern)
+    uint8_t xwhy;
 } Prog;
+// (render thread) a draw or dispatch skipped for a program that did not translate
+static void xw_skip(const Prog *p) { if (p && p->xfail) xw_skips[p->xwhy]++; }
 
 // ---- descriptor set reuse (graphics programs; port of vk-draw-cpu-2 d50bbce)
 // Every draw allocated and wrote two descriptor sets (~20 descriptors) although most repeat the previous draw's of
@@ -1883,11 +1952,15 @@ static bool translate_program_now(Prog *p) {
     pthread_mutex_unlock(&translate_lock);
     if (!p->vi->msl) {
         LOG("[shader] VS translate failed: %s (code %llx)\n", p->vi->error, (unsigned long long)p->code[0]);
+        p->xwhy = (uint8_t)xw_intern(p->vi->error);
+        p->xfail = true;  // (before the state store: the render thread reads both after it)
         atomic_store(&p->state, 2);
         return false;
     }
     if (!p->fi->msl) {
         LOG("[shader] FS translate failed: %s\n", p->fi->error);
+        p->xwhy = (uint8_t)xw_intern(p->fi->error);
+        p->xfail = true;
         atomic_store(&p->state, 2);
         return false;
     }
@@ -2481,9 +2554,32 @@ typedef struct { NvnTexture *key; TexBackend copy; } Snap;
 static Snap snaps[16];
 static int nsnaps;
 
+// A bindless texture's handle (TEX.B): the 32-bit word at c[cbuf][offset] of the stage, read the way cbuf_info maps the
+// buffers (0: the driver constants, whose 64-bit texture handles start at 0x20; 1: the compiler constants; k >= 3: the
+// bound uniform buffer k - 3). 0 (no texture) when the buffer is unbound or the word lies past its end.
+static uint64_t bindless_handle(int stage, uint32_t cbuf, uint32_t offset) {
+    if (stage < 0 || stage > 5 || (offset & 3)) return 0;
+    if (cbuf == 0) {
+        uint32_t s = (offset - 0x20) / 8;
+        return offset < 0x20 || s >= 32 ? 0 : (uint32_t)(st.tex[stage][s] >> (offset & 4 ? 32 : 0));
+    }
+    if (cbuf == 1) {
+        NvnShaderStage *ss = st.program ? &st.program->stages[stage] : NULL;
+        return !ss || (uint64_t)offset + 4 > ss->const_size ? 0 : *(const uint32_t *)(uintptr_t)(ss->code_addr + ss->const_offset + offset);
+    }
+    Range r = cbuf >= 3 && cbuf - 3 < 18 ? st.ubuf[stage][cbuf - 3] : (Range){0, 0};
+    return !r.addr || (uint64_t)offset + 4 > r.size ? 0 : *(const uint32_t *)(uintptr_t)(r.addr + offset);
+}
+
+// The texture handle of a shader texture: bindless (TEX.B) or the slot's 64-bit handle in the driver constants
+static uint64_t shader_texture_handle(int stage, const ShaderTexture *st_) {
+    if (st_->bindless) return bindless_handle(stage, st_->bindless_cbuf, st_->bindless_offset);
+    int slot = ((int)st_->handle_offset - 0x20) / 8;  // 64-bit handles from offset 0x20
+    return slot >= 0 && slot < 32 ? st.tex[stage][slot] : 0;
+}
+
 static NvnTexture *shader_texture_object(int stage, ShaderTexture *st_) {
-    int slot = ((int)st_->handle_offset - 0x20) / 8;
-    uint64_t h = (slot >= 0 && slot < 32) ? st.tex[stage][slot] : 0;
+    uint64_t h = shader_texture_handle(stage, st_);
     uint32_t tic = h & 0xFFFFF;
     if (!h || !st.tpool || tic >= (uint32_t)st.tpool->count) return NULL;
     return ((NvnTexEntry *)st.tpool->entries)[tic].tex;
@@ -3495,6 +3591,23 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
         else if (size > r.size && r.size) size = r.size;
     }
     if (size < 16) size = 16;
+    // LARECOMP_VK_JITTER=1: the scene camera jittered per frame (runtime/nvn/temporal.h). Its own copy, so the shared copies
+    // and widescreen's view keep the game's matrices. Only an upscaler that accumulates frames should turn it on.
+    static int jitter = -1;
+    if (jitter < 0) { const char *e = getenv("LARECOMP_VK_JITTER"); jitter = e && atoi(e) != 0; }
+    if (jitter && stage == 0 && idx == 5 && r.size == 320 && size >= 192 && size <= 320) {  // (the scene UBO, as widescreen_scene_ubo reads it)
+        extern uint64_t vk_frame_counter(void);
+        float u[80];
+        memcpy(u, (const void *)(uintptr_t)r.addr, sizeof u);
+        uint32_t rw = (uint32_t)st.viewport[0][2], rh = (uint32_t)st.viewport[0][3], dw = temporal_output_width();
+        uint32_t phases = temporal_phase_count(rw, dw);
+        if (rw && rh && dw > rw && temporal_jitter_camera(u, vk_frame_counter(), phases, rw, rh, renderer_origin_lower_left())) {
+            static bool logged;
+            if (!logged) { logged = true; LOG("[jitter] scene camera jittered: render %ux%u, output %u wide, %u phases\n", rw, rh, dw, phases); }
+            if (gc_lazy && si->uses_gmem) gc_scan_pointers((const uint32_t *)(uintptr_t)r.addr, size);
+            return ubo_span(vk_transient_copy(u, size, 256), size);
+        }
+    }
     // snapshot: later CPU writes must not leak in. Shared by the draws of one submission binding the same range:
     // within a command list nothing writes guest memory (no inline UpdateUniformBuffer: that writes through below
     // and drops the shared copies).
@@ -4892,8 +5005,7 @@ static void shadow_slot_check(int stage, const ShaderTexture *st_, int i, uint64
 
 static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo *out, float sc[2], uint32_t wh[2], float fr[2]) {
     ShaderTexture *st_ = &si->tex[i];
-    int slot = ((int)st_->handle_offset - 0x20) / 8;  // 64-bit handles from offset 0x20
-    uint64_t h = (slot >= 0 && slot < 32) ? st.tex[stage][slot] : 0;
+    uint64_t h = shader_texture_handle(stage, st_);
     VkImageView view = VK_NULL_HANDLE;
     VkSampler smp = VK_NULL_HANDLE;
     uint32_t tic = h & 0xFFFFF, tsc = (uint32_t)(h >> 20) & 0xFFF;
@@ -5123,6 +5235,8 @@ static bool translate_compute(CsProg *cp, const uint8_t *code, size_t max, uint6
     cp->p.vi = cp->si;
     if (!cp->si->msl) {
         LOG("[compute] translate failed: %s (code %llx)\n", cp->si->error, (unsigned long long)addr);
+        cp->p.xwhy = (uint8_t)xw_intern(cp->si->error);
+        cp->p.xfail = true;
         atomic_store(&cp->p.state, 2);
         return false;
     }
@@ -5263,6 +5377,7 @@ bool renderer_prepare(const ShaderRec *r, const ShaderBlob *vsb, const ShaderBlo
     vkey.flip_y = fkey.flip_y = (r->flags & SR_FLIP_Y) != 0;
     vkey.depth_minus_one = (r->flags & SR_DEPTH_MINUS_ONE) != 0;
     vkey.flip_x = fkey.flip_x = (r->flags & SR_FLIP_X) != 0;
+    vkey.wide_k = fkey.wide_k = r->wide_k;
     for (int i = 0; i < r->nattrib; i++) vkey.attr_kind[i] = (uint8_t)attr_kind(r->attrib[i] & 0xFF);
     for (int i = 0; i < r->ncolor && i < 8; i++) if (r->color[i]) fkey.rt_kind[i] = (uint8_t)rt_kind(r->color[i]);
     if ((r->blend_on & 1) && dual_src_kind(r->blend[0])) fkey.rt_kind[1] = 3;
@@ -5410,7 +5525,7 @@ static void dispatch_compute(uint32_t gx, uint32_t gy, uint32_t gz) {
     snap_reason = "compute"; snapshots_invalidate(NULL);
     if (!st.program || !gx || !gy || !gz) return;
     CsProg *cp = compute_program(st.program);
-    if (!cp || atomic_load(&cp->p.state) != 1) { SKIP_CS(!cp ? SK_NO_STAGES : atomic_load(&cp->p.state) == 2 ? SK_CS_FAILED : SK_CS_BUILDING); return; }
+    if (!cp || atomic_load(&cp->p.state) != 1) { SKIP_CS(!cp ? SK_NO_STAGES : atomic_load(&cp->p.state) == 2 ? SK_CS_FAILED : SK_CS_BUILDING); if (cp) xw_skip(&cp->p); return; }
     {   // LARECOMP_SKIP_CS=<code address hex> (debug): skip that compute shader's dispatches, to see what it does
         static uint64_t skip = ~0ull;
         if (skip == ~0ull) { const char *e = getenv("LARECOMP_SKIP_CS"); skip = e ? strtoull(e, NULL, 16) : 0; }
@@ -5626,13 +5741,13 @@ static void draw_(CmdRec *r, bool indexed) {
         // copies it to the shadow map; squeezed, the map no longer matched its receivers - big dark triangles)
         if (tsx > tsy * 1.005f && st.ds[0] && st.rt.depth && st.viewport[0][0] == 0 && st.viewport[0][2] >= t->width &&
             !getenv("LARECOMP_NO_WIDE_PROJ"))
-            vkey.wide_k = (uint16_t)(1000.0f * tsy / tsx + 0.5f);
+            vkey.wide_k = fkey.wide_k = (uint16_t)(1000.0f * tsy / tsx + 0.5f);
     }
     for (int i = 0; i < st.nattrib; i++) vkey.attr_kind[i] = (uint8_t)attr_kind(st.attrib[i] & 0xFF);
     for (int i = 0; i < st.rt.ncolor; i++) if (st.rt.color[i]) fkey.rt_kind[i] = (uint8_t)rt_kind(st.rt.color[i]->format);
     if (st.rt.ncolor && st.rt.color[0] && (st.color_state[0] & 1) && dual_src_kind(st.blend[0])) fkey.rt_kind[1] = 3;
     Prog *pr = get_program(st.program, &vkey, &fkey);
-    if (!pr || atomic_load(&pr->state) != 1) { SKIP(!pr ? SK_NO_STAGES : atomic_load(&pr->state) == 2 ? SK_PROG_FAILED : SK_PROG_BUILDING); return; }
+    if (!pr || atomic_load(&pr->state) != 1) { SKIP(!pr ? SK_NO_STAGES : atomic_load(&pr->state) == 2 ? SK_PROG_FAILED : SK_PROG_BUILDING); xw_skip(pr); return; }
     g_mirror_w = 0;
     {   // mirror mode (runtime/hle/mirror.c; as renderer.m): the scene's composite into the window image is mirrored
         extern bool mirror_draw(bool composite);
@@ -5649,7 +5764,7 @@ static void draw_(CmdRec *r, bool indexed) {
         if (mirror_draw(composite)) {
             vkey.flip_x = fkey.flip_x = true;
             pr = get_program(st.program, &vkey, &fkey);
-            if (!pr || atomic_load(&pr->state) != 1) { SKIP(!pr ? SK_NO_STAGES : atomic_load(&pr->state) == 2 ? SK_PROG_FAILED : SK_PROG_BUILDING); return; }
+            if (!pr || atomic_load(&pr->state) != 1) { SKIP(!pr ? SK_NO_STAGES : atomic_load(&pr->state) == 2 ? SK_PROG_FAILED : SK_PROG_BUILDING); xw_skip(pr); return; }
             g_mirror_w = (float)st.rt.color[0]->width;
         }
     }
@@ -5735,6 +5850,7 @@ static void draw_(CmdRec *r, bool indexed) {
             if (shader_rec_recording()) {
                 ShaderRec rec;
                 rec_from_state(&rec, vkey.flip_x, mode);
+                rec.wide_k = vkey.wide_k;
                 shader_rec_note(&rec);
             }
             pp = prep_pipes_n ? PREP_GET(prep_pipes, ph) : NULL;  // prepared before the game
@@ -5745,6 +5861,7 @@ static void draw_(CmdRec *r, bool indexed) {
                 if (prep_check_on()) {
                     ShaderRec rec;
                     rec_from_state(&rec, vkey.flip_x, mode);
+                    rec.wide_k = vkey.wide_k;
                     prep_check(&k, vh, fh, &rec);
                 }
                 pp = calloc(1, sizeof *pp);
@@ -5989,6 +6106,11 @@ static void draw_(CmdRec *r, bool indexed) {
             vx = floorf(vx); vy = floorf(vy); vw = x1 - vx; vh = y1 - vy;
         }
         set_viewport(vx, vy, vw, vh, zn, zf);
+        // motion: a depth-tested, depth-writing draw into the presented image (the world's), with the scene camera
+        if (motion_on() && st.ds[0] && st.ds[1] && st.rt.depth && st.rt.depth->backend && st.rt.ncolor && st.rt.color[0] &&
+            st.rt.color[0]->backend && renderer_texture_presented(st.rt.color[0]) && st.ubuf[0][5].addr && st.ubuf[0][5].size >= 320)
+            motion_capture((const float *)(uintptr_t)st.ubuf[0][5].addr, vx, vy, vw, vh, zn, zf, st.rt.color[0]->backend,
+                           st.rt.depth->backend);
         if (g_debug_frame) {
             VkRect2D sr = scissor_rect();
             LOG("[draw]   vp %.2f %.2f %.2f %.2f (stretch %.3f, fs hash %016llx) scissor %d %d %u %u | guest sc %d %d %d %d | pass %ux%u s %.4f %.4f\n",
@@ -6689,14 +6811,14 @@ static VkImageView raw_view(TexBackend *b) {
 static VkPipelineLayout post_layout;
 static VkDescriptorSetLayout post_set_layout;
 
-static void post_layout_init(void) {  // (post passes and depth_upsample_draw: up to three inputs, 32 bytes of constants)
+static void post_layout_init(void) {  // (post passes and depth_upsample_draw: up to three inputs, 96 bytes of constants: the motion pass's matrix)
     if (post_layout) return;
     VkDescriptorSetLayoutBinding b[3];
     for (uint32_t i = 0; i < 3; i++)
         b[i] = (VkDescriptorSetLayoutBinding){i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL};
     VkDescriptorSetLayoutCreateInfo li = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 3, .pBindings = b};
     VK_CHECK(vkCreateDescriptorSetLayout(g_vk.dev, &li, NULL, &post_set_layout));
-    VkPushConstantRange r = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, 32};
+    VkPushConstantRange r = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, 96};
     VkPipelineLayoutCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1,
                                      .pSetLayouts = &post_set_layout, .pushConstantRangeCount = 1, .pPushConstantRanges = &r};
     VK_CHECK(vkCreatePipelineLayout(g_vk.dev, &ci, NULL, &post_layout));
@@ -6704,9 +6826,9 @@ static void post_layout_init(void) {  // (post passes and depth_upsample_draw: u
 
 // kind: 0 a plain post pass; 1 SMAA edges also writing stencil 1 where they draw, 2 SMAA weights only where the
 // stencil is 1 (g_vk.smaa_stencil; dsfmt: the stencil format)
-static VkPipeline post_pipeline_kind(const char *fs, int kind, VkFormat dsfmt) {
-    static struct { const char *fs; int kind; VkFormat f; VkPipeline p; } cache[16];
-    for (int i = 0; i < 16; i++) if (cache[i].p && cache[i].fs == fs && cache[i].kind == kind && cache[i].f == dsfmt) return cache[i].p;
+static VkPipeline post_pipeline_kind(const char *fs, int kind, VkFormat dsfmt, VkFormat cfmt) {
+    static struct { const char *fs; int kind; VkFormat f, c; VkPipeline p; } cache[16];
+    for (int i = 0; i < 16; i++) if (cache[i].p && cache[i].fs == fs && cache[i].kind == kind && cache[i].f == dsfmt && cache[i].c == cfmt) return cache[i].p;
     post_layout_init();
     VkPipelineShaderStageCreateInfo stages[2] = {
         {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_VERTEX_BIT,
@@ -6728,7 +6850,7 @@ static VkPipeline post_pipeline_kind(const char *fs, int kind, VkFormat dsfmt) {
     uint32_t ndyn = 2;
     fullscreen_vertex_dyn(dyn, &ndyn, 3);
     VkPipelineDynamicStateCreateInfo dy = {.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, .dynamicStateCount = ndyn, .pDynamicStates = dyn};
-    VkFormat fmt = VK_FORMAT_R8G8B8A8_UNORM;
+    VkFormat fmt = cfmt;
     VkPipelineRenderingCreateInfo ri = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, .colorAttachmentCount = 1,
                                         .pColorAttachmentFormats = &fmt};
     VkPipelineDepthStencilStateCreateInfo ds = {.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
@@ -6746,14 +6868,14 @@ static VkPipeline post_pipeline_kind(const char *fs, int kind, VkFormat dsfmt) {
                                        .pColorBlendState = &cb, .pDynamicState = &dy, .layout = post_layout};
     VkPipeline p;
     VK_CHECK(vkCreateGraphicsPipelines(g_vk.dev, g_vk.pcache, 1, &pi, NULL, &p));
-    for (int i = 0; i < 16; i++) if (!cache[i].p) { cache[i].fs = fs; cache[i].kind = kind; cache[i].f = dsfmt; cache[i].p = p; break; }
+    for (int i = 0; i < 16; i++) if (!cache[i].p) { cache[i].fs = fs; cache[i].kind = kind; cache[i].f = dsfmt; cache[i].c = cfmt; cache[i].p = p; break; }
     return p;
 }
 
 // Post image `i` at w x h (RGBA8, kept until the size changes). 0, 1: SMAA edges / weights, 2: SMAA output,
-// 3, 4: FSR EASU / RCAS.
+// 3, 4: FSR EASU / RCAS, 5: the motion vectors (R16G16 float, motion_run).
 static TexBackend *post_image(int i, uint32_t w, uint32_t h) {
-    static TexBackend img[5];
+    static TexBackend img[6];
     TexBackend *d = &img[i];
     if (d->image && (d->width != w || d->height != h)) {
         vk_views_forget(d);
@@ -6763,12 +6885,12 @@ static TexBackend *post_image(int i, uint32_t w, uint32_t h) {
     }
     if (!d->image) {
         VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D,
-                                .format = VK_FORMAT_R8G8B8A8_UNORM, .extent = {w, h, 1}, .mipLevels = 1, .arrayLayers = 1,
+                                .format = i == 5 ? VK_FORMAT_R16G16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM, .extent = {w, h, 1}, .mipLevels = 1, .arrayLayers = 1,
                                 .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
                                 .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT};
         VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
         VK_CHECK(vmaCreateImage(g_vk.vma, &ci, &ai, &d->image, &d->mem, NULL));
-        d->format = VK_FORMAT_R8G8B8A8_UNORM; d->width = w; d->height = h; d->depth = 1; d->layers = 1; d->levels = 1;
+        d->format = ci.format; d->width = w; d->height = h; d->depth = 1; d->layers = 1; d->levels = 1;
         d->samples = 1; d->aspect = VK_IMAGE_ASPECT_COLOR_BIT; d->base_type = VK_IMAGE_VIEW_TYPE_2D;
         vk_image_init_layout(vk_cmd(), d->image, d->aspect);
     }
@@ -6845,19 +6967,19 @@ static TexBackend *smaa_stencil_image(VkCommandBuffer cb, uint32_t w, uint32_t h
 }
 
 static void post_pass_ex(VkCommandBuffer cb, const char *fs, const VkImageView *srcs, int n, TexBackend *dst, const float pc[8],
-                         bool clear, TexBackend *sten, int kind);
+                         bool clear, TexBackend *sten, int kind, uint32_t pcb, bool nearest);
 static void post_pass(VkCommandBuffer cb, const char *fs, const VkImageView *srcs, int n, TexBackend *dst, const float pc[8],
                       bool clear) {
-    post_pass_ex(cb, fs, srcs, n, dst, pc, clear, NULL, 0);
+    post_pass_ex(cb, fs, srcs, n, dst, pc, clear, NULL, 0, 32, false);
 }
 // sten / kind (g_vk.smaa_stencil): kind 1 clears sten and writes 1 where the pass draws, kind 2 draws only there
 static void post_pass_ex(VkCommandBuffer cb, const char *fs, const VkImageView *srcs, int n, TexBackend *dst, const float pc[8],
-                         bool clear, TexBackend *sten, int kind) {
+                         bool clear, TexBackend *sten, int kind, uint32_t pcb, bool nearest) {
     if (!sten) kind = 0;
     uint32_t aw = post_area_w && post_area_w < dst->width ? post_area_w : dst->width;
     uint32_t ah = post_area_h && post_area_h < dst->height ? post_area_h : dst->height;
     // (before the rendering begins: created inside it, the NVIDIA driver crashed)
-    VkPipeline pipe = post_pipeline_kind(fs, kind, sten ? sten->format : VK_FORMAT_UNDEFINED);
+    VkPipeline pipe = post_pipeline_kind(fs, kind, sten ? sten->format : VK_FORMAT_UNDEFINED, dst->format);
     vk_full_barrier(cb);
     VkRenderingAttachmentInfo ca = {.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = post_view(dst),
                                     .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
@@ -6879,7 +7001,7 @@ static void post_pass_ex(VkCommandBuffer cb, const char *fs, const VkImageView *
     VkDescriptorImageInfo ii[3];
     VkWriteDescriptorSet w[3];
     for (int i = 0; i < n; i++) {
-        ii[i] = (VkDescriptorImageInfo){vk_default_sampler(true), srcs[i], VK_IMAGE_LAYOUT_GENERAL};
+        ii[i] = (VkDescriptorImageInfo){vk_default_sampler(!nearest), srcs[i], VK_IMAGE_LAYOUT_GENERAL};
         w[i] = (VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds, .dstBinding = (uint32_t)i,
                                       .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                                       .pImageInfo = &ii[i]};
@@ -6891,7 +7013,7 @@ static void post_pass_ex(VkCommandBuffer cb, const char *fs, const VkImageView *
     VkRect2D sc = {{0, 0}, {aw, ah}};  // (the viewport stays the whole image: gl_FragCoord is the pixel)
     rec_CmdSetViewport(cb, 0, 1, &vp);
     rec_CmdSetScissor(cb, 0, 1, &sc);
-    rec_CmdPushConstants(cb, post_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, 32, pc);
+    rec_CmdPushConstants(cb, post_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, pcb, pc);
     fullscreen_vertex_bind(cb);
     rec_CmdDraw(cb, 3, 1, 0, 0);
     rec_CmdEndRendering(cb);
@@ -6995,6 +7117,53 @@ static bool depth_upsample_draw(VkCommandBuffer cb, TexBackend *s, TexBackend *d
     return true;
 }
 
+// Motion vectors (LARECOMP_VK_MOTION=1): the last world draw's camera (mot_cap) against the previous frame's gives, per pixel
+// of the presented image, the previous position minus the current one, in its pixels (motion.frag, as temporal_motion_px).
+// Any reset drops the history, and a change of reason is logged. The output (post image 5) has no reader yet.
+static void motion_run(VkCommandBuffer cb, TexBackend *b) {
+    static struct { bool valid; double vp[16]; float view[16]; uint32_t w, h; float vx, vy, vw, vh; } prev;
+    static const char *why;  // the last reason logged
+    const char *reset = NULL;
+    double m[16] = {0};
+    if (!mot_cap.valid) reset = "no world draw";
+    else if (mot_cap.color != b) reset = "not the presented image";
+    else if (mot_cap.stale) reset = "depth cleared after the world draw";
+    else if (mot_cap.depth->width != b->width || mot_cap.depth->height != b->height) reset = "depth size";
+    else if (mot_cap.zf == mot_cap.zn) reset = "depth range";
+    else if (!prev.valid) reset = "first frame";
+    else if (prev.w != b->width || prev.h != b->height || prev.vx != mot_cap.vx || prev.vy != mot_cap.vy || prev.vw != mot_cap.vw ||
+             prev.vh != mot_cap.vh) reset = "viewport or image size changed";
+    else if (temporal_camera_cut(prev.view, mot_cap.view)) reset = "camera cut";
+    else if (!temporal_reprojection(mot_cap.vp, prev.vp, m)) reset = "singular camera";
+    const char *now = reset ? reset : "running";
+    if (!why || strcmp(why, now)) {
+        why = now;
+        if (reset) LOG("[motion] reset: %s\n", reset);
+        else LOG("[motion] running\n");
+    }
+    if (!reset) {
+        static const VkComponentMapping id = {0};
+        VkImageView dv = vk_image_view(mot_cap.depth, VK_IMAGE_VIEW_TYPE_2D, mot_cap.depth->format, 0, 1, 0, 1, id, VK_IMAGE_ASPECT_DEPTH_BIT);
+        if (dv) {
+            float pc[24];
+            for (int i = 0; i < 16; i++) pc[i] = (float)m[i];  // row-major: the shader's v * m is M v
+            pc[16] = mot_cap.vx; pc[17] = mot_cap.vy; pc[18] = mot_cap.vw; pc[19] = mot_cap.vh;
+            pc[20] = mot_cap.zn; pc[21] = mot_cap.zf; pc[22] = mot_cap.minus_one ? 1 : 0; pc[23] = mot_cap.flip ? 1 : -1;
+            TexBackend *out = post_image(5, b->width, b->height);
+            post_pass_ex(cb, "motion.frag", &dv, 1, out, pc, false, NULL, 0, 96, true);
+        }
+    }
+    // the next frame's history: this frame's camera, or none (without a world draw the next frame restarts)
+    prev.valid = mot_cap.valid;
+    if (mot_cap.valid) {
+        memcpy(prev.vp, mot_cap.vp, sizeof prev.vp);
+        memcpy(prev.view, mot_cap.view, sizeof prev.view);
+        prev.w = b->width; prev.h = b->height;
+        prev.vx = mot_cap.vx; prev.vy = mot_cap.vy; prev.vw = mot_cap.vw; prev.vh = mot_cap.vh;
+    }
+    mot_cap.valid = false;
+}
+
 // The view the present samples: the game image, or its anti-aliased / upscaled version. ow x oh: the whole image's
 // size in the window (its crop is drawn into the viewport).
 static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, float fx, float fy, double ow_d, double oh_d, bool *upscaled) {
@@ -7007,10 +7176,12 @@ static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, float fx, flo
     bool fsr = g_settings.upscaler == UPSCALE_FSR1 && (ow > cw + 1 || oh > ch + 1);  // (an upscale only)
     bool sharp = g_settings.sharpen && !fsr;  // FSR 1 already sharpened its own output
     *upscaled = fsr;
-    if (!smaa && !fsr && !sharp) return v;
+    bool mot = motion_on();  // (the motion pass runs after the suspend, below)
+    if (!smaa && !fsr && !sharp && !mot) return v;
     extern void vk_frame_suspend(void);
     extern void vk_frame_resume(void);
     vk_frame_suspend();
+    if (mot) motion_run(cb, b);
     if (smaa) {  // SMAA 1x: luma edges -> blending weights -> neighbourhood blending
         float w = (float)b->width, h = (float)b->height;
         float m[8] = {1.0f / w, 1.0f / h, w, h};
@@ -7023,9 +7194,9 @@ static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, float fx, flo
         // the others), as SMAA's reference integration does with a stencil
         TexBackend *sten = g_vk.smaa_stencil ? smaa_stencil_image(cb, b->width, b->height) : NULL;
         VkImageView in[3] = {v};
-        post_pass_ex(cb, "smaa_edge.frag", in, 1, edges, m, true, sten, 1);
+        post_pass_ex(cb, "smaa_edge.frag", in, 1, edges, m, true, sten, 1, 32, false);
         VkImageView wi[3] = {post_view(edges), smaa_lut(0), smaa_lut(1)};
-        post_pass_ex(cb, "smaa_weight.frag", wi, 3, weights, m, true, sten, 2);
+        post_pass_ex(cb, "smaa_weight.frag", wi, 3, weights, m, true, sten, 2, 32, false);
         VkImageView bi[3] = {v, post_view(weights)};
         post_pass(cb, "smaa_blend.frag", bi, 2, out, m, false);
         post_area_w = post_area_h = 0;

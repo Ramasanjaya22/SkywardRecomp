@@ -36,12 +36,15 @@ MINFLAG  := $(if $(MACOS_MIN),-mmacosx-version-min=$(MACOS_MIN))
 CC       := clang $(MINFLAG) $(CROSS)
 CXX      := clang++ $(MINFLAG) $(CROSS)
 IMGUI    := third_party/imgui
-# SkywardRecomp: generated files reach 3.8 MB each and LLVM blows up on the biggest ones at -O1
-# (main_465.c: >45 min and still running). -O0 does the same file in 9 s. The runtime keeps its
-# own -O2 (RTFLAGS); only this generated code is built unoptimized.
+# SkywardRecomp: the game code is -O2 (it ran at -O0, 3-5x slower), but generated files reach 3.8 MB each and LLVM's time
+# on the biggest functions blows up (main_513.c: >45 min at -O1, 9 s at -O0): tools/gen.py marks a function of more than
+# 30000 bytes of C GEN_BIG (runtime/cpu.h: optnone), so those stay -O0 and the whole code builds in about 1.4x the -O0 time
+# (tools/genopt.py). The runtime has its own -O2 (RTFLAGS).
+# -fwrapv -ffp-contract=off -fno-strict-aliasing: AArch64 signed overflow wraps, fmul + fadd stay two roundings (not an
+# fmadd the guest didn't have), guest addresses are host pointers through casts.
 # -fno-sanitize=undefined: zig cc turns UBSan on at -O0, and the slim zig's link (tools/zig_slim.sh) has no ubsan_rt, so
 # the link failed with undefined __ubsan_handle_* symbols (players' logs).
-GENFLAGS := -O0 -fno-sanitize=undefined -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -Iruntime
+GENFLAGS := -O2 -fwrapv -ffp-contract=off -fno-sanitize=undefined -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -Iruntime
 
 # The game code (made by `make gen` from your own game files) is its own library next to the app (runtime/gamelib.h);
 # the app itself holds none of it
@@ -118,7 +121,7 @@ endif
 
 # GAMELIB_ID: what the game code library is built from (the generator, the headers it is compiled against, the
 # flags). A library with another id is rebuilt by the start screen, never loaded.
-GAMELIB_SRCS := tools/game_addresses.py runtime/game_addresses/versions.h $(wildcard runtime/game_addresses/patches_v*.h) tools/gen.py tools/lifter.py tools/analyze.py tools/nso.py tools/passes.py tools/patches.py \
+GAMELIB_SRCS := tools/game_addresses.py runtime/game_addresses/versions.h $(wildcard runtime/game_addresses/patches_v*.h) tools/gen.py tools/genopt.py tools/lifter.py tools/analyze.py tools/nso.py tools/passes.py tools/patches.py \
                 tools/simd_c.py tools/rando/patch_variants.json tools/gamelib_entry.c runtime/hle/hle_symbols.txt \
                 runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h
 GAMELIB_ID := $(shell (cat $(GAMELIB_SRCS); echo '$(GENFLAGS)') | (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-16)
@@ -145,7 +148,10 @@ all: $(EXE) $(if $(GEN_SRC),$(GAMELIB)) tools-venv
 # complete, so the extractor never stops on a missing package (cryptography: the 1.0.1 update .nsp). Creates the venv
 # when missing; never fails the build (the start screen then says what to install).
 ifeq ($(PLATFORM),windows)
-TOOLS_PY ?= $(or $(wildcard $(HOME)/AppData/Local/Programs/Python/Python312/python.exe),python)
+# (the python.org Python: it has the wheels, e.g. cryptography. MSYS's own python builds them from source and hangs. Not
+# $(HOME) alone: under MSYS make that is /home/<user> and LOCALAPPDATA may be unset, so the lookup missed and the venv
+# came from MSYS python.)
+TOOLS_PY ?= $(or $(firstword $(wildcard $(subst \,/,$(LOCALAPPDATA))/Programs/Python/Python3*/python.exe /c/Users/$(notdir $(HOME))/AppData/Local/Programs/Python/Python3*/python.exe)),python)
 else
 TOOLS_PY ?= python3
 endif
@@ -228,6 +234,8 @@ $(B)/rt/ui/%.o: runtime/ui/%.mm $(RT_HDRS)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(UIFLAGS) -c $< -o $@
 
+$(B)/rt/ui/launcher.o: runtime/ui/assets/backdrop_data.h
+
 $(B)/imgui/%.o: $(IMGUI)/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -308,8 +316,9 @@ dist:
 	cp third_party/fonts/Baloo2/OFL.txt "$(DIST)/Baloo2-OFL.txt"
 	cp third_party/fonts/DejaVu/DejaVuSans.ttf third_party/fonts/DejaVu/DejaVuSans-Bold.ttf "$(DIST)/"  # (last-resort fonts, free license)
 	cp third_party/fonts/DejaVu/LICENSE "$(DIST)/DejaVu-LICENSE.txt"
-	cp recomplauncher.json "$(DIST)/"  # (RecompLauncher reads it from the zip, next to the exe)
 	cp README.md LICENSE "$(DIST)/"  # (licenses and source links of the bundled components: README "License")
+	# RecompLauncher's setup (recomplauncher.json): the launcher re-runs the setup step itself after every new release
+	cp recomplauncher.json "$(DIST)/recomplauncher.json"
 	[ -d build/helper/rando-gen ] && cp -R build/helper/rando-gen "$(DIST)/" || :  # (Link's Awakening seeds: optional)
 	PATH="$(CURDIR)/build/deps-win/bin:$$PATH" ldd $(WIN_B)/skywardrecomp.exe | awk '(/ucrt64/ || /deps-win/) && !/vulkan-1/ {print $$3}' | sort -u | \
 	    xargs -I{} cp -u {} "$(DIST)/"

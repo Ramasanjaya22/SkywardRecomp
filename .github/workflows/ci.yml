@@ -34,27 +34,47 @@ jobs:
           python3 tools/test_gamebuild_resume.py
       - name: Save I/O regression tests
         run: python3 tools/test_save.py
-      - name: Movie extractor lifecycle regression
+      - name: Movie extractor lifecycle and audio regression
         run: |
           clang -std=gnu11 -O1 tools/test_movie_extractor.c $(pkg-config --cflags --libs libavformat libavcodec libavutil libswscale) -pthread -o build/test-movie-extractor
           mkdir -p build/movie-test
           build/test-movie-extractor build/movie-test
+          python3 tools/test_movie_audio.py  # (webm part skips without ffmpeg; synthetic formats always run)
+          python3 tools/test_movie_frame_rate.py
       - name: Kernel condition-variable regression
         run: |
           clang -O2 -pthread tools/test_condvar.c -o build/test-condvar
           build/test-condvar
       - name: Settings regression tests
         run: python3 tools/test_settings.py
+      - name: Settings keys frozen
+        run: python3 tools/test_settings_keys.py
+      - name: Windowless setup for RecompLauncher (--prepare, no game files)
+        run: DEPS="/opt/sdl3" python3 tools/test_prepare.py
       - name: Game-files delete guard (links, outside the data folder)
         run: DEPS="/opt/sdl3" python3 tools/test_delete_guard.py
       - name: Game-file detection (the right .nsp among unrelated, update, DLC and damaged files)
         run: python3 tools/test_game_find.py
       - name: Data folder move (cut off at every step)
         run: DEPS="/opt/sdl3" python3 tools/test_data_move.py
+      - name: Save data backups (create, restore, import, retention)
+        run: DEPS="/opt/sdl3" python3 tools/test_save_backup.py
       - name: Dynamic resolution controller (simulated GPU)
         run: python3 tools/test_dynres.py
+      - name: Window crop at the present (the game's own dynamic resolution)
+        run: python3 tools/test_window_crop.py
       - name: Frame pacing (simulated frames, hitches and slow machines)
         run: python3 tools/test_pace.py
+      - name: Frame rate setting (the timestep and interval the frame controller is handed)
+        run: python3 tools/test_fps_target.py
+      - name: Perf summary test
+        run: python3 tools/test_perfstat.py
+      - name: Game code flags and GEN_BIG marking
+        run: python3 tools/test_gen_opt.py
+      - name: Pipeline cache save policy
+        run: python3 tools/test_pcache.py
+      - name: Keep an existing extraction
+        run: python3 tools/test_extract_current.py
       - name: Controller light colours
         run: |
           clang -std=gnu11 -O1 tools/test_led.c -lm -o build/test-led
@@ -67,6 +87,10 @@ jobs:
         run: |
           clang -std=gnu11 -O2 -I"/opt/sdl3/include" tools/test_rumble.c -L"/opt/sdl3/lib" -Wl,-rpath,"/opt/sdl3/lib" -lSDL3 -lm -o build/test-rumble
           build/test-rumble
+      - name: Keyboard + Mouse preset (no clashes, WASD, reserved keys)
+        run: |
+          clang -std=gnu11 -O2 -I"/opt/sdl3/include" tools/test_kbm_preset.c -o build/test-kbm-preset
+          build/test-kbm-preset
       - name: Controller in use (two virtual gamepads, #455)
         run: |
           clang -std=gnu11 -O2 -I"/opt/sdl3/include" tools/test_active_pad.c -L"/opt/sdl3/lib" -Wl,-rpath,"/opt/sdl3/lib" -lSDL3 -lm -o build/test-active-pad
@@ -96,11 +120,16 @@ jobs:
         run: python3 tools/test_vulkan_sync_errors.py
       - name: Shader translator instruction semantics
         run: tools/test_translate_ops.sh
-      - name: SkywardRecomp tests (shader records, shadows, ZR tap, texture packs)
+      - name: SkywardRecomp tests (shader records and index, shadows, temporal inputs and chains, ZR tap, texture packs)
         run: |
           python3 tools/test_shader_rec.py
+          python3 tools/test_shader_index.py
+          python3 tools/test_ss_shader_arc.py
           python3 tools/test_shadow_map.py
+          python3 tools/test_temporal.py
+          python3 tools/test_temporal_chain.py
           python3 tools/test_zr_tap.py
+          python3 tools/test_mouse_sword.py
           make test_texpack
       # (the same programs as vertex / fragment / compute GLSL -> glslc -> spirv-val, Vulkan 1.3; the shipped shader
       # list is only hashes of the game's shaders, so these synthetic programs stand in for it)
@@ -110,6 +139,8 @@ jobs:
       - name: FP/SIMD lowering vs a CPU emulator (a sample)
         run: |
           /opt/venv/bin/python tools/test_simd.py --encodings 3000 --cases 4 --jobs "$(nproc)"
+      - name: Jump tables resolve with either SIMD lowering
+        run: /opt/venv/bin/python tools/test_jump_table.py
 
   macos:
     runs-on: macos-15  # (GitHub-hosted Apple Silicon; free for public repositories)
@@ -129,27 +160,46 @@ jobs:
           python3 tools/test_gamebuild_resume.py
       - name: Save I/O regression tests
         run: python3 tools/test_save.py
-      - name: Movie extractor lifecycle regression
+      - name: Movie extractor lifecycle and audio regression
         run: |
           clang -std=gnu11 -O1 -I"$(brew --prefix ffmpeg)/include" -L"$(brew --prefix ffmpeg)/lib" tools/test_movie_extractor.c -lavformat -lavcodec -lavutil -lswscale -pthread -o build/test-movie-extractor
           mkdir -p build/movie-test
           build/test-movie-extractor build/movie-test
+          PKG_CONFIG_PATH="$(brew --prefix ffmpeg)/lib/pkgconfig" python3 tools/test_movie_audio.py
       - name: Kernel condition-variable regression
         run: |
           clang -O2 -pthread tools/test_condvar.c -o build/test-condvar
           build/test-condvar
       - name: Settings regression tests
         run: python3 tools/test_settings.py
+      - name: Settings keys frozen
+        run: python3 tools/test_settings_keys.py
+      - name: Windowless setup for RecompLauncher (--prepare, no game files)
+        run: python3 tools/test_prepare.py
       - name: Game-files delete guard (links, outside the data folder)
         run: python3 tools/test_delete_guard.py
       - name: Game-file detection (the right .nsp among unrelated, update, DLC and damaged files)
         run: python3 tools/test_game_find.py
       - name: Data folder move (cut off at every step)
         run: python3 tools/test_data_move.py
+      - name: Save data backups (create, restore, import, retention)
+        run: python3 tools/test_save_backup.py
       - name: Dynamic resolution controller (simulated GPU)
         run: python3 tools/test_dynres.py
+      - name: Window crop at the present (the game's own dynamic resolution)
+        run: python3 tools/test_window_crop.py
       - name: Frame pacing (simulated frames, hitches and slow machines)
         run: python3 tools/test_pace.py
+      - name: Frame rate setting (the timestep and interval the frame controller is handed)
+        run: python3 tools/test_fps_target.py
+      - name: Perf summary test
+        run: python3 tools/test_perfstat.py
+      - name: Game code flags and GEN_BIG marking
+        run: python3 tools/test_gen_opt.py
+      - name: Pipeline cache save policy
+        run: python3 tools/test_pcache.py
+      - name: Keep an existing extraction
+        run: python3 tools/test_extract_current.py
       - name: Controller light colours
         run: |
           clang -std=gnu11 -O1 tools/test_led.c -lm -o build/test-led
@@ -162,6 +212,10 @@ jobs:
         run: |
           clang -std=gnu11 -O2 -I"$(brew --prefix sdl3)/include" -L"$(brew --prefix sdl3)/lib" tools/test_rumble.c -lSDL3 -o build/test-rumble
           build/test-rumble
+      - name: Keyboard + Mouse preset (no clashes, WASD, reserved keys)
+        run: |
+          clang -std=gnu11 -O2 -I"$(brew --prefix sdl3)/include" tools/test_kbm_preset.c -o build/test-kbm-preset
+          build/test-kbm-preset
       - name: Controller in use (two virtual gamepads, #455)
         run: |
           clang -std=gnu11 -O2 -I"$(brew --prefix sdl3)/include" -L"$(brew --prefix sdl3)/lib" tools/test_active_pad.c -lSDL3 -o build/test-active-pad
@@ -206,6 +260,8 @@ jobs:
           python3 tools/test_windows_processes.py
       - name: Save I/O regression tests
         run: python3 tools/test_save.py
+      - name: Settings keys frozen
+        run: python3 tools/test_settings_keys.py
       - name: Game-files delete guard (junctions, outside the data folder)
         run: python3 tools/test_delete_guard.py
       - name: Game-file detection (the right .nsp among unrelated, update, DLC and damaged files)
@@ -214,11 +270,26 @@ jobs:
         run: python3 tools/test_extract_update.py
       - name: Data folder move (cut off at every step)
         run: python3 tools/test_data_move.py
-      - name: Movie extractor lifecycle regression
+      - name: Save data backups (create, restore, import, retention)
+        run: python3 tools/test_save_backup.py
+      - name: Frame rate setting (the timestep and interval the frame controller is handed)
+        run: python3 tools/test_fps_target.py
+      - name: Perf summary test
+        run: python3 tools/test_perfstat.py
+      - name: Game code flags and GEN_BIG marking
+        run: python3 tools/test_gen_opt.py
+      - name: Pipeline cache save policy
+        run: python3 tools/test_pcache.py
+      - name: Keep an existing extraction
+        run: python3 tools/test_extract_current.py
+      - name: Windowless setup for RecompLauncher (--prepare, no game files)
+        run: python3 tools/test_prepare.py
+      - name: Movie extractor lifecycle and audio regression
         run: |
           clang -std=gnu11 -O1 tools/test_movie_extractor.c -lavformat -lavcodec -lavutil -lswscale -o build/test-movie-extractor.exe
           mkdir -p build/movie-test
           build/test-movie-extractor.exe build/movie-test
+          python3 tools/test_movie_audio.py
       - name: Kernel condition-variable regression
         run: |
           clang -O2 -pthread tools/test_condvar.c -o build/test-condvar.exe
@@ -227,6 +298,10 @@ jobs:
         run: |
           clang -std=gnu11 -O2 $(pkg-config --cflags sdl3) tools/test_rumble.c $(pkg-config --libs sdl3) -o build/test-rumble.exe
           build/test-rumble.exe
+      - name: Keyboard + Mouse preset (no clashes, WASD, reserved keys)
+        run: |
+          clang -std=gnu11 -O2 $(pkg-config --cflags sdl3) tools/test_kbm_preset.c -o build/test-kbm-preset.exe
+          build/test-kbm-preset.exe
       - name: Controller in use (two virtual gamepads, #455)
         run: |
           clang -std=gnu11 -O2 $(pkg-config --cflags sdl3) tools/test_active_pad.c $(pkg-config --libs sdl3) -o build/test-active-pad.exe

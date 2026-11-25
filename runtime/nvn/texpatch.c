@@ -14,8 +14,8 @@
 // glyph names the controller button now driving it. Defaults: Switch A (east) = Xbox B / circle, B (south) = Xbox A /
 // cross, X (north) = Y / triangle, Y (west) = X / square; L / R = LB / RB, L1 / R1; ZL / ZR = LT / RT, L2 / R2;
 // Plus / Minus = Menu / View, Options / Create. A button remapped on a Nintendo-style pad gets Nintendo letters; one
-// moved to a stick click / the d-pad gets LS / RS (L3 / R3) or an arrow. Stick glyphs stay. (The keyboard has no
-// glyphs of its own: keyboard bindings don't change the prompts.)
+// moved to a stick click / the d-pad gets LS / RS (L3 / R3) or an arrow. Stick glyphs stay. While the keyboard / mouse
+// is the last input (runtime/hle/input.c), each glyph shows the key bound to its input instead, as text (bind_prompt_key).
 #include "texpatch.h"
 
 #include <math.h>
@@ -318,13 +318,15 @@ static bool hide_hero(void) {
     return env >= 0 ? env : g_settings.hide_hero_icon;
 }
 
+// The Switch input each glyph role (R_A..R_MINUS) drives
+static const int8_t k_slot_of_role[] = {[R_A] = BIND_A, [R_B] = BIND_B, [R_X] = BIND_X, [R_Y] = BIND_Y, [R_L] = BIND_L,
+                                        [R_R] = BIND_R, [R_ZL] = BIND_ZL, [R_ZR] = BIND_ZR, [R_PLUS] = BIND_PLUS,
+                                        [R_MINUS] = BIND_MINUS};
+
 // The label a glyph of `role` gets: whichever button is bound to that Switch input now
 static int prompt_label(int role) {
-    static const int8_t slot[] = {[R_A] = BIND_A, [R_B] = BIND_B, [R_X] = BIND_X, [R_Y] = BIND_Y, [R_L] = BIND_L,
-                                  [R_R] = BIND_R, [R_ZL] = BIND_ZL, [R_ZR] = BIND_ZR, [R_PLUS] = BIND_PLUS,
-                                  [R_MINUS] = BIND_MINUS};
     if (role < R_A || role > R_MINUS) return role;
-    switch (bind_prompt_host(slot[role])) {
+    switch (bind_prompt_host(k_slot_of_role[role])) {
     case 1 /* east */: return R_A;
     case 0 /* south */: return R_B;
     case 3 /* north */: return R_X;
@@ -345,14 +347,24 @@ static int prompt_label(int role) {
     }
 }
 
+// The key bound to a glyph's input, as text, while the keyboard / mouse is the last input (NULL: the controller's label)
+static const char *key_text(int role) {
+    return role >= R_A && role <= R_MINUS ? bind_prompt_key(k_slot_of_role[role]) : NULL;
+}
+
 static uint32_t labels_hash(void) {
     uint32_t h = 0;
-    for (int r = R_A; r <= R_MINUS; r++) h = h * 41 + (uint32_t)(prompt_label(r) - r + 64);
+    for (int r = R_A; r <= R_MINUS; r++) {
+        h = h * 41 + (uint32_t)(prompt_label(r) - r + 64);
+        for (const char *k = key_text(r); k && *k; k++) h = h * 41 + (uint8_t)*k;  // (a key shows; the device switch too)
+    }
     return h;
 }
 
-// (a Nintendo-style glyph is only redrawn when its button was remapped)
-static bool restyled(int role, int style) { return style != STYLE_NINTENDO || prompt_label(role) != role; }
+// (a Nintendo-style glyph is only redrawn when its button was remapped, or it shows a key)
+static bool restyled(int role, int style) {
+    return style != STYLE_NINTENDO || prompt_label(role) != role || key_text(role) != NULL;
+}
 
 static void cosmetics_test(void);
 static uint32_t skin_rgb(void);
@@ -596,7 +608,13 @@ static void draw_rect(float *cv, float x0, float y0, float x1, float y1, float t
 
 static bool draw_text(float *cv, const char *text) {
     if (!g_font_ok) return false;
-    float sc = stbtt_ScaleForPixelHeight(&g_font, 200);
+    float sc = stbtt_ScaleForPixelHeight(&g_font, 200), wide = 0;
+    for (const char *p = text; *p; p++) {  // (a key's name can be long, "Shift": shrunk to fit the canvas)
+        int adv, lsb;
+        stbtt_GetCodepointHMetrics(&g_font, *p, &adv, &lsb);
+        wide += adv * sc + (p[1] ? stbtt_GetCodepointKernAdvance(&g_font, p[0], p[1]) * sc : 0);
+    }
+    if (wide > CV - 16) sc *= (CV - 16) / wide;
     float x = 8;
     for (const char *p = text; *p; p++) {
         int adv, lsb, x0, y0, x1, y1;
@@ -619,10 +637,14 @@ static bool draw_text(float *cv, const char *text) {
     return true;
 }
 
-// The new label `role` (R_* / L_*, canvas coverage). symbol = true: a square pictogram (fitted by its size, not cap
-// height).
-static bool draw_label(int role, int style, float *cv, bool *symbol) {
+// The new label `role` (R_* / L_*, canvas coverage), or `key` (the key's name, as text) while the keyboard / mouse is
+// the last input. symbol = true: a square pictogram (fitted by its size, not cap height).
+static bool draw_label(int role, int style, const char *key, float *cv, bool *symbol) {
     memset(cv, 0, sizeof(float) * CV * CV);
+    if (key) {
+        *symbol = false;
+        return draw_text(cv, key);
+    }
     *symbol = role == R_PLUS || role == R_MINUS || (style == STYLE_PS && role <= R_Y) || role >= L_DUP;
     if (role >= L_DUP && role <= L_DRIGHT) {  // d-pad: an arrow (drawn pointing up, then turned)
         static const float up[3][4] = {{128, 228, 128, 40}, {128, 34, 46, 116}, {128, 34, 210, 116}};
@@ -780,7 +802,7 @@ static void relabel(uint8_t *img, int W, int x0, int y0, int w, int h, int ach, 
         }
         for (int k = 0; k < 4; k++) lab[k] /= nl;
         bool symbol;
-        if (!draw_label(prompt_label(role), style, cv, &symbol)) goto done;
+        if (!draw_label(prompt_label(role), style, key_text(role), cv, &symbol)) goto done;
         // paint the old label (and its anti-aliased fringe) over with the body colour
         for (int i = 0; i < n; i++) {
             int x = i % w, y = i / w, near = 0, in = S[i];

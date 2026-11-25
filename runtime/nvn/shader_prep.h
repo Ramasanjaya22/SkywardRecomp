@@ -44,6 +44,7 @@ typedef struct {
     uint8_t topo;            // primitive class: 0 points, 1 lines, 2 triangles
     uint8_t poly_fill;       // filled polygons (0: lines)
     uint32_t local[3];       // compute: local size
+    uint16_t wide_k;         // Vulkan ultrawide: the vertex key's wide_k (exec.c draw_; 0: off), " w=" when set
 } ShaderRec;
 
 // The record's text form (one line, no newline) and back
@@ -119,10 +120,14 @@ bool shader_prep_run(const char *romfs, void (*progress)(int done, int total), c
 // (LARECOMP_SHADER_PREP=1, tests) the same at game start, before the game's first frame: runtime/nvn/objects.c
 void shader_prep_boot(const char *romfs);
 
-// ---- the shader caches' tag (Metal binary archive, Vulkan pipeline cache): this build, the translator, the prepared
+// ---- the shader caches' tag (Metal binary archive, Vulkan pipeline cache): the translator, the prepared
 // objects' format and the GPU / driver; a cache with another tag is discarded (rebuilt as the game runs)
 #define SHADER_CACHE_VERSION 1  // (bump when what goes into the caches changes meaning)
 void shader_cache_tag(char *out, size_t n, const char *gpu);       // gpu: device name, driver / OS version
 bool shader_cache_tag_ok(const char *tag_path, const char *tag);   // the cache's tag file says tag
 void shader_cache_tag_write(const char *tag_path, const char *tag);  // (written atomically)
 bool shader_cache_write(const char *path, const void *data, size_t n);  // temp file + rename: never half-written
+// Rebuild shader cache: this process writes no more caches (on Windows it stays alive, waiting, while the restarted
+// one runs: its pipeline saver would put the old cache back). Waits for a write under way.
+void shader_cache_freeze(void);
+bool shader_cache_frozen(void);

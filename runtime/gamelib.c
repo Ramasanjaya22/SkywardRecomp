@@ -10,6 +10,7 @@
 #include <dlfcn.h>
 #endif
 
+#include "hotsample.h"
 #include "paths.h"
 #include "rt.h"
 
@@ -112,6 +113,7 @@ bool gamelib_load(const char *game_dir, char *why, size_t why_size) {
         }
     }
     if (!g_tables && why) snprintf(why, why_size, "%s", g_error);
+    else hotsample_start(g_tables);  // (no-op without LARECOMP_HOTLIST_OUT; repeated calls start it once)
     return g_tables != NULL;
 }
 

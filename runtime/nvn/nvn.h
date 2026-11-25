@@ -33,6 +33,7 @@ typedef struct NvnTexture {
     uint64_t debug_id;
     uint32_t pool_refs;  // texture pool entries that name it (cleared when it is finalized: runtime/nvn/objects.c)
     bool format_views;   // named through a view in a format the backend can only give with a flag (Metal: PixelFormatView)
+    int present_crop[4]; // its window's crop (nvnWindowSetCrop: x, y, w, h in texels) when it was last presented
     char label[64];
 } NvnTexture;
 

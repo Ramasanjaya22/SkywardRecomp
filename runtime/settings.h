@@ -13,6 +13,8 @@ enum { UPSCALE_BILINEAR = 0, UPSCALE_METALFX = 1 /* macOS */, UPSCALE_FSR1 = 2 /
 #define UPSCALE_SHARP UPSCALE_FSR1
 #endif
 enum { AA_OFF = 0, AA_SMAA = 1 };
+// the frame rate: the game's own 60 / 30 (Auto), or a target the game's timestep follows (runtime/hle/framepace.c)
+enum { FPS_AUTO = 0, FPS_30 = 30, FPS_60 = 60, FPS_90 = 90, FPS_120 = 120, FPS_UNLOCKED = -1 };
 enum { SHADOW_DEFAULT = 0, SHADOW_HIGH = 1 };  // the game's shadow map: the Switch's size or twice it (output_scale_shadow)
 enum { AO_SWITCH = 0, AO_HIGH = 1, AO_OFF = 2 };  // the game's ambient occlusion: the Switch's size, up to twice it (output_scale_ao), or none
 enum { PROMPTS_AUTO = 0, PROMPTS_NINTENDO = 1, PROMPTS_XBOX = 2, PROMPTS_PLAYSTATION = 3 };
@@ -44,11 +46,16 @@ typedef struct {
     bool reverb;         // room reverb effect
     bool movie_audio;
     bool show_fps;
+    int fps_target;      // FPS_*: the frame rate (Auto: the game's own choice)
     bool dpad_move;      // the d-pad (and arrow keys) move Link like the stick
     bool free_cam;       // free camera without holding L
     bool zr_attack;      // a ZR tap jabs with the sword (runtime/hle/zr_tap.h)
     float free_cam_sens; /* camera-only right-stick scale, 0.25..2.0 */
+    bool mouse_camera;   // the mouse turns the camera (runtime/hle/mouse_sword.h)
+    bool mouse_combat;   // the mouse swings / aims the sword
+    float mouse_sens;    // mouse sensitivity, 0.25..4.0
     bool rumble;         // controller vibration from the game (runtime/hle/input.c)
+    bool skip_launcher; // Skip the start screen on launch; menu toggle restores it.
     int rumble_strength; // its intensity, percent (25 / 50 / 75 / 100)
     bool controller_light; // the controller's light bar shows Link's health (runtime/led.h, hle/input.c)
     bool bg_input;       // controllers keep working while the window isn't in front (SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS)
@@ -86,7 +93,7 @@ typedef struct {
     CosColour leaves, grass;  // the overworld's foliage, runtime/nvn/recolour_seasons.c
     CosColour sand;           // the beaches, the desert, the sandy south (recolour_seasons.c)
     int enemy_colours;        // 0 Off, 1 Random per seed, 2 Random every load (runtime/nvn/recolour_enemies.c)
-    int screen_filter;        // 0 Off, 1 Game Boy, 2 Game Boy Color, 3 Grayscale (runtime/nvn/screen_filter.h)
+    int screen_filter;        // 0 Off, 1 Game Boy, 2 Game Boy Color, 3 Grayscale, 4 Vivid (runtime/nvn/screen_filter.h)
     // speedrun (Gameplay tab; runtime/hle/run_timer.c, runtime/livesplit.c)
     bool timer;            // the in-game run timer in the corner (game time: level loads don't count)
     int timer_pos;         // TIMER_POS_*: which bottom corner it sits in
@@ -97,7 +104,7 @@ typedef struct {
 } Settings;
 
 
-enum { N_ENEMY_COLOUR_MODES = 3, N_SCREEN_FILTERS = 4 };
+enum { N_ENEMY_COLOUR_MODES = 3, N_SCREEN_FILTERS = 5 };
 extern const char *const g_screen_filters[N_SCREEN_FILTERS];  // (the menu's names)
 extern const char *const g_enemy_colour_modes[N_ENEMY_COLOUR_MODES];  // (the menu's names)
 

@@ -14,6 +14,8 @@
 
 #include "imgui.h"
 #include "option_rows.h"
+#include "palette.h"
+#include "mods.h"
 #include "imgui_internal.h"  // (NavCursorVisible)
 #include "osk.h"
 #include "pad_nav.h"
@@ -46,7 +48,11 @@ bool controls_ui_took_back(void);
 bool rando_tab_took_back(void);  // rando_tab.mm: B went back from the Triforce hunt's count
 #include "../input_bind.h"
 #include "../paths.h"
+#include "../save_backup.h"
 }
+#include <sys/stat.h>
+#include <time.h>
+#include <unistd.h>
 
 // ------------------------------------------------------------------ state shared with the main thread
 static std::atomic<bool> g_open{false};
@@ -296,10 +302,13 @@ static bool g_page_fresh_seen;  // (focus_check: the menu opened)
 static bool g_page_fresh;  // the page shown hasn't been entered yet: the first Down goes to its first enabled row
 static bool g_page_focus_next;  // (that page has no option rows: its first control takes the cursor next frame)
 static int g_shown_tab = -1000;  // the page drawn last (its id)
+int g_tab_request_ext = -1;
 void menu_tabs_focus(bool first_tab) {
     g_focus_tab = first_tab ? -1 : -100, g_focus_frames = 0, g_page_fresh = g_page_fresh_seen = true;
 }
-int g_tab_request_ext = -1;
+void menu_tabs_focus_tab(int id) {
+    g_tab_request_ext = id, menu_tabs_focus(false);
+}
 
 static void style_init(void) {
     ImGuiStyle &s = ImGui::GetStyle();
@@ -307,32 +316,7 @@ static void style_init(void) {
     s.WindowRounding = 14; s.FrameRounding = 8; s.GrabRounding = 8; s.TabRounding = 8; s.ChildRounding = 10;
     s.WindowPadding = ImVec2(28, 24); s.FramePadding = ImVec2(14, 8); s.ItemSpacing = ImVec2(14, 12);
     s.WindowBorderSize = 0; s.ScrollbarSize = 18;
-    ImVec4 *c = s.Colors;
-    ImVec4 gold(0.93f, 0.76f, 0.33f, 1), gold_dim(0.62f, 0.49f, 0.20f, 1), green(0.15f, 0.36f, 0.25f, 1);
-    c[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.09f, 0.08f, 0.94f);
-    c[ImGuiCol_ChildBg] = ImVec4(0.09f, 0.13f, 0.11f, 0.85f);
-    c[ImGuiCol_PopupBg] = ImVec4(0.07f, 0.10f, 0.09f, 0.98f);
-    c[ImGuiCol_Text] = ImVec4(0.96f, 0.94f, 0.88f, 1);
-    c[ImGuiCol_TextDisabled] = ImVec4(0.62f, 0.64f, 0.58f, 1);
-    c[ImGuiCol_FrameBg] = ImVec4(0.13f, 0.19f, 0.16f, 1);
-    c[ImGuiCol_FrameBgHovered] = green;
-    c[ImGuiCol_FrameBgActive] = ImVec4(0.19f, 0.45f, 0.31f, 1);
-    c[ImGuiCol_Button] = ImVec4(0.14f, 0.22f, 0.18f, 1);
-    c[ImGuiCol_ButtonHovered] = green;
-    c[ImGuiCol_ButtonActive] = ImVec4(0.21f, 0.50f, 0.34f, 1);
-    c[ImGuiCol_Header] = green;
-    c[ImGuiCol_HeaderHovered] = ImVec4(0.19f, 0.45f, 0.31f, 1);
-    c[ImGuiCol_HeaderActive] = ImVec4(0.21f, 0.50f, 0.34f, 1);
-    c[ImGuiCol_Tab] = ImVec4(0.12f, 0.18f, 0.15f, 1);
-    c[ImGuiCol_TabHovered] = green;
-    c[ImGuiCol_TabSelected] = ImVec4(0.21f, 0.44f, 0.31f, 1);
-    c[ImGuiCol_TabSelectedOverline] = gold;
-    c[ImGuiCol_CheckMark] = gold;
-    c[ImGuiCol_SliderGrab] = gold_dim;
-    c[ImGuiCol_SliderGrabActive] = gold;
-    c[ImGuiCol_NavCursor] = gold;
-    c[ImGuiCol_Separator] = ImVec4(0.30f, 0.36f, 0.30f, 1);
-    c[ImGuiCol_TitleBg] = c[ImGuiCol_TitleBgActive] = c[ImGuiCol_WindowBg];
+    pal_apply_style(s);
 }
 
 
@@ -416,7 +400,24 @@ static void tab_display(void) {
         g_settings.fullscreen = fs;
         g_want_fullscreen_apply.store(true);
     }
+    if (opt_toggle("Skip start screen", &g_settings.skip_launcher, false,
+                   "Start the game directly on launch.")) {
+        settings_save();
+    }
     opt_toggle("Show FPS", &g_settings.show_fps, false, "Shows the frame rate in the top right corner.");
+    {   // display order -> FPS_* (settings.h)
+        static const char *fps[] = {"Auto", "30", "60", "90 (experimental)", "120 (experimental)", "Unlocked (experimental)"};
+        static const int fps_value[] = {FPS_AUTO, FPS_30, FPS_60, FPS_90, FPS_120, FPS_UNLOCKED};
+        enum { NFPS = 6 };  // (4: no 90 / 120 / Unlocked in the menu; the ini still takes them)
+        int fi = 0;
+        for (int i = 0; i < NFPS; i++) if (fps_value[i] == g_settings.fps_target) fi = i;
+        if (opt_choice("Frame rate", &fi, fps, NFPS, 0,
+                       "Auto: the game's own choice (60, or 30 when frames don't fit). 30 / 60: held there. 90 / 120: "
+                       "faster than the Switch, for high refresh displays. Unlocked: as fast as your PC runs, up to 240. "
+                       "Experimental: some game systems may not keep their speed. Over your "
+                       "display's refresh rate the image can tear. At 60-120, a PC that can't keep up shows fewer frames, at the game's real speed.", false))
+            g_settings.fps_target = fps_value[fi];
+    }
     opt_toggle("Free camera look", &g_settings.free_cam, false, "Move the camera with the right stick without holding L. Tap L to switch it on/off for this session.");
     if (g_settings.free_cam)
         opt_slider("Free camera sensitivity", &g_settings.free_cam_sens, 0.25f, 2.0f, 0.05f, 1.0f, "%.2f", "Camera-only right-stick speed.");
@@ -500,6 +501,45 @@ static void tab_audio(void) {
                "The game's echo in caves, dungeons and big rooms.");
     opt_toggle("Movie audio", &g_settings.movie_audio, true,
                "Sound in the game's movies (the opening and the ending). Applies the next time a movie starts.");
+    opt_end();
+}
+
+// Saves (in game): a backup now and the backup folder. Restoring and importing are on the start screen (Settings >
+// Prelaunch > Save data): the running game holds its saves in memory and writes them again at its next save.
+static void tab_saves(void) {
+    static char msg[512];
+    static bool bad;
+    opt_begin("##saves", ImGui::GetFontSize() / 34);
+    opt_section("Save data");
+    if (opt_action("Back up now", "", "Copies your saves (and each randomizer seed's) to the backups folder. "
+                   "The newest 20 are kept.", true)) {
+        char made[64], why[400];
+        bad = !save_backup_create(rt_data_root(), made, sizeof made, why, sizeof why);
+        snprintf(msg, sizeof msg, "%s", bad ? why : "Saves backed up.");
+    }
+    if (opt_action("Open backups folder", "", "Shows the folder the backups are kept in.", true)) {
+        std::string dir = std::string(rt_data_root()) + "/backups";
+        mkdir(dir.c_str(), 0755);
+        SDL_OpenURL(("file:///" + dir).c_str());
+    }
+    static SaveBackup list[SAVE_BACKUP_KEEP];
+    int nb = save_backup_list(rt_data_root(), list, SAVE_BACKUP_KEEP);
+    if (nb) opt_section("Backups");
+    for (int i = 0; i < nb; i++) {
+        char when[48], size[32], label[96];
+        time_t t = (time_t)list[i].when;
+        strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S", localtime(&t));
+        snprintf(size, sizeof size, "%.1f MB", list[i].bytes / 1e6);
+        snprintf(label, sizeof label, "%s%s", when, strstr(list[i].name, "-auto") ? " (auto)" : "");
+        opt_disable_next();
+        opt_action(label, size, "To restore it: Quit to Start Screen, then Settings > Prelaunch > Save data.", false);
+    }
+    if (msg[0]) {
+        ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.5f));
+        ImGui::PushTextWrapPos(0);
+        ImGui::TextColored(bad ? ImVec4(1, 0.5f, 0.4f, 1) : ImVec4(0.45f, 0.95f, 0.55f, 1), "%s", msg);
+        ImGui::PopTextWrapPos();
+    }
     opt_end();
 }
 
@@ -685,18 +725,19 @@ static void focus_check(bool down, bool up, bool any_down, int focused_tab, int 
 // The tab bar and its pages, into the current window: the in-game menu, and the start screen's Settings (in_game
 // false: nothing of the game is loaded yet - the tabs that need it are greyed out; prelaunch: the start screen's own
 // first tab, game files and fonts, drawn by launcher.mm).
-static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
+static void tabs_body(float scale, bool in_game, void (*prelaunch)(float), void (*save_data)(float)) {
     // (id: the page; -1 = Prelaunch)
     struct Tab { const char *name; int id; bool on; };
     Tab tabs[11];
     int ntabs = 0;
     if (prelaunch) tabs[ntabs++] = {"Prelaunch", -1, true};
     static const char *names[] = {"Video", "Audio", "Save Editor", "Randomizer", "Warp", "Cheats", "Gameplay",
-                                  "Cosmetics", "Controls", "Quit"};
-    static const int order[] = {8, 0, 1, 6, 9};  // Controls, Video, Audio, Gameplay, Quit (ids stay: test hooks;
-                                                  // LA tabs 2-5 and 7 Cosmetics hidden: they read LA state)
-    for (int i : order)  // (Quit: in game only - the start screen has its own QUIT, and an eleventh tab cut names short)
-        if (i != 9 || !prelaunch) tabs[ntabs++] = {names[i], i, true};
+                                  "Cosmetics", "Controls", "Quit", "Saves", "Mods"};
+    static const int order[] = {8, 0, 1, 6, 10, 9};  // Controls, Video, Audio, Gameplay, Saves, Quit (ids stay: test hooks;
+                                                     // LA tabs 2-5 and 7 Cosmetics hidden: they read LA state; Mods hidden
+                                                     // until SKY-45: it is an empty shell)
+    for (int i : order)  // (Quit and Mods: in game only - the start screen has its own QUIT, and a tab too many cut names short)
+        if ((i != 9 && i != 11) || !prelaunch) tabs[ntabs++] = {names[i], i, true};
     int cur = 0;  // g_tab / g_tab_request hold ids
     for (int i = 0; i < ntabs; i++) if (tabs[i].id == g_tab) cur = i;
     if (!tabs[cur].on) cur = 0;
@@ -802,6 +843,8 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 case 6: difficulty_draw(scale); break;
                 case 8: controls_tab_draw(scale); break;
                 case 9: tab_quit(scale, in_game); break;
+                case 10: if (save_data) save_data(scale); else tab_saves(); break;
+                case 11: mods_tab_draw(scale); break;  // (state shared with the launcher: mods.h)
                 }
                 static const char *scroll_test = getenv("LARECOMP_MENU_SCROLL");  // test hook: page scroll, 0..1
                 if (scroll_test) ImGui::SetScrollY(ImGui::GetScrollMaxY() * (float)atof(scroll_test));
@@ -826,13 +869,13 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
         if (tabs[k].id == g_tab) focus_check(down1, up1, down, focused_tab, g_tab, tabs[k].name);
 }
 
-void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, void (*prelaunch)(float)) {
+void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, void (*prelaunch)(float), void (*save_data)(float)) {
     ImFont *f0 = g_font, *f1 = g_font_big;
     g_font = font, g_font_big = font_big;
     ImGuiStyle saved = ImGui::GetStyle();  // the menu's look (the start screen has its own style)
     style_init();
     ImGui::GetStyle().ScaleAllSizes(scale);
-    tabs_body(scale, in_game, prelaunch);
+    tabs_body(scale, in_game, prelaunch, save_data);
     ImGui::GetStyle() = saved;
     g_font = f0, g_font_big = f1;
 }
@@ -999,7 +1042,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         }
 
         bool any_popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId), typing = ui_text_busy();  // (before the
-        tabs_body(scale, true, NULL);                                                                          //  pages run)
+        tabs_body(scale, true, NULL, NULL);                                                                        //  pages run)
         // B with nothing focused-deeper closes the menu (not the Esc / B that ends typing: typing is from the frame
         // before, so it's still true the frame a field lets go)
         if (!any_popup && !typing && !ui_text_busy() && !controls_ui_took_back() && !rando_tab_took_back() &&

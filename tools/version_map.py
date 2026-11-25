@@ -148,7 +148,40 @@ class Mapper:
             return value, 'rodata: identical'
         if (a.data, a.size) == (b.data, b.size) and a.data[0] <= o:
             return value, 'data/bss: same layout'
-        return None, 'data/bss: the layout differs'
+        new = self.data_by_reference(o)
+        if new is not None:
+            return MAIN_BASE + new, 'data/bss: where identical code refers to it'
+        return None, 'data/bss: the layout differs, and no identical code refers to it alike'
+
+    def data_by_reference(self, o):
+        """The new offset of the data at main+o that identical functions reach by ADRP + a low-12 offset (ADD, or a
+        load / store's unsigned offset) within 8 instructions: what the same instructions reach in the new build, when
+        every such reference agrees. Else None."""
+        words = [struct.unpack(f'<{n.text[1] // 4}I', bytes(n.image[n.text[0]:n.text[0] + n.text[1]])) for n in (self.a, self.b)]
+
+        def low12(w, rd):
+            if (w >> 5) & 31 != rd:
+                return None
+            if (w & 0x7FC00000) == 0x11000000:  # ADD (immediate, no shift)
+                return (w >> 10) & 0xFFF
+            if (w & 0x3B000000) == 0x39000000:  # LDR / STR (unsigned offset); q registers: 16 bytes
+                scale = 4 if (w >> 26 & 1) and (w >> 23 & 1) else w >> 30
+                return ((w >> 10) & 0xFFF) << scale
+            return None
+
+        found = set()
+        for i, w in enumerate(words[0]):
+            if (w & 0x9F000000) != 0x90000000 or pc_relative(w, i * 4)[1] != o & ~0xFFF:
+                continue
+            f = self.starts_a[bisect.bisect_right(self.starts_a, i * 4) - 1]
+            if f not in self.same:
+                continue
+            j = (i * 4 + self.same[f] - f) // 4
+            for k in range(1, 9):
+                if low12(words[0][i + k], w & 31) == o & 0xFFF:
+                    found.add(pc_relative(words[1][j], j * 4)[1] + low12(words[1][j + k], w & 31))
+                    break
+        return found.pop() if len(found) == 1 else None
 
 
 def map_header(text, values, mapper, label):
@@ -164,6 +197,8 @@ def map_header(text, values, mapper, label):
             line = f'{m[1]}{new:#0{len(m[3])}x})'
         elif line.startswith("// Link's Awakening "):
             line = re.sub(r"^// Link's Awakening [^:]+:", f"// Link's Awakening {label}:", line)
+        elif line.startswith('// SS '):
+            line = re.sub(r"^// SS [^:]+'s tables:", f"// SS {label}'s tables:", line)
         lines.append(line)
     return '\n'.join(lines) + '\n', notes
 

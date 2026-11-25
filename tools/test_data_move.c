@@ -5,6 +5,7 @@
 //   test_data_move target <picked>          what the start screen would offer for that folder
 //   test_data_move move <to> [<step>]       move there; <step> (0 copy, 1 check, 2 remove the old): stall partway
 //   test_data_move use <to>                 switch to it as it is
+//   test_data_move previous                 the data folder used before this one (a new Windows folder: none here)
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -56,9 +57,15 @@ int main(int argc, char **argv) {
         if (argc > 3) g_stall = atoi(argv[3]);
         bool ok = rt_data_move(argv[2], progress, err, sizeof err);
         printf("MOVE %s %s\n", ok ? "ok" : "failed", err);
+    } else if (!strcmp(argv[1], "pull") && argc > 2) {
+        bool ok = rt_data_pull(argv[2], progress, err, sizeof err);
+        printf("PULL %s %s\n", ok ? "ok" : "failed", err);
     } else if (!strcmp(argv[1], "use") && argc > 2) {
         bool ok = rt_data_use(argv[2], err, sizeof err);
         printf("USE %s %s\n", ok ? "ok" : "failed", err);
+    } else if (!strcmp(argv[1], "previous")) {
+        char p[1024];
+        printf("PREV %s\n", rt_previous_data_root(p, sizeof p) ? p : "");
     } else {
         return 2;
     }

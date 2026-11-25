@@ -1,5 +1,6 @@
 // Windows host layer (runtime/platform.h).
 #include <windows.h>
+#include <tlhelp32.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -932,6 +933,25 @@ static bool final_path(const wchar_t *p, wchar_t *out, DWORD n) {
 #ifndef FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
 #define FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS 0x00400000
 #endif
+
+// The names come without .exe; a snapshot lists every process's executable name ("Ryujinx.exe")
+bool plat_process_running(const char *const *names, char *found, size_t n) {
+    if (n) found[0] = 0;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W e = {.dwSize = sizeof e};
+    bool hit = false;
+    for (BOOL ok = Process32FirstW(snap, &e); ok && !hit; ok = Process32NextW(snap, &e)) {
+        char exe[MAX_PATH];
+        if (!WideCharToMultiByte(CP_UTF8, 0, e.szExeFile, -1, exe, sizeof exe, NULL, NULL)) continue;
+        size_t len = strlen(exe);
+        if (len > 4 && !_stricmp(exe + len - 4, ".exe")) exe[len - 4] = 0;
+        for (int i = 0; names[i] && !hit; i++)
+            if (!_stricmp(exe, names[i])) snprintf(found, n, "%s", names[i]), hit = true;
+    }
+    CloseHandle(snap);
+    return hit;
+}
 
 // Under one of the OneDrive folders the environment names (personal, work / school), or a cloud file itself
 bool plat_onedrive_synced(const char *dir) {

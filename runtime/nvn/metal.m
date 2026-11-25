@@ -1327,6 +1327,7 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         extern void widescreen_present_crop(uint64_t, double, float *, double *, double *, double *, double *);
         float crop[4];  // uv origin and size
         widescreen_present_crop(frame, shape, crop, &vx, &vy, &vw, &vh);
+        output_window_crop(t->present_crop, t->width, t->height, crop);
         widescreen_set_factor((float)shape);
         output_scale_log((unsigned long long)frame, dw, dh, &os);  // (diagnostics: [scale] on a change)
         extern void renderer_set_alloc_scale(float ax, float ay);
@@ -1468,7 +1469,16 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
             if (n++ < 20) LOG("[metal] present of frame %llu without an image (texture %p backend %p)\n", (unsigned long long)frame, t, b);
         }
         [cb addCompletedHandler:^(id<MTLCommandBuffer> done) { (void)done; __atomic_sub_fetch(&g_presents_inflight, 1, __ATOMIC_RELAXED); }];
-        if (deadline) [cb presentDrawable:drawable atTime:CACurrentMediaTime() + 1.0 / 60.0];
+        // the frame rate setting (pace.c paces to it): over the display's refresh, or Unlocked, the vsync would hold the
+        // frames at the refresh rate and slow the game (its timestep is the target's), so it goes off (tears); the
+        // deadline is the target's frame (Unlocked: none to give)
+        int fps = rt_fps_target();
+        const SDL_DisplayMode *dm = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
+        static int sync = -1;
+        if (sync < 0) sync = layer.displaySyncEnabled;
+        BOOL want_sync = sync && !pace_fast(dm ? (int)(dm->refresh_rate + 0.5f) : 0);
+        if (layer.displaySyncEnabled != want_sync) layer.displaySyncEnabled = want_sync;
+        if (deadline && fps != FPS_UNLOCKED) [cb presentDrawable:drawable atTime:CACurrentMediaTime() + 1.0 / (fps > 60 ? fps : 60)];
         else [cb presentDrawable:drawable];
         [cb commit];
         if (shot_tex) {
@@ -1632,6 +1642,12 @@ void backend_quit(void) {
     }
 }
 
+static void mouse_mode_sync(void) {  // relative mouse mode while the mouse steers the game (runtime/hle/input.c)
+    static bool rel;
+    bool want = input_mouse_captured();
+    if (want != rel && SDL_SetWindowRelativeMouseMode(window, want)) rel = want;  // (a failed call retries next poll)
+}
+
 int ui_run(void) {
     // The emulated vsync/timer threads need precise sleeps; App Nap timer coalescing
     // otherwise stretches 16ms sleeps to ~100ms whenever the window isn't frontmost.
@@ -1646,6 +1662,7 @@ int ui_run(void) {
         if (rt_reboot_requested()) return rt_reboot_requested();  // (runtime/main.c tears the game down)
         SDL_Event e;
         while (SDL_WaitEventTimeout(&e, 16)) {
+            mouse_mode_sync();  // (also here: a steady stream of mouse motion keeps the loop out of the timeout)
             input_rumble_poll();
             if (e.type == SDL_EVENT_QUIT) { input_rumble_stop(); input_led_stop(); LOG("window closed\n"); backend_quit(); exit(0); }
             if (input_user_blocked(&e)) continue;  // scripted test runs: the real keyboard / mouse / pads do nothing
@@ -1653,6 +1670,7 @@ int ui_run(void) {
             if (menu_handle_event(&e)) continue;
             input_handle_event(&e);
         }
+        mouse_mode_sync();
         menu_apply_window_requests(window);
         input_rumble_poll();
         input_led_poll();

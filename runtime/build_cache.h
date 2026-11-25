@@ -19,6 +19,9 @@ bool build_cache_resumable(const char *game_dir);
 bool build_cache_present(const char *game_dir);
 // Explicit user cleanup; takes the same lock and keeps the installed library and game data.
 bool build_cache_clear(const char *game_dir, char *why, size_t cap);
+// Explicit user rebuild: the installed library's .id goes, so the next setup regenerates and relinks it. Objects and
+// receipts stay (each is still checked against its regenerated source); the old library stays until replaced.
+bool build_cache_rebuild(const char *game_dir, char *why, size_t cap);
 bool build_cache_generation(BuildCache *cache, const char *module, int *chunks);
 bool build_cache_save_generation(BuildCache *cache, const char *module, int chunks, char *why, size_t cap);
 // -1: source unavailable, 0: compile needed, 1: validated completed object. Always fills source_hash on success.

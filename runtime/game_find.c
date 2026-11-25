@@ -161,6 +161,15 @@ typedef struct {
 
 static int cmp_str(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
 
+// A package format the game can't be set up from: flagged, and the reason noted
+static void note_unusable(GameFind *g, const char *p) {
+    if (!(has_ext(p, ".xci") || has_ext(p, ".nca") || has_ext(p, ".nsz") || has_ext(p, ".xcz"))) return;
+    g->unusable = 1;
+    note(g, p, has_ext(p, ".nsz") || has_ext(p, ".xcz") ? "a compressed package (.nsz/.xcz): not supported, use the .nsp"
+               : has_ext(p, ".xci") ? "a cartridge image (.xci): not supported, use the .nsp or the extracted files"
+                                   : "a single .nca: not the whole package");
+}
+
 static void walk(Walk *w, const char *dir, int depth) {
     GameFind *g = w->g;
     if (depth > MAX_DEPTH) return;
@@ -205,12 +214,7 @@ static void walk(Walk *w, const char *dir, int depth) {
             else w->full = 1;
             continue;
         }
-        if (has_ext(n, ".xci") || has_ext(n, ".nca") || has_ext(n, ".nsz") || has_ext(n, ".xcz")) {
-            g->unusable = 1;
-            note(g, p, has_ext(n, ".nsz") || has_ext(n, ".xcz") ? "a compressed package (.nsz/.xcz): not supported, use the .nsp"
-                       : has_ext(n, ".xci") ? "a cartridge image (.xci): not supported, use the .nsp or the extracted files"
-                                           : "a single .nca: not the whole package");
-        }
+        note_unusable(g, p);
         if (strcmp(n, "region_common") && is_dir(p)) {
             if (nsub == cap) { cap = cap ? cap * 2 : 16; sub = (char **)realloc(sub, cap * sizeof *sub); }
             sub[nsub++] = strdup(p);
@@ -276,6 +280,8 @@ static void find_in(const char *dir, GameFindExefsCheck check, GameFind *g) {
             snprintf(w->uwhy[w->nu++], sizeof w->uwhy[0], "%s", why);
         } else if (k < 0) note(g, dir, why);
         else { snprintf(w->c[0].path, sizeof w->c[0].path, "%s", dir); w->c[0].kind = k; w->n = 1; }
+    } else if (is_file(dir)) {  // (another package picked: --prepare --game=<file>)
+        note_unusable(g, dir);
     } else {
         walk(w, dir, 0);
     }

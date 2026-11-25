@@ -13,7 +13,9 @@
 //   LARECOMP_FORCE_STEPS=<n> (test) always n
 #include <stdlib.h>
 
+#include "../game_addresses.h"
 #include "../hle.h"
+#include "../settings.h"
 
 extern volatile uint64_t g_vsync_count;  // runtime/hle/vi.c
 uint64_t g_frame_steps_late;             // (stats) frames that advanced more than one step
@@ -43,3 +45,47 @@ uint32_t rt_frame_steps(uint32_t interval) {
     if (steps > 1) g_frame_steps_late++;
     return (uint32_t)steps;
 }
+
+// The frame rate setting (Settings.fps_target). SS HD's frame controller (tools/patches.py FRAME_CTRL_INTERVAL_SITE)
+// averages its last 10 frames' time in vsyncs: 1.5 or more picks present interval 2 and a world timestep of 1.0 (in
+// 1/30 s), else interval 1 and 0.5 (its FRAME_TIMESTEP global). With a target, the average reads as 2 (30) or 1 (the
+// rest: the game never drops itself to 30), and the timestep is the target's frame time, or the time that really passed
+// since the last frame when that is longer (1/8 to 1 step: a stall doesn't jump the world ahead). So a PC that can't keep
+// up, or a frame that drops (a turn, a busy view), runs the world at its real speed, not slow motion. Unlocked: the time
+// that really passed. runtime/nvn/pace.c paces the frames to the target. Auto, or a game version without the site: the
+// game's own values.
+int rt_fps_target(void) { return g_ga && GA(FRAME_CTRL_INTERVAL_SITE) ? g_settings.fps_target : FPS_AUTO; }
+
+float rt_frame_interval_avg(float game_avg) {
+    int t = rt_fps_target();
+    return t == FPS_AUTO ? game_avg : t == FPS_30 ? 2.0f : 1.0f;
+}
+
+static float frame_step = 1.0f;  // (the last timestep handed out: the period follows it)
+
+float rt_frame_timestep(float game_value) {
+    static uint64_t last;
+    uint64_t now = plat_now_ns(), dt = last ? now - last : 16666667ull;
+    last = now;
+    int t = rt_fps_target();
+    if (t == FPS_AUTO) return game_value;
+    float s = (float)dt * 3e-8f;  // (ns -> 1/30 s)
+    // A target the machine can't keep (frames slower than 1 s / target) must not play in slow motion: the world
+    // advances by the time that passed, never less than the target's step (Unlocked: 1/8, its floor).
+    float lo = t > 0 ? 30.0f / (float)t : 0.125f;
+    // A frame over one step (a stall) gives one step, the game's own longest; the rest is carried and handed out on
+    // the next frames, each still at most one step, so the world catches up with the time that passed. Dropped, the
+    // in-engine cutscenes fall behind their streamed sound for good (SKY-40; Longshot's hos_movie_frames, same idea).
+    // Over 2 s (a load) nothing is carried: there is nothing to keep in step with.
+    static float behind;
+    if (dt > 2000000000ull) behind = 0;
+    else if (s > 1.0f) behind += s - 1.0f, s = 1.0f;
+    if (s < lo) s = lo;
+    float pay = behind < 1.0f - s ? behind : 1.0f - s;
+    if (pay > 0) behind -= pay, s += pay;
+    return frame_step = s > 1.0f ? 1.0f : s;
+}
+
+// the frame period in ms the controller stores next (FRAME_TIMESTEP + 4): its readers add rate x period every frame,
+// so it is the timestep's time (1/30 s units)
+float rt_frame_period(float game_ms) { return rt_fps_target() == FPS_AUTO ? game_ms : frame_step * (1000.0f / 30); }

@@ -9,6 +9,8 @@ import tempfile
 
 root = Path(__file__).resolve().parents[1]
 for source in sorted((root/'tools').glob('test_save_*.c')):
+    if source.name == 'test_save_backup.c':
+        continue  # needs save_backup.c linked; tools/test_save_backup.py runs it
     with tempfile.TemporaryDirectory(prefix='save-test-') as temporary:
         temporary = Path(temporary)
         exe = temporary/('test.exe' if os.name == 'nt' else 'test')
