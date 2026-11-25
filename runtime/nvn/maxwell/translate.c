@@ -2051,11 +2051,14 @@ static const char glsl_prelude[] =
     // in viewport space 0..1 - remap to the full RT so the 21:9 wings sample the wing, not the clamped edge.
     // ultrawide: a screen-space UV the vertex shader derived from the unwidened clip x, looked up in a scaled image, is
     // mapped to the widened view: clip x * wide_k puts the world at (u - 0.5) * wide_k + 0.5 (WIDE_UK is 1 when off)
-    "vec2 uvs(vec2 uv, vec4 s, vec4 vp) {\n"
+    "vec2 uvn(vec2 uv, vec4 s, vec4 vp) {\n"
     "  if (s.x > vp.x + 0.001f || vp.z != 0.0f) uv.x = uv.x * (vp.x / s.x) + vp.z / (1920.0f * s.x);\n"
-    "  else if (s.x > 1.001f) uv.x = (uv.x - 0.5f) * WIDE_UK + 0.5f;\n"
     "  if (s.y > vp.y + 0.001f || vp.w != 0.0f) uv.y = uv.y * (vp.y / s.y) + vp.w / (1080.0f * s.y);\n"
     "  return (s.z == 1.0f && s.w == 1.0f) ? uv : min(uv, 1.0f) * s.zw;\n"
+    "}\n"
+    "vec2 uvs(vec2 uv, vec4 s, vec4 vp) {\n"
+    "  if (!(s.x > vp.x + 0.001f || vp.z != 0.0f) && s.x > 1.001f) uv.x = (uv.x - 0.5f) * WIDE_UK + 0.5f;\n"
+    "  return uvn(uv, s, vp);\n"
     "}\n";
 // The half <-> float helpers (glsl_finish: glsl_h2f_exact or glsl_h2f_native, then glsl_prelude_half).
 // Half -> float in vertex (and other pre-raster) shaders: by bits, not unpackHalf2x16. NVIDIA's driver recognises
@@ -2100,12 +2103,62 @@ static bool glsl_early_tests(const Ctx *c) {
            !maxwell_gmem_fs_miss && !c->info->uses_discard && !c->omap_depth && !c->uses_gmem_store;
 }
 
+// ultrawide (wide_k draws): a lookup's UV derived from FragCoord (in.pos) is already in the widened view; one the vertex
+// shader derived from the unwidened clip x is not and goes through uvs()'s remap. Tell them apart by following the
+// registers that are written from in.pos (last write wins; branches are not followed) and rename the lookups whose
+// coordinates read such a register to uvn() (no remap). Runs on the MSL-spelled body, before glsl_rewrite.
+static bool wide_expr_fc(const char *b, const char *e, const bool *taint) {
+    for (const char *j = b; j < e; j++) {
+        if (e - j > 7 && !strncmp(j, "in.pos[", 7)) return true;
+        if (*j == 'r' && (j == b || !id_char(j[-1])) && j[1] >= '0' && j[1] <= '9') {
+            const char *k = j + 1;
+            int n = 0;
+            while (k < e && *k >= '0' && *k <= '9') n = n * 10 + (*k++ - '0');
+            if ((k >= e || !id_char(*k)) && n < 256 && taint[n]) return true;
+        }
+    }
+    return false;
+}
+static void wide_uv_split(Ctx *c) {
+    const char *src = c->body.buf;
+    if (!src || !strstr(src, "in.pos[")) return;
+    bool taint[256] = {0};
+    Str o = {0};
+    const char *p = src, *flush = src;
+    while (*p) {
+        bool wb = p == src || !id_char(p[-1]);
+        if (wb && !strncmp(p, "uvs(", 4)) {
+            int depth = 0;
+            const char *q = p + 3;
+            do { if (*q == '(') depth++; else if (*q == ')') depth--; q++; } while (*q && depth > 0);
+            if (wide_expr_fc(p, q, taint)) { sp(&o, "%.*suvn(", (int)(p - flush), flush); flush = p + 4; }
+            p += 4;
+            continue;
+        }
+        if (wb && *p == 'r' && p[1] >= '0' && p[1] <= '9') {
+            const char *k = p + 1;
+            int n = 0;
+            while (*k >= '0' && *k <= '9') n = n * 10 + (*k++ - '0');
+            if (n < 256 && k[0] == ' ' && k[1] == '=' && k[2] == ' ') {
+                const char *e = strchr(k, ';');
+                if (e) taint[n] = wide_expr_fc(k + 3, e, taint);
+            }
+        }
+        p++;
+    }
+    if (!o.buf) return;
+    sp(&o, "%s", flush);
+    free(c->body.buf);
+    c->body = o;
+}
+
 // Declarations + entry point around the (rewritten) body; mirrors the MSL assembly in maxwell_translate.
 static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     ShaderInfo *info = c->info;
     const ShaderKey *key = c->key;
     int stage = c->stage;
     Str body = {0};
+    if (stage == STAGE_FRAGMENT && key && key->wide_k && !getenv("LARECOMP_VK_NO_WIDE_UV")) wide_uv_split(c);
     glsl_rewrite(c, &body, c->body.buf ? c->body.buf : "");
     if (info->uses_gmem && (info->cbuf_mask & (1u << GMEM_BUFFER_INDEX))) fail(c, "cbuf %d clashes with gmem", GMEM_BUFFER_INDEX);
     if (info->cbuf_mask >> 18) fail(c, "cbuf index out of range");
@@ -2512,11 +2565,14 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
     sp(&s, "static inline uint2 rsc(uint2 c, float4 s) { return (s.x == 1.0f && s.y == 1.0f) ? c : uint2(floor((float2(c) + 0.5f) * s.xy)); }\n");
     // (as the GLSL prelude's uvs: the 16:9-centre remap, else the widened view's screen-space UV; inert while Metal leaves wide_k unset)
     sp(&s, "constant float WIDE_UK = %.6ff;\n", c->stage == STAGE_FRAGMENT && c->key && c->key->wide_k ? c->key->wide_k / 1000.0 : 1.0);
-    sp(&s, "static inline float2 uvs(float2 uv, float4 s, float4 vp) {\n"
+    sp(&s, "static inline float2 uvn(float2 uv, float4 s, float4 vp) {\n"
             "  if (s.x > vp.x + 0.001f || vp.z != 0.0f) uv.x = uv.x * (vp.x / s.x) + vp.z / (1920.0f * s.x);\n"
-            "  else if (s.x > 1.001f) uv.x = (uv.x - 0.5f) * WIDE_UK + 0.5f;\n"
             "  if (s.y > vp.y + 0.001f || vp.w != 0.0f) uv.y = uv.y * (vp.y / s.y) + vp.w / (1080.0f * s.y);\n"
             "  return (s.z == 1.0f && s.w == 1.0f) ? uv : min(uv, 1.0f) * s.zw;\n"
+            "}\n");
+    sp(&s, "static inline float2 uvs(float2 uv, float4 s, float4 vp) {\n"
+            "  if (!(s.x > vp.x + 0.001f || vp.z != 0.0f) && s.x > 1.001f) uv.x = (uv.x - 0.5f) * WIDE_UK + 0.5f;\n"
+            "  return uvn(uv, s, vp);\n"
             "}\n");
     sp(&s, "static inline float2 hx(uint v, uint swz) { if (swz == 1u) return float2(as_type<float>(v)); float2 h = float2(as_type<half2>(v)); return swz == 2u ? h.xx : swz == 3u ? h.yy : h; }\n");
     // merges on half2 lanes rather than with integer masks: on an M1 (macOS 15.0.1) the Metal compiler miscompiled
