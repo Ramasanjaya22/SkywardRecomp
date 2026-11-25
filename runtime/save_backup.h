@@ -1,5 +1,6 @@
 // Save data backups: <data root>/backups/save-YYYYMMDD-HHMMSS[-auto]/ holds a copy of save/ and every rando/<seed>/save/
-// (the same relative paths). The newest SAVE_BACKUP_KEEP are kept. Nothing here is left half written: a backup is built
+// (the same relative paths). The newest SAVE_BACKUP_KEEP are kept; an unchanged automatic backup is skipped instead of
+// duplicated. Nothing here is left half written: a backup is built
 // under a temporary name, and a restore/import is staged next to the saves, then swapped in by renames.
 #pragma once
 #include <stdbool.h>

@@ -166,15 +166,18 @@ with tempfile.TemporaryDirectory() as directory:
     assert (data / 'backups' / oldest).is_dir() and (data / SAVE).read_bytes() == a, 'oldest backup lost'
     assert len(backups()) == 20, len(backups())
     print('restore of the oldest backup at the cap: restored, the backup is still there, 20 kept')
-    # an update: one -auto backup when the version changes, none when it's the same
+    # an update: one -auto backup when the saves changed, none when they didn't or the version is the same
     n0 = len(backups())
+    changed = os.urandom(SIZE)
+    put(data, SAVE, changed)
     line = run('update', '9.9.0')[0]
     made = line.split()[2].rstrip('|')
     assert ok_of(line, 'UPDATE')[0] and made.endswith('-auto') and len(backups()) == min(n0 + 1, 20), line
-    assert (data / 'backups' / made / SAVE).read_bytes() == (data / SAVE).read_bytes()
+    assert (data / 'backups' / made / SAVE).read_bytes() == changed
     assert not ok_of(run('update', '9.9.0')[0], 'UPDATE')[0] and len(backups()) == min(n0 + 1, 20)
+    assert not ok_of(run('update', '9.9.1')[0], 'UPDATE')[0] and len(backups()) == min(n0 + 1, 20), 'unchanged saves duplicated'
     assert not subprocess.run([str(exe), str(empty), 'update', '1'], capture_output=True, text=True).stdout.startswith('UPDATE 1')
-    print('update: a new version backs the saves up once; the same version, or no saves: none')
+    print('update: changed saves backed up once; unchanged saves / same version / no saves: no duplicate')
     # import from an emulator's save folder: wiiking2.sav (size-checked), skip.dat, N.screenshot (may be empty)
     W = 'save/save_0/wiiking2.sav'
     put(data, W, os.urandom(SIZE))
@@ -258,4 +261,21 @@ with tempfile.TemporaryDirectory() as directory:
         print('export: replaced with a backup first; Ryujinx 1/ handled; missing target and file in use refused cleanly')
     else:
         print('export: replaced with a backup first; Ryujinx 1/ handled; missing target refused')
+
+    # overflow: more backups than the old fixed 256-entry scan could see, all pruned down to the cap
+    old = data / 'backups' / 'save-20200101-000000'
+    old.mkdir(parents=True)
+    put(old, W, b'old')
+    for i in range(1, 300):
+        h, mi, se = i // 3600 % 24, i // 60 % 60, i % 60
+        n = data / 'backups' / f'save-20200101-{h:02d}{mi:02d}{se:02d}'
+        n.mkdir(parents=True)
+        put(n, W, b'old')
+    put(data, SAVE, os.urandom(SIZE))  # different from every synthetic backup
+    ok, why = ok_of(run('update', '9.9.2')[0], 'UPDATE')
+    assert ok, why
+    lst = backups()
+    assert len(lst) == 20, len(lst)
+    assert not (data / 'backups' / 'save-20200101-000000').exists(), 'an old backup survived the cap'
+    print('overflow: 300 backups scanned, pruned to the newest 20')
 

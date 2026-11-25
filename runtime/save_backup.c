@@ -2,6 +2,7 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -87,48 +88,145 @@ static bool copy_unit(const char *from, const char *to, const char *unit, char *
 
 static bool valid_name(const char *s) {
     int y, mo, d, h, mi, se, k = 0;
-    return sscanf(s, "save-%4d%2d%2d-%2d%2d%2d%n", &y, &mo, &d, &h, &mi, &se, &k) == 6 &&
-           (!s[k] || !strcmp(s + k, "-auto")) && strlen(s) < 64;
+    if (sscanf(s, "save-%4d%2d%2d-%2d%2d%2d%n", &y, &mo, &d, &h, &mi, &se, &k) != 6) return false;
+    if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || se > 59) return false;
+    return (!s[k] || !strcmp(s + k, "-auto")) && strlen(s) < 64;
 }
 
-static int by_name_desc(const void *a, const void *b) {
-    return strcmp(((const SaveBackup *)b)->name, ((const SaveBackup *)a)->name);
+static int by_name_desc_str(const void *a, const void *b) {
+    return strcmp(*(const char *const *)b, *(const char *const *)a);
 }
 
-int save_backup_list(const char *root, SaveBackup *out, int max) {
+// Every finished backup name, newest first. Scans the whole folder (a fixed cap here used to hide backups past it),
+// and removes the ".partial" shells a killed backup leaves behind so they can't accumulate forever.
+static char **backup_names(const char *root, int *count) {
+    *count = 0;
     char dir[1100];
     jn(dir, sizeof dir, root, "backups");
     DIR *d = opendir(dir);
+    if (!d) return NULL;
+    char **v = NULL;
+    int n = 0, cap = 0;
     struct dirent *e;
-    int n = 0;
-    while (d && n < max && (e = readdir(d))) {
+    while ((e = readdir(d))) {
         char p[1100];
         jn(p, sizeof p, dir, e->d_name);
-        if (!valid_name(e->d_name) || !is_dir(p)) continue;  // (".partial" ones: not finished)
-        SaveBackup *b = &out[n++];
-        struct tm t = {0};
-        snprintf(b->name, sizeof b->name, "%s", e->d_name);
-        sscanf(e->d_name, "save-%4d%2d%2d-%2d%2d%2d", &t.tm_year, &t.tm_mon, &t.tm_mday, &t.tm_hour, &t.tm_min, &t.tm_sec);
-        t.tm_year -= 1900, t.tm_mon -= 1, t.tm_isdst = -1;
-        b->when = (long long)mktime(&t);
-        b->bytes = tree_bytes(p);
+        if (!valid_name(e->d_name)) {
+            if (!strncmp(e->d_name, "save-", 5) && strstr(e->d_name, ".partial") && is_dir(p)) plat_remove_tree(p);
+            continue;
+        }
+        if (!is_dir(p)) continue;
+        if (n == cap) {
+            int nc = cap ? cap * 2 : 32;
+            char **nv = realloc(v, (size_t)nc * sizeof *nv);
+            if (!nv) break;
+            v = nv, cap = nc;
+        }
+        v[n] = strdup(e->d_name);
+        if (!v[n]) break;
+        n++;
     }
-    if (d) closedir(d);
-    qsort(out, (size_t)n, sizeof *out, by_name_desc);
-    return n;
+    closedir(d);
+    qsort(v, (size_t)n, sizeof *v, by_name_desc_str);
+    *count = n;
+    return v;
 }
 
-// The oldest past the newest SAVE_BACKUP_KEEP removed; `keep` (the one a restore/import reads from) never.
-static void prune(const char *root, const char *keep) {
-    static SaveBackup all[256];
-    int n = save_backup_list(root, all, 256);
-    for (int i = n - 1; i >= 0 && n > SAVE_BACKUP_KEEP; i--) {
+int save_backup_list(const char *root, SaveBackup *out, int max) {
+    int n = 0;
+    char **names = backup_names(root, &n);
+    if (!names || max <= 0) { free(names); return 0; }
+    int k = 0;
+    for (; k < n && k < max; k++) {
+        SaveBackup *b = &out[k];
+        struct tm t = {0};
+        snprintf(b->name, sizeof b->name, "%s", names[k]);
+        sscanf(names[k], "save-%4d%2d%2d-%2d%2d%2d", &t.tm_year, &t.tm_mon, &t.tm_mday, &t.tm_hour, &t.tm_min, &t.tm_sec);
+        t.tm_year -= 1900, t.tm_mon -= 1, t.tm_isdst = -1;
+        b->when = (long long)mktime(&t);
         char p[1100];
-        if (keep && !strcmp(all[i].name, keep)) continue;
-        n--;
-        snprintf(p, sizeof p, "%s/backups/%s", root, all[i].name);
-        plat_remove_tree(p);
+        snprintf(p, sizeof p, "%s/backups/%s", root, names[k]);
+        b->bytes = tree_bytes(p);
     }
+    for (int i = 0; i < n; i++) free(names[i]);
+    free(names);
+    return k;
+}
+
+// The oldest past the newest SAVE_BACKUP_KEEP removed; the backups a restore/import reads from are never touched.
+// ponytail: name order decides "oldest" (a clock set back can misorder); `keep` protects the ones that matter.
+static void prune(const char *root, const char *keep, const char *keep2) {
+    int n = 0;
+    char **names = backup_names(root, &n);
+    if (!names) return;
+    int left = n;
+    for (int i = n - 1; i >= 0 && left > SAVE_BACKUP_KEEP; i--) {
+        if ((keep && !strcmp(names[i], keep)) || (keep2 && !strcmp(names[i], keep2))) continue;
+        char p[1100];
+        snprintf(p, sizeof p, "%s/backups/%s", root, names[i]);
+        if (plat_remove_tree(p)) left--;
+    }
+    for (int i = 0; i < n; i++) free(names[i]);
+    free(names);
+}
+
+// A cheap content fingerprint: file names and bytes, no mtimes (a copy changes those). Equal fingerprints mean an
+// automatic backup would be a duplicate, so the old one is kept instead of filling the folder with identical copies.
+static uint64_t fp_str(uint64_t h, const char *s) {
+    for (; *s; s++) h = (h ^ (unsigned char)*s) * 1099511628211ULL;
+    return h;
+}
+
+static uint64_t tree_fp(const char *p) {
+    struct stat st;
+    if (stat(p, &st) != 0) return 0;
+    uint64_t h = 1469598103934665603ULL;
+    if (!S_ISDIR(st.st_mode)) {
+        FILE *f = fopen(p, "rb");
+        if (!f) return 0;
+        unsigned char buf[8192];
+        size_t r;
+        uint64_t total = 0;
+        while ((r = fread(buf, 1, sizeof buf, f)) > 0 && total < (4ULL << 20)) {
+            for (size_t i = 0; i < r; i++) h = (h ^ buf[i]) * 1099511628211ULL;
+            total += r;
+        }
+        fclose(f);
+        return h ^ total;
+    }
+    DIR *d = opendir(p);
+    struct dirent *e;
+    char **names = NULL;
+    int n = 0;
+    while (d && (e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        char **nv = realloc(names, (size_t)(n + 1) * sizeof *nv);
+        if (!nv) break;
+        names = nv;
+        names[n++] = strdup(e->d_name);
+    }
+    if (d) closedir(d);
+    qsort(names, (size_t)n, sizeof *names, by_name_desc_str);
+    for (int i = 0; i < n; i++) {
+        char c[1100];
+        h = fp_str(h, names[i]);
+        jn(c, sizeof c, p, names[i]);
+        h ^= tree_fp(c) + 1099511628211ULL;
+        free(names[i]);
+    }
+    free(names);
+    return h;
+}
+
+static uint64_t units_fp(const char *base, Unit *units, int count) {
+    uint64_t h = 1469598103934665603ULL;
+    for (int i = 0; i < count; i++) {
+        char p[1100];
+        h = fp_str(h, units[i]);
+        jn(p, sizeof p, base, units[i]);
+        h ^= tree_fp(p) + 1099511628211ULL;
+    }
+    return h;
 }
 
 // autom: the backup before a restore/import: nothing to back up is fine then (name_out empty)
@@ -138,6 +236,24 @@ static bool create(const char *root, bool autom, char *name_out, size_t n, char 
     if (n) name_out[0] = 0;
     int count = find_units(root, units);
     if (!count) return autom || fail(why, cap, "There's no save data to back up.%s", "");
+    if (autom) {  // an unchanged save is not another backup: compare all kept ones. Names can run ahead of the clock
+        int nb = 0;  // when several are made in one second, so "newest by name" isn't necessarily newest by content.
+        char **names = backup_names(root, &nb);
+        uint64_t live = units_fp(root, units, count);
+        for (int i = 0; i < nb; i++) {
+            char b[1100];
+            Unit old_units[MAX_UNITS];
+            snprintf(b, sizeof b, "%s/backups/%s", root, names[i]);
+            int old_count = find_units(b, old_units);
+            if (old_count == count && live == units_fp(b, old_units, old_count)) {
+                for (int j = 0; j < nb; j++) free(names[j]);
+                free(names);
+                return true;  // name_out stays empty: nothing was made
+            }
+        }
+        for (int i = 0; i < nb; i++) free(names[i]);
+        free(names);
+    }
     jn(dir, sizeof dir, root, "backups");
     mkdirs(dir);
     time_t t = time(NULL);
@@ -158,7 +274,7 @@ static bool create(const char *root, bool autom, char *name_out, size_t n, char 
     }
     if (n) snprintf(name_out, n, "%s", name);
     // (the new one kept: a clock set back, or backups made faster than one a second, can leave it the oldest name)
-    if (!autom) prune(root, name);  // (an auto one is pruned after the swap: its source may be the oldest)
+    if (!autom) prune(root, name, NULL);  // (an auto one is pruned after the swap: its source may be the oldest)
     return true;
 }
 
@@ -177,10 +293,13 @@ bool save_backup_on_update(const char *root, const char *version, char *name_out
     // (no file: a first run, or an update from a build that didn't write it - a backup either way, when there are saves)
     char name[64];
     bool made = create(root, true, name, sizeof name, why, sizeof why) && name[0];
-    if (made) prune(root, name);  // (the new one kept, as in create)
+    if (made) {
+        prune(root, name, NULL);  // (the new one kept, as in create)
+        // Only note the version once the backup exists: a failed one is retried next boot instead of being lost.
+        parent_dirs(path);
+        if ((f = fopen(path, "wb"))) { fputs(version, f); fclose(f); }
+    }
     if (n) snprintf(name_out, n, "%s", made ? name : "");
-    parent_dirs(path);
-    if ((f = fopen(path, "wb"))) { fputs(version, f); fclose(f); }
     return made;
 }
 
@@ -241,9 +360,15 @@ bool save_backup_restore(const char *root, const char *name, char *why, size_t c
     snprintf(src, sizeof src, "%s/backups/%s", root, name);
     int count = is_dir(src) ? find_units(src, units) : 0;
     if (!count) return fail(why, cap, "The backup %s has no saves in it.", name);
-    if (!create(root, true, NULL, 0, why, cap)) return false;  // (what is there now, kept)
+    char made[64] = "";
+    if (!create(root, true, made, sizeof made, why, cap)) return false;  // (what is there now, kept)
     bool ok = swap_in(root, src, units, count, why, cap);
-    prune(root, name);
+    if (ok) prune(root, name, made[0] ? made : NULL);  // keep the source and the just-made safety copy
+    else if (made[0]) {  // a failed swap must not leave an extra backup of unchanged saves behind
+        char p[1100];
+        snprintf(p, sizeof p, "%s/backups/%s", root, made);
+        plat_remove_tree(p);
+    }
     return ok;
 }
 
@@ -362,10 +487,14 @@ bool save_backup_import(const char *root, const char *src_dir, char *why, size_t
         snprintf(units[0], sizeof(Unit), "save");
         count = 1, from = stage;
     }
-    bool ok = create(root, true, NULL, 0, why, cap) && swap_in(root, from, units, count, why, cap);
+    char made[64] = "";
+    bool ok = create(root, true, made, sizeof made, why, cap) && swap_in(root, from, units, count, why, cap);
     if (from == stage) plat_remove_tree(stage);
-    const char *base = strrchr(src_dir, '/'), *base2 = strrchr(src_dir, '\\');
-    base = base2 > base ? base2 : base;
-    prune(root, base ? base + 1 : src_dir);  // (a backup folder picked from backups/ stays)
+    if (ok) prune(root, made[0] ? made : NULL, NULL);  // keep the fresh safety copy; never prune on a failed import
+    else if (made[0]) {
+        char p[1100];
+        snprintf(p, sizeof p, "%s/backups/%s", root, made);
+        plat_remove_tree(p);
+    }
     return ok;
 }
