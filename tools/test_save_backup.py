@@ -159,4 +159,21 @@ with tempfile.TemporaryDirectory() as directory:
     assert (data / 'backups' / oldest).is_dir() and (data / SAVE).read_bytes() == a, 'oldest backup lost'
     assert len(backups()) == 20, len(backups())
     print('restore of the oldest backup at the cap: restored, the backup is still there, 20 kept')
+    # import from an emulator's save folder: wiiking2.sav (size-checked), skip.dat, N.screenshot (may be empty)
+    W = 'save/save_0/wiiking2.sav'
+    put(data, W, os.urandom(SIZE))
+    emu = S / 'emu-save'
+    w = os.urandom(SIZE)
+    put(emu, 'wiiking2.sav', w); put(emu, 'skip.dat', b's' * 160)
+    put(emu, '0.screenshot', b'p' * 1000); put(emu, '2.screenshot', b'')
+    ok, why = ok_of(run('import', emu)[0], 'IMPORT')
+    assert ok, why
+    assert (data / W).read_bytes() == w and (data / 'save/save_0/skip.dat').read_bytes() == b's' * 160
+    assert (data / 'save/save_0/2.screenshot').read_bytes() == b''
+    put(S / 'emu-bad', 'wiiking2.sav', os.urandom(SIZE + 1))
+    before = files(data, 'save')
+    assert not ok_of(run('import', S / 'emu-bad')[0], 'IMPORT')[0] and files(data, 'save') == before
+    put(S / 'emu-big', 'wiiking2.sav', b'w'); put(S / 'emu-big', 'skip.dat', b'x' * ((4 << 20) + 1))
+    assert not ok_of(run('import', S / 'emu-big')[0], 'IMPORT')[0] and files(data, 'save') == before
+    print('import: emulator folder with wiiking2.sav, skip.dat, empty screenshot taken; wrong size / over 4 MiB refused')
     print(f'{plat}: save backups ok')

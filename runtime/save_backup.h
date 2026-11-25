@@ -16,6 +16,7 @@ int save_backup_list(const char *root, SaveBackup *out, int max);
 // The saves replaced by that backup (an "-auto" backup of the current ones first). false: why says why, the saves are
 // as they were (a file held open by the game, for one).
 bool save_backup_restore(const char *root, const char *name, char *why, size_t cap);
-// Saves from src_dir: a backup folder (one with save/ or rando/ in it), or a folder with save files (savedataN.bin, or
-// zelda.sav = savedata0.bin; also in save_N/ folders) the size of the ones they replace. An "-auto" backup first.
+// Saves from src_dir: a backup folder (one with save/ or rando/ in it), or a folder with game saves (wiiking2.sav,
+// savedataN.bin, zelda.sav = savedata0.bin; skip.dat, N.screenshot, *.flagsx side files; also in save_N/ folders).
+// Save files are size-checked against the live ones; side files may be empty. An "-auto" backup first.
 bool save_backup_import(const char *root, const char *src_dir, char *why, size_t cap);
