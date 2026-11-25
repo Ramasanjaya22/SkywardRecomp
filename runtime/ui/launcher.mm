@@ -51,6 +51,9 @@ extern "C" {
 #include "settings.h"
 #include "input_bind.h"
 #include "nvn/shader_prep.h"
+#include "assets/backdrop_data.h"
+
+#include <cstdio>
 bool controls_ui_took_back(void);  // ui/controls_ui.mm: B went back a step on Configure inputs
 void ui_window_init(void);
 SDL_Window *ui_window(void);
@@ -1244,7 +1247,18 @@ static void load_art(GpuDevice dev) {
     for (const char *n : {"/launcher.jpg", "/launcher.png"}) {
         std::string p = std::string(rt_data_root()) + n;
         if (file_exists(p)) load_frame(dev, p, 0, g_art, g_art_w, g_art_h);
-        if (g_art) return;
+        if (g_art) return; // user's own picture wins over the bundled art
+    }
+    if (!g_art) {
+        // Bundled Skyward Sword art is the default background. Decode it through
+        // the same ffmpeg path as user art, using a short-lived file in data root.
+        const std::string p = std::string(rt_data_root()) + "/launcher_backdrop.jpg";
+        if (FILE *f = fopen(p.c_str(), "wb")) {
+            fwrite(kLauncherBackdropJpg, 1, sizeof(kLauncherBackdropJpg), f);
+            fclose(f);
+            load_frame(dev, p, 0, g_art, g_art_w, g_art_h);
+            remove(p.c_str());
+        }
     }
 }
 
