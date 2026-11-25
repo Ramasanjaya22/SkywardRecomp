@@ -255,10 +255,12 @@ static std::string incomplete(int have, int want) {
     return b;
 }
 
+static const char *const WRONG_VERSION = "Wrong version of the game";
+
 // The copied game files alone ("" = there), without the game code built from them
 static std::string check_copied_files(const std::string &root) {
     if (!file_exists(root + "/exefs/main")) return "No game files yet";
-    if (!game_version_of(root.c_str())) return "Wrong version of the game";
+    if (!game_version_of(root.c_str())) return WRONG_VERSION;
     if (!file_exists(root + "/romfs/region_common")) {
         if (file_exists(root + "/romfs.bin")) {  // the extracted image (a .nsp setup): served whole (fs.c)
             struct stat st;
@@ -313,7 +315,7 @@ static const char *status_hint(const std::string &why) {
     if (why.rfind("Game files incomplete", 0) == 0)
         return "Some of the game's files are missing, usually from a copy or unzip that stopped partway. Copy your game "
                "files again, then choose that folder and set them up again.";
-    if (why == "Wrong version of the game") return "SkywardRecomp needs version 1.0.0 of the game, or 1.0.1 (the base game with its update).";
+    if (why == WRONG_VERSION) return "SkywardRecomp needs version 1.0.0 of the game, or 1.0.1 (the base game with its update).";
     if (why == "Game code not built yet") return "Set up the game files to build it (a few minutes, only once).";
     return "Set up the game files to play.";
 }
@@ -333,6 +335,60 @@ static bool g_busy, g_job_failed;
 static bool g_exit_after_setup;  // (test: LARECOMP_LAUNCHER_EXTRACT)
 static bool g_confirm_delete;       // game-files page: "Delete the game files?" shown
 
+// One launcher UI state, derived from the existing checks below; no build behavior here.
+enum class LauncherState {
+    Ready,               // game files present and unchanged
+    ReadyUpdateOptional, // ready; the 1.0.1 update can still be added
+    NeedsSetup,          // setup can fix the files
+    Blocked,             // wrong game version; setup cannot fix here
+};
+
+struct LauncherStateModel {
+    LauncherState state = LauncherState::NeedsSetup;
+    std::string status;   // check_game_files(), unchanged
+    std::string hint;     // status_hint(status), unchanged
+    std::string detected; // game_find_describe() text for the picked folder
+    bool ready = false;
+    bool changed = false;
+    bool has_update = false;   // v1.0.1: the update is already installed
+};
+
+// Table plan for current Game Files rows; actions stay actions.
+enum class GameFilesRowKind { Required, Optional, Detected };
+
+struct GameFilesRowPlan {
+    const char *label;
+    GameFilesRowKind kind;
+};
+
+[[maybe_unused]] static const GameFilesRowPlan kGameFilesRows[] = {
+    { "Game Files",                   GameFilesRowKind::Detected },
+    { "Game files folder",            GameFilesRowKind::Required },
+    { "Update 1.0.1 (optional .nsp)", GameFilesRowKind::Optional },
+    { "prod.keys (for a .nsp)",       GameFilesRowKind::Required },
+};
+
+static LauncherStateModel launcher_state_model(const std::string &status,
+                                               const std::string &root) {
+    LauncherStateModel m;
+    m.status = status;
+    m.hint = status_hint(status);
+    m.detected = g_found;
+    m.ready = status.empty();
+    m.changed = m.ready && files_changed(root);
+    if (m.ready) {
+        const GameVersion *v = game_version_of(root.c_str());
+        m.has_update = v && strcmp(v->key, "v1_0_1") == 0;
+    }
+    if (!m.ready)
+        m.state = status == WRONG_VERSION ? LauncherState::Blocked
+                                          : LauncherState::NeedsSetup;
+    else
+        m.state = m.has_update ? LauncherState::Ready
+                               : LauncherState::ReadyUpdateOptional;
+    return m;
+}
+
 static void set_job(const std::string &s, bool failed = false, const std::string &hint = "") {
     pthread_mutex_lock(&g_lock);
     g_job = s;
@@ -351,7 +407,7 @@ static const char *const PICK_FOLDER_HINT =
 enum { FAIL_NOT_FOUND = 1, FAIL_UNUSABLE, FAIL_COPY, FAIL_VERSION, FAIL_MISSING, FAIL_BUILD };
 static void set_failure(int k, int have = -1, const char *reason = NULL, int want = 0) {
     static const char *const head[] = {"", "No game files found in that folder", "Those are game packages, not game files",
-                                       "Setup didn't finish", "Wrong version of the game", "Your game files are incomplete",
+                                       "Setup didn't finish", WRONG_VERSION, "Your game files are incomplete",
                                        "The game code didn't build"};
     static const char *const hint[] = {
         "",
@@ -2626,11 +2682,12 @@ extern "C" void launcher_run(const char *root) {
             if (page == MAIN) {
             ImGui::PushFont(g_font_small);
             ImGui::SetCursorPos(ImVec2(x0, ds.y - 118 * s));
-            if (status.empty() && files_changed(g_root)) {  // (playable, but a damaged or changed file: #391)
+            const LauncherStateModel state = launcher_state_model(status, g_root);
+            if (state.ready && state.changed) {  // (playable, but a damaged or changed file: #391)
                 ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "!  %s", CHANGED_HEAD);
                 ImGui::SetCursorPosX(x0);
                 ImGui::TextDisabled("%s", CHANGED_HINT);
-            } else if (status.empty()) {
+            } else if (state.ready) {
                 {  // a drawn check mark (the Switch font has no ✓)
                     ImVec2 p = ImGui::GetCursorScreenPos();
                     float u = ImGui::GetTextLineHeight();
