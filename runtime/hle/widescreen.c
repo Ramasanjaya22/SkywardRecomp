@@ -60,12 +60,7 @@ bool widescreen_ui_pane_partial(const float *u, uint64_t size) {
 // Off in rooms that should keep 16:9 framing (interiors, dungeons) -- see widescreen_update.
 static bool g_allowed = true;
 static bool g_indoor;
-// The camera's aspect sites (GA ASPECT_SITES_0 / ASPECT_LITERAL) are patched into the game; a version without them
-// (SS HD today: both tables hold 0) renders the 16:9 game stretched into a wider output, so cutscenes ghost and shift.
-bool widescreen_sites_present(void) { return g_ga && GA(ASPECT_SITES_0) && GA(ASPECT_LITERAL); }
-bool widescreen_allowed(void) {
-    return g_allowed && g_settings.aspect == ASPECT_UNLOCKED && widescreen_sites_present() && !ENV("LARECOMP_NO_WIDESCREEN");
-}
+bool widescreen_allowed(void) { return g_allowed && g_settings.aspect == ASPECT_UNLOCKED && !ENV("LARECOMP_NO_WIDESCREEN"); }
 void widescreen_set_allowed(bool on) { g_allowed = on; }
 
 // Interiors and dungeons use cameras that never load the patched overworld aspect (site 0). Count

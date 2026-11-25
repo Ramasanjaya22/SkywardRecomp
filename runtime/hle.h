@@ -43,11 +43,5 @@ typedef void (*ResetFn)(void);
         HLE_CAT(reset_entry_, __LINE__) = fn;                                               \
     static void fn(void)
 
-// Widescreen (runtime/hle/widescreen.c): true when the loaded game version has the camera's aspect sites patched in.
-#ifdef __cplusplus
-extern "C"
-#endif
-bool widescreen_sites_present(void);
-
 #define RES_OK 0u
 #define MAKE_RESULT(module, desc) ((uint32_t)(module) | ((uint32_t)(desc) << 9))

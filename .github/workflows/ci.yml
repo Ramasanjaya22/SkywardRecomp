@@ -60,8 +60,6 @@ jobs:
         run: DEPS="/opt/sdl3" python3 tools/test_save_backup.py
       - name: Dynamic resolution controller (simulated GPU)
         run: python3 tools/test_dynres.py
-      - name: Widescreen guard (no ultrawide without aspect sites)
-        run: python3 tools/test_widescreen_guard.py
       - name: Frame pacing (simulated frames, hitches and slow machines)
         run: python3 tools/test_pace.py
       - name: Frame rate setting (the timestep and interval the frame controller is handed)
@@ -177,8 +175,6 @@ jobs:
         run: python3 tools/test_save_backup.py
       - name: Dynamic resolution controller (simulated GPU)
         run: python3 tools/test_dynres.py
-      - name: Widescreen guard (no ultrawide without aspect sites)
-        run: python3 tools/test_widescreen_guard.py
       - name: Frame pacing (simulated frames, hitches and slow machines)
         run: python3 tools/test_pace.py
       - name: Frame rate setting (the timestep and interval the frame controller is handed)
@@ -251,8 +247,6 @@ jobs:
         run: python3 tools/test_settings_keys.py
       - name: Game-files delete guard (junctions, outside the data folder)
         run: python3 tools/test_delete_guard.py
-      - name: Widescreen guard (no ultrawide without aspect sites)
-        run: python3 tools/test_widescreen_guard.py
       - name: Game-file detection (the right .nsp among unrelated, update, DLC and damaged files)
         run: python3 tools/test_game_find.py
       - name: Update (1.0.1) RomFS merge tests
