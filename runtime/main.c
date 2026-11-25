@@ -11,6 +11,7 @@
 #include "hle.h"
 #include "kernel.h"
 #include "rando.h"
+#include "save_backup.h"
 
 const char *g_romfs_dir;
 
@@ -230,6 +231,12 @@ int main(int argc, char **argv) {
         else if (argv[i][0] != '-') root = arg_root;
     }
     rt_paths_init();  // the data root becomes the working directory (runtime/paths.h)
+    {  // an update (another version than last time): the saves backed up first, in case the new one mishandles them
+        extern const char *larecomp_version(void);
+        char made[64];
+        if (save_backup_on_update(rt_data_root(), larecomp_version(), made, sizeof made))
+            LOG("[save] new version %s: saves backed up to backups/%s\n", larecomp_version(), made);
+    }
     for (bool title = !skip_launcher;;) {
         if (title && no_launcher) {
             fprintf(stderr, "[main] LARECOMP_NO_LAUNCHER is set: not showing the start screen - exiting\n");

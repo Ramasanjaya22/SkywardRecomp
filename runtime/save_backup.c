@@ -161,6 +161,21 @@ bool save_backup_create(const char *root, char *name_out, size_t n, char *why, s
     return create(root, false, name_out, n, why, cap);
 }
 
+bool save_backup_on_update(const char *root, const char *version, char *name_out, size_t n) {
+    char path[1100], have[128] = "", why[300];
+    if (n) name_out[0] = 0;
+    jn(path, sizeof path, root, "backups/last_version.txt");
+    FILE *f = fopen(path, "rb");
+    if (f) { have[fread(have, 1, sizeof have - 1, f)] = 0; fclose(f); }
+    if (!strcmp(have, version)) return false;
+    // (no file: a first run, or an update from a build that didn't write it - a backup either way, when there are saves)
+    bool made = create(root, true, name_out, n, why, sizeof why) && (!n || name_out[0]);
+    if (made) prune(root, NULL);
+    parent_dirs(path);
+    if ((f = fopen(path, "wb"))) { fputs(version, f); fclose(f); }
+    return made;
+}
+
 // The save folders of `from` staged beside the ones in root, then swapped in: a folder is either the old or the new
 // one, and when one can't be swapped (a file held open) the ones swapped before it are put back.
 static bool swap_in(const char *root, const char *from, Unit *units, int count, char *why, size_t cap) {
