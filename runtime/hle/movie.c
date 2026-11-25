@@ -333,8 +333,12 @@ static void ex_get_track_config(Cpu *c) {
                               p->codec_id == AV_CODEC_ID_VP8 ? "video/x-vnd.on2.vp8" : "video/avc");
         md_set_int(m, "width", p->width);
         md_set_int(m, "height", p->height);
-        int fps = s->avg_frame_rate.den ? s->avg_frame_rate.num / s->avg_frame_rate.den : 30;
-        md_set_int(m, "frame-rate", fps ? fps : 30);
+        // The guest paces pictures with this integer. NTSC rates are
+        // rational (30000/1001 = 29.97): truncating them runs the picture
+        // clock slower than the audio clock for the whole cutscene.
+        double fps = av_q2d(s->avg_frame_rate);
+        if (fps > 1000.0) fps = 1000.0;
+        md_set_int(m, "frame-rate", fps > 0.0 ? (int)(fps + 0.5) : 30);
     } else {
         md_set_str(m, "mime", p->codec_id == AV_CODEC_ID_VORBIS ? "audio/vorbis" :
                               p->codec_id == AV_CODEC_ID_OPUS ? "audio/opus" : "audio/mp4a-latm");
