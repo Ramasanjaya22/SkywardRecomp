@@ -2379,6 +2379,9 @@ extern "C" void launcher_run(const char *root) {
     const char *play_at_env = getenv("LARECOMP_LAUNCHER_PLAY_AT"), *skip_at_env = getenv("LARECOMP_LAUNCHER_SKIP_AT");
     uint64_t loop_t0 = SDL_GetTicks(), last_frame = loop_t0, bg_gap = 0, bg_frames = 0;
     bool bg_logged = false;
+#ifndef __APPLE__
+    vk_antilag_pause(true);
+#endif
     for (;;) {
         uint64_t now = SDL_GetTicks();
         if (g_bg_prep) bg_frames++, bg_gap = std::max(bg_gap, now - last_frame);
@@ -2386,9 +2389,6 @@ extern "C" void launcher_run(const char *root) {
             bg_logged = true;
             fprintf(stderr, "[launcher] background shader preparation: %llu frames meanwhile, longest %llu ms\n",
                     (unsigned long long)bg_frames, (unsigned long long)bg_gap);
-#ifndef __APPLE__
-    vk_antilag_pause(true);
-#endif
         }
         last_frame = now;
         if (play_at_env && status.empty() && now - loop_t0 >= (uint64_t)(atof(play_at_env) * 1000)) play = true, play_at_env = NULL;
@@ -2424,13 +2424,6 @@ extern "C" void launcher_run(const char *root) {
             page = MAIN;
             g_play_pending = true;
         }
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) {
-            input_cursor_event(&e);  // (pad / key: the cursor hides; ImGui's backend leaves it so, below)
-            if (page == SETTINGS && bind_capture_event(&e)) continue;  // (waiting for a new binding: controls_ui.mm)
-            if (!launcher_pad_event(e)) ImGui_ImplSDL3_ProcessEvent(&e);
-            if (e.type == SDL_EVENT_QUIT) exit(0);
-        }
         // Idle: nothing moves unless an event, a held key / button, a text cursor or a background job asks for it, so
         // draw ~10 fps (~4 fps unfocused; none minimized / hidden) and wake at once on any event. The start screen
         // has no animation of its own, so the lower rate shows nothing different. (tests keep their frame counts)
@@ -2447,9 +2440,16 @@ extern "C" void launcher_run(const char *root) {
             if (minimized || (!focused && !job && !g_bg_prep && !g_prep_wait && !shot_at)) SDL_WaitEventTimeout(NULL, 250);
             else if (!hot) SDL_WaitEventTimeout(NULL, 100);
         }
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            last_active = SDL_GetTicks();
+            input_cursor_event(&e);  // (pad / key: the cursor hides; ImGui's backend leaves it so, below)
+            if (page == SETTINGS && bind_capture_event(&e)) continue;  // (waiting for a new binding: controls_ui.mm)
+            if (!launcher_pad_event(e)) ImGui_ImplSDL3_ProcessEvent(&e);
+            if (e.type == SDL_EVENT_QUIT) exit(0);
+        }
         // extraction finished: re-check, load the background
         pthread_mutex_lock(&g_lock);
-            last_active = SDL_GetTicks();
         bool busy = g_busy;
         pthread_mutex_unlock(&g_lock);
         static bool was_busy;
@@ -2465,6 +2465,7 @@ extern "C" void launcher_run(const char *root) {
             g_auto_update = false;
         }
         was_busy = busy;
+        if (minimized) continue;  // (no GPU work while nobody can see the window; events above still wake us)
 
 #ifdef __APPLE__
         int w, h;
@@ -2472,7 +2473,6 @@ extern "C" void launcher_run(const char *root) {
         layer.drawableSize = CGSizeMake(w, h);
         @autoreleasepool {
             id<CAMetalDrawable> drawable = [layer nextDrawable];
-        if (minimized) continue;  // (no GPU work while nobody can see the window; events above still wake us)
             if (!drawable) { SDL_Delay(16); continue; }
             MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
             rp.colorAttachments[0].texture = drawable.texture;
@@ -2525,17 +2525,12 @@ extern "C" void launcher_run(const char *root) {
                 bg->AddRectFilledMultiColor(ImVec2(0, 0), ds, IM_COL32(18, 50, 110, 255), IM_COL32(50, 110, 190, 255),
                                             IM_COL32(10, 28, 64, 255), IM_COL32(6, 16, 40, 255));
             }
-            if (!update_only) {  // a shadow banner fading in from the left behind the menu, and one from the right behind the version
+            if (!update_only) {  // a shadow banner fading in from the left behind the menu (none at the bottom)
                 const float stops[][2] = {{0.0f, 150}, {0.3f, 130}, {0.44f, 90}, {0.55f, 50}, {0.64f, 18}, {0.74f, 0}};
                 for (int i = 0; i + 1 < (int)(sizeof stops / sizeof stops[0]); i++) {
                     ImU32 a = IM_COL32(6, 10, 34, (int)stops[i][1]), b = IM_COL32(6, 10, 34, (int)stops[i + 1][1]);
                     bg->AddRectFilledMultiColor(ImVec2(ds.x * stops[i][0], 0), ImVec2(ds.x * stops[i + 1][0], ds.y), a, b, b, a);
                 }
-                float y0 = ds.y - 190 * s, y1 = ds.y - 135 * s, y2 = ds.y - 40 * s, y3 = ds.y, x0r = ds.x * 0.5f;
-                ImU32 c0 = IM_COL32(6, 10, 34, 0), c1 = IM_COL32(6, 10, 34, 235);
-                bg->AddRectFilledMultiColor(ImVec2(x0r, y0), ImVec2(ds.x, y1), c0, c0, c1, c0);  // (feathered top)
-                bg->AddRectFilledMultiColor(ImVec2(x0r, y1), ImVec2(ds.x, y2), c0, c1, c1, c0);
-                bg->AddRectFilledMultiColor(ImVec2(x0r, y2), ImVec2(ds.x, y3), c0, c1, c0, c0);  // (feathered bottom)
             }
 
             ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -3210,11 +3205,11 @@ extern "C" void launcher_run(const char *root) {
         }
     }
     // play: remember the choice, hand the window to the game
-    snprintf(g_settings.rando_seed, sizeof g_settings.rando_seed, "%s", choice ? choices[choice].c_str() : "");
-    settings_save();
 #ifndef __APPLE__
     vk_antilag_pause(false);
 #endif
+    snprintf(g_settings.rando_seed, sizeof g_settings.rando_seed, "%s", choice ? choices[choice].c_str() : "");
+    settings_save();
 #ifdef __APPLE__
     ImGui_ImplMetal_Shutdown();
 #else
