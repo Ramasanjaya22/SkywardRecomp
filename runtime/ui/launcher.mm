@@ -322,10 +322,11 @@ static const char *status_hint(const std::string &why) {
 // The player brings their own game files: a folder holding exefs/ and romfs/. They're copied into the data root (APFS
 // clones / hard links where the file system allows); the game reads romfs/ in place (runtime/services/fs.c).
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
-static std::string g_src;           // the picked folder
+static std::string g_src;           // the picked folder (launcher_prepare: or a base .nsp)
 static std::string g_keys_pick;     // the prod.keys the player chose (g_lock); empty: search for one
 static std::string g_update_pick;   // the 1.0.1 update .nsp the player chose (g_lock); empty: the one found next to the base game
 static std::string g_found;         // what the picked folder holds, as game_find_describe says it (g_lock): shown under the folder row
+static bool g_headless;             // launcher_prepare: no window, so no shader preparation (the game does it later)
 static std::string g_job;           // current setup step / result for the status line
 static std::string g_job_hint;      // a failure: what to do about it (shown under it)
 static bool g_busy, g_job_failed;
@@ -755,7 +756,7 @@ check:
     {
         game_files_changed();
         std::string why = check_game_files(g_root);
-        if (why.empty()) prepare_shaders();  // (the GPU device is up: the start screen draws with it)
+        if (why.empty() && !g_headless) prepare_shaders();  // (the GPU device is up: the start screen draws with it)
         if (why.empty() && files_changed(g_root)) set_job(CHANGED_HEAD, true, CHANGED_HINT);  // (playable all the same)
         else if (why.empty()) set_job("Game files ready.");
         else if (why.find("version") != std::string::npos) set_failure(FAIL_VERSION);
@@ -778,6 +779,55 @@ static void start_game_code_update(void) {
     pthread_t th;
     pthread_create(&th, NULL, extract_thread, NULL);
     pthread_detach(th);
+}
+
+// RecompLauncher's setup step (main.c --prepare): the start screen's setup without a window. game: the player's copy
+// (a folder with the game files, or a base .nsp; NULL: the game files already set up, only the game code built again,
+// e.g. after an update); keys: their prod.keys (NULL: next to the package, as on the start screen). Progress as
+// "progress <0..1> <step>" lines on out. 0: ready to play; 1: it failed (why on out, details in the log); 2: no copy
+// given and none set up.
+extern "C" int launcher_prepare(const char *root, const char *game, const char *keys, FILE *out) {
+    g_root = root;
+    g_src = game ? game : "";
+    g_keys_pick = keys ? keys : "";
+    g_headless = true;
+    if (g_src.empty() && !check_copied_files(g_root).empty()) {
+        fprintf(out, "No game files set up yet: pass your copy with --game <folder or .nsp>\n");
+        fflush(out);
+        return 2;
+    }
+    fprintf(stderr, "[launcher] prepare: %s (keys: %s)\n", g_src.empty() ? "the game files already set up" : g_src.c_str(),
+            g_keys_pick.empty() ? "next to the package" : g_keys_pick.c_str());
+    g_busy = true;
+    pthread_t th;
+    pthread_create(&th, NULL, extract_thread, NULL);
+    std::string shown;
+    int shown_pct = -1;
+    for (bool busy = true; busy;) {
+        SDL_Delay(250);
+        pthread_mutex_lock(&g_lock);
+        busy = g_busy;
+        std::string job = g_job;
+        bool failed = g_job_failed;
+        pthread_mutex_unlock(&g_lock);
+        int pct = (int)(extract_progress() * 100);
+        if (!failed && !job.empty() && (job != shown || pct != shown_pct)) {
+            fprintf(out, "progress %.2f %s\n", pct / 100.0, job.c_str());
+            fflush(out);
+            shown = job, shown_pct = pct;
+        }
+    }
+    pthread_join(th, NULL);
+    bool changed = g_job == CHANGED_HEAD;  // (playable all the same, as on the start screen)
+    if (g_job_failed && !changed) {
+        fprintf(out, "%s. %s\n", g_job.c_str(), g_job_hint.c_str());
+        fflush(out);
+        fprintf(stderr, "[launcher] prepare failed: %s. %s\n", g_job.c_str(), g_job_hint.c_str());
+        return 1;
+    }
+    fprintf(out, "progress 1 %s\n", changed ? CHANGED_HEAD : "Game files ready");
+    fflush(out);
+    return 0;
 }
 
 // ------------------------------------------------------------------ folder dialog (SDL calls back on any thread)
@@ -1761,7 +1811,6 @@ static void prelaunch_tab(float sc) {
     }
 }
 
-extern "C" bool widescreen_sites_present(void);  // runtime/hle/widescreen.c
 extern "C" void launcher_run(const char *root) {
     g_root = root;
     g_start_screen = 1;
@@ -2157,8 +2206,7 @@ extern "C" void launcher_run(const char *root) {
                 // first PLAY ever: the aspect ratio question, then how to reach our menu, then the game
                 if (g_play_pending && status.empty()) pressed = true, g_play_pending = false;
                 if (pressed) {
-                    // (no game version selected on this screen yet: until a version has aspect sites the question is skipped)
-                    if (!g_settings.aspect_asked && widescreen_sites_present()) ImGui::OpenPopup("##aspect");
+                    if (!g_settings.aspect_asked) ImGui::OpenPopup("##aspect");
                     else if (!g_settings.menu_tip_seen) ImGui::OpenPopup("##menutip");
                     else play = true;
                 }

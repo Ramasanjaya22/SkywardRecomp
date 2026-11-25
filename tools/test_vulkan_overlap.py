@@ -436,7 +436,7 @@ static void watch_tests(void) {
         const uint64_t Z[4] = {32640, 32640, 2040, 2040};
         frame++;
         for (int i = 0; i < 4; i++) { snap_slot_class = i < 2 ? 0 : 1; assert(snap_storage(R[i], Z[i], true) == R[i]); }
-        for (int f = 0; f < 2; f++) {
+        for (int f = 0; f < 3; f++) {  // (exec.c:3226: the big lists copy on their own writes a frame before the small ones follow, so give a third written frame)
             for (uint64_t pg = L; pg < L + 0x10800 + 2040; pg += 1024) cpu_wrote(pg);
             gpu_wrote(R[2], 2040);
             frame++;

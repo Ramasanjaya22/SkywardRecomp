@@ -1,8 +1,10 @@
 // SkywardRecomp entry: load modules, set up the kernel, run nn::init::Start on the main thread.
 #include <SDL3/SDL.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "game_addresses.h"
 #include "gamelib.h"
@@ -203,6 +205,15 @@ static void log_startup_info(void) {
 }
 
 int main(int argc, char **argv) {
+    // --prepare (RecompLauncher's setup step, launcher_prepare): its progress lines go to the stdout it was started
+    // with, kept before plat_init can send stdout to the session log
+    FILE *progress = NULL;
+    for (int i = 1; i < argc && !progress; i++)
+        if (!strcmp(argv[i], "--prepare")) {
+            int fd = dup(fileno(stdout));
+            progress = fd >= 0 ? fdopen(fd, "w") : NULL;
+            if (!progress) progress = stdout;
+        }
     plat_init();
     log_startup_info();
     if (getenv("LARECOMP_REEXEC")) {  // (reserve_guest_space started this process again)
@@ -226,12 +237,22 @@ int main(int argc, char **argv) {
     if (g_settings.skip_launcher) skip_launcher = true; // Saved menu toggle; --play and env still apply.
     if (getenv("LARECOMP_FORCE_LAUNCHER")) skip_launcher = false;  // (test: the start screen, then the scripted input)
     static char arg_root[1024];
+    const char *game = NULL, *keys = NULL;  // (--prepare: the player's copy and prod.keys)
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--play")) skip_launcher = true;
+        else if (!strcmp(argv[i], "--prepare")) continue;
+        else if (!strncmp(argv[i], "--game=", 7)) game = argv[i] + 7;
+        else if (!strcmp(argv[i], "--game") && i + 1 < argc) game = argv[++i];
+        else if (!strncmp(argv[i], "--keys=", 7)) keys = argv[i] + 7;
+        else if (!strcmp(argv[i], "--keys") && i + 1 < argc) keys = argv[++i];
         else if (argv[i][0] != '-' && !realpath(argv[i], arg_root)) root = argv[i];  // (relative to where we started)
         else if (argv[i][0] != '-') root = arg_root;
     }
     rt_paths_init();  // the data root becomes the working directory (runtime/paths.h)
+    if (progress) {  // (no window: the start screen's setup, then exit)
+        extern int launcher_prepare(const char *root, const char *game, const char *keys, FILE *out);
+        exit(launcher_prepare(root, game, keys, progress));
+    }
     {  // an update (another version than last time): the saves backed up first, in case the new one mishandles them
         extern const char *larecomp_version(void);
         char made[64];
