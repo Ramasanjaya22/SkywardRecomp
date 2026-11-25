@@ -1457,20 +1457,21 @@ static void draw_home_chip(const char *text, bool ready, float s) {
 
 // The one dominant control: a large rounded button. menu_item keeps the existing mouse, keyboard
 // and gamepad activation; the rectangle only makes its weight match its importance.
-static bool draw_home_primary(const char *label, float s, bool *hovered) {
+static bool draw_home_primary(const char *label, float s, bool *hovered, bool enabled) {
     ImGui::PushFont(g_font_menu);
     ImVec2 at = ImGui::GetCursorScreenPos();
     float pad = 30 * s, h = 74 * s;
     ImVec2 size(std::max(360 * s, ImGui::CalcTextSize(label).x + 2 * pad), h);
     ImVec2 m = ImGui::GetIO().MousePos;
-    bool hot = m.x >= at.x && m.x <= at.x + size.x && m.y >= at.y && m.y <= at.y + size.y;
+    bool hot = enabled && m.x >= at.x && m.x <= at.x + size.x && m.y >= at.y && m.y <= at.y + size.y;
     ImGui::GetWindowDrawList()->AddRectFilled(at, ImVec2(at.x + size.x, at.y + size.y),
-                                              hot ? IM_COL32(66, 136, 204, 245) : IM_COL32(38, 90, 148, 235),
+                                              !enabled ? IM_COL32(60, 66, 80, 200)
+                                              : hot ? IM_COL32(66, 136, 204, 245) : IM_COL32(38, 90, 148, 235),
                                               12 * s);
     ImGui::GetWindowDrawList()->AddRect(at, ImVec2(at.x + size.x, at.y + size.y),
                                         IM_COL32(255, 220, 140, 170), 12 * s, 0, 2 * s);
     ImGui::SetCursorScreenPos(ImVec2(at.x + pad, at.y + (h - ImGui::GetFontSize()) * 0.5f));
-    bool clicked = menu_item(label, true, hovered);
+    bool clicked = menu_item(label, enabled, hovered);
     ImGui::SetCursorScreenPos(ImVec2(at.x, at.y + size.y));
     ImGui::PopFont();
     return clicked;
@@ -2222,110 +2223,117 @@ extern "C" void launcher_run(const char *root) {
             // before too, so the Esc that ends the typing doesn't also leave the page)
             static bool typed_before;
             bool typing = typed_before || ui_text_busy();
+            ImGui::SetCursorPos(ImVec2(x0, 285 * s));  // (as before: the other pages start from here)
 
-    if (page == MAIN) {
-        // One action per state. Title, version and status are read at a glance; details stay below.
-        const bool ready = home_ready(status);
-        const char *action = home_action_label(status);
-        bool hov = false;
+            if (page == MAIN) {
+                // One action per state. Title, version and status are read at a glance; details stay below.
+                const bool ready = home_ready(status);
+                const char *action = home_action_label(status);
+                bool hov = false;
 
-        ImGui::SetCursorPos(ImVec2(x0, 120 * s));
-        ImGui::PushFont(g_font_title);
-        const char *title = "Skyward Sword HD";
-        ImVec2 tp = ImGui::GetCursorScreenPos();
-        text_fx(ImGui::GetWindowDrawList(), ImGui::GetFont(), ImGui::GetFontSize(), tp,
-                IM_COL32(255, 232, 120, 255), IM_COL32(138, 48, 255, 255), title, 3 * s);
-        ImGui::Dummy(ImGui::CalcTextSize(title));
-        ImGui::PopFont();
+                ImGui::SetCursorPos(ImVec2(x0, 120 * s));
+                ImGui::PushFont(g_font_title);
+                const char *title = "Skyward Sword HD";
+                ImVec2 tp = ImGui::GetCursorScreenPos();
+                text_fx(ImGui::GetWindowDrawList(), ImGui::GetFont(), ImGui::GetFontSize(), tp,
+                        IM_COL32(255, 232, 120, 255), IM_COL32(255, 138, 48, 255), title, 3 * s);
+                ImGui::Dummy(ImGui::CalcTextSize(title));
+                ImGui::PopFont();
 
-        const std::string version = home_game_version();
-        const std::string version_line = version.empty() ? "Version unknown" : "Version " + version;
-        ImGui::PushFont(g_font_small);
-        ImGui::SetCursorPosX(x0);
-        ImGui::TextDisabled("%s", version_line.c_str());
-        ImGui::SetCursorPos(ImVec2(x0, ImGui::GetCursorPos().y + 8 * s));
-        draw_home_chip(home_status_chip(status, busy), ready && !busy, s);
-        ImGui::PopFont();
+                const std::string version = home_game_version();
+                ImGui::PushFont(g_font_small);
+                ImGui::SetCursorPosX(x0);
+                if (!version.empty()) {  // no game files: nothing to name
+                    ImGui::TextDisabled("Version %s", version.c_str());
+                    ImGui::SetCursorPos(ImVec2(x0, ImGui::GetCursorPos().y + 8 * s));
+                }
+                draw_home_chip(home_status_chip(status, busy), ready && !busy, s);
+                ImGui::PopFont();
 
-        ImGui::SetCursorPosY(ImGui::GetCursorPos().y + 26 * s);
-        static bool focused_once;
-        if (!focused_once) { ImGui::SetKeyboardFocusHere(); focused_once = true; }
-        ImGui::SetCursorPosX(x0);
-        bool pressed = draw_home_primary(action, s, &hov);
+                ImGui::SetCursorPosY(ImGui::GetCursorPos().y + 26 * s);
+                static bool focused_once;
+                if (!focused_once) { ImGui::SetKeyboardFocusHere(); focused_once = true; }
+                ImGui::SetCursorPosX(x0);
+                bool pressed = draw_home_primary(action, s, &hov, !busy);
 
-        int arrow = 0;
-        if (ready) {
-            ImGui::SetCursorPos(ImVec2(x0, ImGui::GetCursorPos().y + 8 * s));
-            ImGui::PushFont(g_font_menu);
-            float bw = std::max(360 * s, ImGui::CalcTextSize(action).x + 60 * s);
-            ImGui::PopFont();
-            arrow = draw_home_seed(s, x0 + bw * 0.5f, choices, choice);
-        }
-        if (pressed && arrow && ImGui::IsMouseReleased(0)) {  // a mouse click on an arrow: cycle
-            choice = (choice + arrow + (int)choices.size()) % (int)choices.size();
-            pressed = false;
-        }
-        if (g_play_pending && ready) pressed = true, g_play_pending = false;
-        // first PLAY ever: the aspect ratio question, then how to reach our menu, then the game
-        if (pressed && ready) {
-            if (!g_settings.aspect_asked) ImGui::OpenPopup("##aspect");
-            else if (!g_settings.menu_tip_seen) ImGui::OpenPopup("##menutip");
-            else play = true;
-        } else if (pressed) {
-            page = SETUP;  // "Set Up Game": the same files page, now the primary path into it
-        }
-        if (g_tip_test) ImGui::OpenPopup(g_settings.aspect_asked ? "##menutip" : "##aspect"), g_tip_test = false;
-        if (aspect_prompt(s)) {
-            if (g_settings.menu_tip_seen) play = true;
-            else ImGui::OpenPopup("##menutip");
-        }
-        if (menu_tip(s)) play = true;
-        if (hov && ready) {
-            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft))
-                choice = (choice + (int)choices.size() - 1) % (int)choices.size();
-            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight))
-                choice = (choice + 1) % (int)choices.size();
-            // left / right are ours while the action is selected: ImGui's navigation would otherwise
-            // take them too, and scroll the window (the button loses its highlight, the cycling stops)
-            ImGuiID own = ImGui::GetID("##play_lr");
-            for (ImGuiKey k : {ImGuiKey_LeftArrow, ImGuiKey_RightArrow, ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight})
-                ImGui::SetKeyOwner(k, own);
-        }
+                int arrow = 0;
+                if (ready) {
+                    ImGui::SetCursorPos(ImVec2(x0, ImGui::GetCursorPos().y + 8 * s));
+                    ImGui::PushFont(g_font_menu);
+                    float bw = std::max(360 * s, ImGui::CalcTextSize(action).x + 60 * s);
+                    ImGui::PopFont();
+                    arrow = draw_home_seed(s, x0 + bw * 0.5f, choices, choice);
+                }
+                if (pressed && arrow && ImGui::IsMouseReleased(0)) {  // a mouse click on an arrow: cycle
+                    choice = (choice + arrow + (int)choices.size()) % (int)choices.size();
+                    pressed = false;
+                }
+                if (g_play_pending && ready) pressed = true, g_play_pending = false;
+                // first PLAY ever: the aspect ratio question, then how to reach our menu, then the game
+                if (pressed && ready) {
+                    if (!g_settings.aspect_asked) ImGui::OpenPopup("##aspect");
+                    else if (!g_settings.menu_tip_seen) ImGui::OpenPopup("##menutip");
+                    else play = true;
+                } else if (pressed) {
+                    page = SETUP;  // "Set Up Game": the same files page, now the primary path into it
+                }
+                if (g_tip_test) ImGui::OpenPopup(g_settings.aspect_asked ? "##menutip" : "##aspect"), g_tip_test = false;
+                if (aspect_prompt(s)) {
+                    if (g_settings.menu_tip_seen) play = true;
+                    else ImGui::OpenPopup("##menutip");
+                }
+                if (menu_tip(s)) play = true;
+                if (hov && ready) {
+                    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft))
+                        choice = (choice + (int)choices.size() - 1) % (int)choices.size();
+                    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight))
+                        choice = (choice + 1) % (int)choices.size();
+                    // left / right are ours while the action is selected: ImGui's navigation would otherwise
+                    // take them too, and scroll the window (the button loses its highlight, the cycling stops)
+                    ImGuiID own = ImGui::GetID("##play_lr");
+                    for (ImGuiKey k : {ImGuiKey_LeftArrow, ImGuiKey_RightArrow, ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight})
+                        ImGui::SetKeyOwner(k, own);
+                }
 
-        // Secondary navigation: one small row, still keyboard and gamepad reachable.
-        float links_y = ImGui::GetCursorPos().y + 28 * s;
-        ImGui::SetCursorPos(ImVec2(x0, links_y));
-        g_menu_gap = 0.35f;
-        g_menu_small = true;
-        if (g_refocus == SETTINGS) { ImGui::SetKeyboardFocusHere(), g_refocus = MAIN; }
-        if (menu_item("SETTINGS", true)) {
-            static bool opened;
-            menu_tabs_focus(opened);  // first time this session: Prelaunch; later: the selected tab
-            opened = true;
-            page = SETTINGS;
-        }
-        if (ready) {
-            ImGui::SetCursorPos(ImVec2(x0 + 130 * s, links_y));
-            if (g_refocus == SETUP) { ImGui::SetKeyboardFocusHere(), g_refocus = MAIN; }
-            if (menu_item("GAME FILES", !busy)) page = SETUP;
-        }
-        if (ready || busy) {  // a newer release opens its page; otherwise the row asks GitHub again
-            pthread_mutex_lock(&g_update_lock);
-            std::string upd = g_update_tag;
-            int us = g_update_state;
-            pthread_mutex_unlock(&g_update_lock);
-            std::string ul = !upd.empty() ? "UPDATE TO " + tag_label(upd, false)
-                           : us == 1 ? "CHECKING FOR UPDATES..." : us == 2 ? "UP TO DATE" : us == 3 ? "UPDATE CHECK FAILED"
-                           : "CHECK FOR UPDATES";
-            ImGui::SetCursorPos(ImVec2(x0 + 310 * s, links_y));
-            if (menu_item(ul.c_str(), upd.empty() ? us != 1 : true)) {
-                if (!upd.empty()) SDL_OpenURL((RELEASE_PAGE + upd).c_str());
-                else start_update_check();
-            }
-        }
-        ImGui::SetCursorPos(ImVec2(x0 + 520 * s, links_y));
-        if (menu_item("QUIT", true)) exit(0);
-        g_menu_small = false;
+                // Secondary navigation: one small row, still keyboard and gamepad reachable. Each item starts where
+                // the one before ends (measured), so a long update label can never run into QUIT.
+                float links_y = ImGui::GetCursorPos().y + 28 * s, links_x = x0;
+                auto link = [&](const char *label, bool enabled) {
+                    ImGui::SetCursorPos(ImVec2(links_x, links_y));
+                    bool hit = menu_item(label, enabled);
+                    ImGui::PushFont(g_font_small);  // (menu_item's width: the text plus 40 px)
+                    links_x += ImGui::CalcTextSize(label).x + 40 + 24 * s;
+                    ImGui::PopFont();
+                    return hit;
+                };
+                g_menu_gap = 0.35f;
+                g_menu_small = true;
+                if (g_refocus == SETTINGS) { ImGui::SetKeyboardFocusHere(), g_refocus = MAIN; }
+                if (link("SETTINGS", true)) {
+                    static bool opened;
+                    menu_tabs_focus(!opened);  // first time this session: Prelaunch; later: the selected tab
+                    opened = true;
+                    page = SETTINGS;
+                }
+                if (ready) {
+                    if (g_refocus == SETUP) { ImGui::SetKeyboardFocusHere(), g_refocus = MAIN; }
+                    if (link("GAME FILES", !busy)) page = SETUP;
+                }
+                {  // a newer release opens its page; otherwise the row asks GitHub again
+                    pthread_mutex_lock(&g_update_lock);
+                    std::string upd = g_update_tag;
+                    int us = g_update_state;
+                    pthread_mutex_unlock(&g_update_lock);
+                    std::string ul = !upd.empty() ? "UPDATE TO " + tag_label(upd, false)
+                                   : us == 1 ? "CHECKING FOR UPDATES..." : us == 2 ? "UP TO DATE" : us == 3 ? "UPDATE CHECK FAILED"
+                                   : "CHECK FOR UPDATES";
+                    if (link(ul.c_str(), upd.empty() ? us != 1 : true)) {
+                        if (!upd.empty()) SDL_OpenURL((RELEASE_PAGE + upd).c_str());
+                        else start_update_check();
+                    }
+                }
+                if (link("QUIT", true)) exit(0);
+                g_menu_small = false;
             } else if (page == SETTINGS) {
                 // the in-game menu's tabs (runtime/ui/menu.mm), in a window like the in-game one; tabs that need a
                 // loaded game say so
@@ -2710,8 +2718,9 @@ extern "C" void launcher_run(const char *root) {
                 }
                 ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1), "Game files ready.");
                 ImGui::SetCursorPosX(x0);
-        const std::string version_label = home_game_version();
-                ImGui::TextColored(ImVec4(0.66f, 0.76f, 0.98f, 1), "Nintendo Switch  \xc2\xb7  v%s", version_label.c_str());
+                const std::string version_label = home_game_version();
+                ImGui::TextColored(ImVec4(0.66f, 0.76f, 0.98f, 1), "Nintendo Switch  \xc2\xb7  v%s",
+                                   version_label.empty() ? "?" : version_label.c_str());
             } else {
                 ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "!  %s", busy ? "Setting up the game files..." : status.c_str());
                 ImGui::SetCursorPosX(x0);
