@@ -116,6 +116,7 @@ jobs:
       - name: SkywardRecomp tests (shader records, shadows, temporal inputs, ZR tap, texture packs)
         run: |
           python3 tools/test_shader_rec.py
+          python3 tools/test_ss_shader_arc.py
           python3 tools/test_shadow_map.py
           python3 tools/test_temporal.py
           python3 tools/test_zr_tap.py
