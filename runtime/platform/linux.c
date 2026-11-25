@@ -17,6 +17,8 @@
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <dirent.h>
+#include <strings.h>
 #include <sys/syscall.h>
 #include <sys/sysinfo.h>
 #include <sys/ucontext.h>
@@ -547,6 +549,32 @@ static int rm_entry(const char *path, const struct stat *sb, int flag, struct FT
     return remove(path) == 0 || errno == ENOENT ? 0 : -1;  // (gone already: e.g. a ._ file macOS removed with its folder on exFAT)
 }
 bool plat_remove_tree(const char *dir) { return nftw(dir, rm_entry, 16, FTW_DEPTH | FTW_PHYS) == 0; }
+// /proc/<pid>/comm holds the process name cut to 15 characters (case kept: "Ryujinx")
+bool plat_process_running(const char *const *names, char *found, size_t n) {
+    if (n) found[0] = 0;
+    DIR *procs = opendir("/proc");
+    if (!procs) return false;
+    bool hit = false;
+    for (struct dirent *e; !hit && (e = readdir(procs));) {
+        if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
+        char path[300], comm[64] = "";
+        snprintf(path, sizeof path, "/proc/%s/comm", e->d_name);
+        FILE *f = fopen(path, "r");
+        if (!f) continue;
+        if (!fgets(comm, sizeof comm, f)) comm[0] = 0;
+        fclose(f);
+        comm[strcspn(comm, "\n")] = 0;
+        for (int i = 0; names[i] && !hit; i++)
+            if (comm[0] && strlen(comm) == (strlen(names[i]) > 15 ? 15 : strlen(names[i])) &&
+                !strncasecmp(comm, names[i], 15)) {
+                snprintf(found, n, "%s", names[i]);
+                hit = true;
+            }
+    }
+    closedir(procs);
+    return hit;
+}
+
 bool plat_onedrive_synced(const char *dir) { (void)dir; return false; }
 
 // End the process at once, skipping the library teardown: as on Windows, the GPU driver's threads crashed in exit()

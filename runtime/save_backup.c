@@ -10,6 +10,11 @@
 
 #include "paths.h"
 #include "platform.h"
+#include "save_emu.h"
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #define MAX_UNITS 64
 typedef char Unit[400];  // a folder of saves, relative to a root: "save" or "rando/<seed>/save"
@@ -244,7 +249,25 @@ bool save_backup_restore(const char *root, const char *name, char *why, size_t c
 
 static bool is_save_file(const char *n) {
     size_t l = strlen(n);
-    return !strcmp(n, "zelda.sav") || (!strncmp(n, "savedata", 8) && l > 12 && !strcmp(n + l - 4, ".bin"));
+    return !strcmp(n, "zelda.sav") || !strcmp(n, "wiiking2.sav") ||
+           (!strncmp(n, "savedata", 8) && l > 12 && !strcmp(n + l - 4, ".bin"));
+}
+
+static bool is_side_file(const char *n) {
+    size_t l = strlen(n);
+    return !strcmp(n, "skip.dat") ||
+           (l >= 12 && n[0] >= '0' && n[0] <= '9' && !strcmp(n + l - 11, ".screenshot")) ||
+           (l > 7 && !strcmp(n + l - 7, ".flagsx"));
+}
+
+static bool is_link(const char *path) {
+#ifdef _WIN32
+    DWORD a = GetFileAttributesA(path);
+    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_REPARSE_POINT);
+#else
+    struct stat st;
+    return lstat(path, &st) == 0 && S_ISLNK(st.st_mode);
+#endif
 }
 
 // The save files in dir put in stage/save/<slot>/. A save a different size from the one it replaces (or empty) is
@@ -258,9 +281,19 @@ static int stage_dir(const char *root, const char *dir, const char *slot, const 
     while (d && (e = readdir(d))) {
         char f[1100], live[1100], dst[1100], name[256];
         size_t l = strlen(e->d_name);
-        bool side = l > 7 && !strcmp(e->d_name + l - 7, ".flagsx");  // (savedataN.bin.flagsx: the extended flags)
+        bool side = is_side_file(e->d_name);
         if (!is_save_file(e->d_name) && !side) continue;
         jn(f, sizeof f, dir, e->d_name);
+        if (is_link(f)) {
+            closedir(d);
+            if (cap) snprintf(why, cap, "%s is a link, not a save file.", e->d_name);
+            return -1;
+        }
+        if (tree_bytes(f) > (4ULL << 20)) {
+            closedir(d);
+            if (cap) snprintf(why, cap, "%s is too big to be a save file.", e->d_name);
+            return -1;
+        }
         snprintf(name, sizeof name, "%s", !strcmp(e->d_name, "zelda.sav") ? "savedata0.bin" : e->d_name);
         snprintf(live, sizeof live, "%s/save/%s/%s", root, slot, name);
         unsigned long long sz = tree_bytes(f), want = tree_bytes(live);
@@ -308,8 +341,23 @@ bool save_backup_import(const char *root, const char *src_dir, char *why, size_t
         if (d) closedir(d);
         if (n <= 0) {
             plat_remove_tree(stage);
-            if (!n) fail(why, cap, "No save file in that folder.%s", "");
-            return false;
+            if (n < 0) return plat_remove_tree(stage), false;
+            SaveEmuHit hits[8];
+            int found = save_emu_find_under(src_dir, "folder", hits, 8);
+            if (found > 1) {
+                if (cap) snprintf(why, cap, "That folder has saves of %d profiles: pick the profile's folder.", found);
+                return plat_remove_tree(stage), false;
+            }
+            if (found != 1)
+                return plat_remove_tree(stage), fail(why, cap, "No save file in that folder.%s", "");
+
+            /* the folder fallback stages only save_0; copy the live save first so
+               its other slots survive the whole-save swap */
+            mkdirs(stage);
+            if (is_dir(live) && !copy_unit(root, stage, "save", why, cap))
+                return plat_remove_tree(stage), false;
+            if (stage_dir(root, hits[0].path, "save_0", stage, why, cap) <= 0)
+                return plat_remove_tree(stage), fail(why, cap, "No save file in that folder.%s", "");
         }
         snprintf(units[0], sizeof(Unit), "save");
         count = 1, from = stage;

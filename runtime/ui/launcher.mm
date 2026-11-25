@@ -44,6 +44,7 @@ extern "C" {
 #include "platform.h"
 #include "paths.h"
 #include "save_backup.h"
+#include "save_emu.h"
 #include "gamebuild.h"
 #include "build_cache.h"
 #include "game_addresses.h"
@@ -1889,6 +1890,31 @@ static void SDLCALL picked_saves(void *, const char *const *files, int) {
     g_sb_pick = files[0];
     pthread_mutex_unlock(&g_lock);
 }
+// Emulator saves: the dialog's thread hands us a folder; hits live in this
+// buffer for as long as the Save data page is drawn.
+static std::string g_emu_pick;
+static SaveEmuHit g_emu_hits[16];
+static int g_emu_count;
+static char g_emu_dir[1024];
+static SaveEmuHit g_emu_pending;
+static bool g_emu_import;
+static void SDLCALL picked_emu(void *, const char *const *files, int) {
+    if (!files || !files[0]) return;
+    pthread_mutex_lock(&g_lock);
+    g_emu_pick = files[0];
+    pthread_mutex_unlock(&g_lock);
+}
+static void emu_hit_display(SaveEmuHit *h) {
+    if (h->display[0]) return;
+    const char *slash = strrchr(h->path, '/');
+    if (!slash) slash = strrchr(h->path, '\\');
+    snprintf(h->display, sizeof h->display, "%s", slash && slash[1] ? slash + 1 : "Folder");
+}
+static int emu_scan(const char *dir) {
+    g_emu_count = save_emu_find_under(dir, "folder", g_emu_hits, 16);
+    for (int i = 0; i < g_emu_count; ++i) emu_hit_display(&g_emu_hits[i]);
+    return g_emu_count;
+}
 
 static void choose_data_folder(void) { SDL_ShowOpenFolderDialog(picked_data, NULL, g_launcher_win, NULL, false); }
 static void df_progress(int step, double f) { g_df_step = step, g_df_frac = (float)f; }
@@ -3080,6 +3106,64 @@ extern "C" void launcher_run(const char *root) {
                         std::string dir = std::string(rt_data_root()) + "/backups";
                         mkdir(dir.c_str(), 0755);
                         SDL_OpenURL(("file:///" + dir).c_str());
+                    }
+                    std::string emu_pick;
+                    pthread_mutex_lock(&g_lock);
+                    emu_pick.swap(g_emu_pick);
+                    pthread_mutex_unlock(&g_lock);
+                    if (!emu_pick.empty()) {
+                        snprintf(g_emu_dir, sizeof g_emu_dir, "%s", emu_pick.c_str());
+                        if (emu_scan(g_emu_dir) <= 0)
+                            set_job("No save of the game there: start it once in the emulator and save.", true);
+                    }
+                    if (opt_action("Import save…", "", "Copies an emulator's save into SkywardRecomp.", false)) {
+                        g_emu_import = true;
+                        SDL_ShowOpenFolderDialog(picked_emu, NULL, g_launcher_win, "Select the emulator's save folder", false);
+                    }
+                    if (opt_action("Export save…", "", "Copies your save into an emulator's folder.", false)) {
+                        g_emu_import = false;
+                        SDL_ShowOpenFolderDialog(picked_emu, NULL, g_launcher_win, "Select the emulator's save folder", false);
+                    }
+                    for (int i = 0; i < g_emu_count; ++i) {
+                        SaveEmuHit h = g_emu_hits[i]; // by value: the scan buffer is reused on refresh
+                        char label[128], value[64] = "";
+                        snprintf(label, sizeof label, "%s %s", g_emu_import ? "Import from" : "Export to", h.display);
+                        time_t t = (time_t)h.when;
+                        struct tm *lt = localtime(&t);
+                        if (h.when > 0 && lt) strftime(value, sizeof value, "%Y-%m-%d %H:%M", lt);
+                        else snprintf(value, sizeof value, "%s", g_emu_import ? " <" : " >");
+                        const char *desc = g_emu_import
+                            ? "Copies this emulator's save into SkywardRecomp. Your current saves are backed up first."
+                            : "Copies your save into this emulator. Its save is backed up first (backups folder).";
+                        if (opt_action(label, value, desc, false)) {
+                            g_sb_confirm = std::string(g_emu_import ? "import:" : "export:") + h.path;
+                            g_emu_pending = h;
+                        }
+                    }
+                    bool emu_asking = g_sb_confirm.rfind("import:", 0) == 0 || g_sb_confirm.rfind("export:", 0) == 0;
+                    if (emu_asking && opt_action("Yes, continue", "", g_emu_import
+                            ? "Replaces your current saves. They are backed up first."
+                            : "Overwrites the emulator's save. It is backed up first.", false)) {
+                        g_sb_confirm.clear();
+                        char running[48] = "", hint[128], saved[64] = "";
+                        if (save_emu_running(running, sizeof running)) {
+                            snprintf(hint, sizeof hint, "Close %s first.", running);
+                            set_job(hint, true, "The emulator may overwrite the save while it runs.");
+                        } else if (g_emu_import) {
+                            if (save_backup_import(rt_data_root(), g_emu_pending.path, why, sizeof why)) {
+                                snprintf(saved, sizeof saved, "Save imported from %s.", g_emu_pending.display);
+                                set_job(saved);
+                                emu_scan(g_emu_dir);
+                            } else set_job("Could not import the save.", true, why);
+                        } else {
+                            if (save_emu_export(rt_data_root(), g_emu_pending.path, g_emu_pending.emu,
+                                                saved, sizeof saved, why, sizeof why)) {
+                                char msg[96];
+                                snprintf(msg, sizeof msg, "Save exported to %s.", g_emu_pending.display);
+                                set_job(msg);
+                                emu_scan(g_emu_dir);
+                            } else set_job("Could not export the save.", true, why);
+                        }
                     }
                 }
                 }  // More

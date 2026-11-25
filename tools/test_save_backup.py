@@ -45,12 +45,19 @@ with tempfile.TemporaryDirectory() as directory:
     S = Path(directory).resolve()
     exe = S / ('save-backup-test.exe' if os.name == 'nt' else 'save-backup-test')
     subprocess.run(shlex.split(os.environ.get('CC', 'clang')) +
-                   ['-std=gnu11', '-Iruntime', 'runtime/save_backup.c', 'runtime/paths.c', f'runtime/platform/{plat}.c',
-                    'tools/test_save_backup.c', '-o', str(exe)] + flags + extra, cwd=ROOT, check=True)
+                   ['-std=gnu11', '-Iruntime', 'runtime/save_backup.c', 'runtime/paths.c', 'runtime/save_emu.c',
+                    f'runtime/platform/{plat}.c', 'tools/test_save_backup.c', '-o', str(exe)] + flags + extra,
+                    cwd=ROOT, check=True)
     data = S / 'data'
 
     def run(*args):
         p = subprocess.run([str(exe), str(data), *map(str, args)], capture_output=True, text=True, timeout=120)
+        assert p.returncode == 0, f'{args}: exit {p.returncode}\n{p.stderr}'
+        return p.stdout.splitlines()
+
+    def run_env(env, *args):
+        p = subprocess.run([str(exe), str(data), *map(str, args)], env={**os.environ, **env},
+                           capture_output=True, text=True, timeout=120)
         assert p.returncode == 0, f'{args}: exit {p.returncode}\n{p.stderr}'
         return p.stdout.splitlines()
 
@@ -168,4 +175,87 @@ with tempfile.TemporaryDirectory() as directory:
     assert not ok_of(run('update', '9.9.0')[0], 'UPDATE')[0] and len(backups()) == min(n0 + 1, 20)
     assert not subprocess.run([str(exe), str(empty), 'update', '1'], capture_output=True, text=True).stdout.startswith('UPDATE 1')
     print('update: a new version backs the saves up once; the same version, or no saves: none')
-    print(f'{plat}: save backups ok')
+    # import from an emulator's save folder: wiiking2.sav (size-checked), skip.dat, N.screenshot (may be empty)
+    W = 'save/save_0/wiiking2.sav'
+    put(data, W, os.urandom(SIZE))
+    emu = S / 'emu-save'
+    w = os.urandom(SIZE)
+    put(emu, 'wiiking2.sav', w); put(emu, 'skip.dat', b's' * 160)
+    put(emu, '0.screenshot', b'p' * 1000); put(emu, '2.screenshot', b'')
+    ok, why = ok_of(run('import', emu)[0], 'IMPORT')
+    assert ok, why
+    assert (data / W).read_bytes() == w and (data / 'save/save_0/skip.dat').read_bytes() == b's' * 160
+    assert (data / 'save/save_0/2.screenshot').read_bytes() == b''
+    put(S / 'emu-bad', 'wiiking2.sav', os.urandom(SIZE + 1))
+    before = files(data, 'save')
+    assert not ok_of(run('import', S / 'emu-bad')[0], 'IMPORT')[0] and files(data, 'save') == before
+    put(S / 'emu-big', 'wiiking2.sav', b'w'); put(S / 'emu-big', 'skip.dat', b'x' * ((4 << 20) + 1))
+    assert not ok_of(run('import', S / 'emu-big')[0], 'IMPORT')[0] and files(data, 'save') == before
+
+    # importing from a nested emulator save folder must keep the player's other slots
+    other = os.urandom(SIZE)
+    put(data, 'save/save_1/savedata1.bin', other)
+    emu_folder = S / 'emu-folder'
+    put(emu_folder, 'Ryujinx/wiiking2.sav', w)
+    ok, why = ok_of(run('import', emu_folder)[0], 'IMPORT')
+    assert ok, why
+    assert (data / 'save/save_1/savedata1.bin').read_bytes() == other
+    assert files(data, 'save')[W] == w
+    print('import: nested emulator folder keeps other save slots')
+
+    print('import: emulator folder with wiiking2.sav, skip.dat, empty screenshot taken; wrong size / over 4 MiB refused')
+    # discovery: a fake home with Eden (both layouts), Fritchii, Ryujinx, and an Eden profile with no save
+    H = S / 'home'
+    ap = H / 'AppData/Roaming'
+    env = {'APPDATA': str(ap), 'XDG_DATA_HOME': str(H / '.local/share'), 'XDG_CONFIG_HOME': str(H / '.config'),
+           'HOME': str(H), 'USERPROFILE': str(H)}
+    base = {'windows': ap, 'linux': H / '.local/share', 'macos': H / 'Library/Application Support'}[plat]
+    ryu = {'windows': ap / 'Ryujinx', 'linux': H / '.config/Ryujinx', 'macos': base / 'Ryujinx'}[plat]
+    T = '01002DA013484000'
+    put(base / 'eden/nand/user/save/0000000000000000/AAAA' / T, 'wiiking2.sav', w)
+    (base / 'eden/nand/user/save/0000000000000000/BBBB' / T).mkdir(parents=True)  # no save: no hit
+    put(base / 'fritchii/nand/user/save/account/CCCC' / T / '0', 'wiiking2.sav', w)
+    put(base / 'citron/nand/user/save/0000000000000000/DDDD' / T, 'wiiking2.sav', w)
+    put(ryu / 'bis/user/save/0000000000000005/0', 'wiiking2.sav', w)
+    put(ryu / 'bis/user/save/0000000000000006/0', 'other.bin', b'x')  # another game: no hit
+    hits = [l.split(' ', 1)[1].split('|') for l in run_env(env, 'emu-list') if l.startswith('EMU ')]
+    assert sorted((h[0], h[1]) for h in hits) == [('citron', 'DDDD'), ('eden', 'AAAA'), ('fritchii', 'CCCC'), ('ryujinx', '0000000000000005')], hits
+    # a picked data folder is searched: importing %APPDATA%\eden takes AAAA's save
+    ok, why = ok_of(run('import', base / 'eden')[0], 'IMPORT')
+    assert ok and (data / W).read_bytes() == w, why
+    print('emulators: Eden (both layouts), Citron, Fritchii, Ryujinx found; empty profile and other games skipped; data folder import')
+
+    r = run('running', 'save-backup-test')[0]
+    assert r.startswith('RUNNING 1|save-backup-test'), r
+    assert run('running', 'no-such-process-zq')[0].startswith('RUNNING 0|'), 'bogus process found'
+    print('process check: own process found, a missing one not')
+
+    # export: Ryujinx's save replaced, the old one backed up, its working folder 1/ backed up and removed
+    rsave = ryu / 'bis/user/save/0000000000000005/0'
+    old = (rsave / 'wiiking2.sav').read_bytes()
+    mine = (data / W).read_bytes()
+    put(rsave.parent / '1', 'wiiking2.sav', b'working')
+    put(data, 'save/save_0/wiiking2.sav.pending', b'junk')
+    r = run('emu-export', rsave, 'ryujinx')[0]
+    ok, why = ok_of(r, 'EXPORT')
+    assert ok, why
+    assert (rsave / 'wiiking2.sav').read_bytes() == mine and not (rsave / 'wiiking2.sav.pending').exists()
+    assert (rsave / '2.screenshot').read_bytes() == b'' and not (rsave.parent / '1').exists()
+    bk = [p for p in (data / 'backups').glob('export-ryujinx-*') if p.is_dir()]
+    assert len(bk) == 1 and (bk[0] / '0/wiiking2.sav').read_bytes() == old and (bk[0] / '1/wiiking2.sav').exists()
+    assert not list(rsave.parent.glob('*skyrecomp-*'))
+    # a folder with no save is refused, nothing made
+    ok, why = ok_of(run('emu-export', S / 'nowhere', 'eden')[0], 'EXPORT')
+    assert not ok and why and not (S / 'nowhere').exists()
+    # Windows: a file open in the target -> refused, target untouched, no leftovers
+    if os.name == 'nt':
+        esave = base / 'eden/nand/user/save/0000000000000000/AAAA/' / T
+        before = files(esave, '.')
+        with open(esave / 'wiiking2.sav', 'rb'):
+            ok, why = ok_of(run('emu-export', esave, 'eden')[0], 'EXPORT')
+            assert not ok and why, 'export with a file open should fail'
+            assert files(esave, '.') == before and not list(esave.parent.glob('*skyrecomp-*'))
+        print('export: replaced with a backup first; Ryujinx 1/ handled; missing target and file in use refused cleanly')
+    else:
+        print('export: replaced with a backup first; Ryujinx 1/ handled; missing target refused')
+

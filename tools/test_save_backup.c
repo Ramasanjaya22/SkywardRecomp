@@ -8,6 +8,7 @@
 #include "paths.h"
 #include "platform.h"
 #include "save_backup.h"
+#include "save_emu.h"
 
 // (the platform file's crash handling, never reached here)
 void rt_crash_explain(char *out, size_t n, const char *log_path) { (void)log_path; if (n) out[0] = 0; }
@@ -23,6 +24,13 @@ const char *rt_host_fn_name(uint64_t pc, uint64_t *offset) { (void)pc, (void)off
 int main(int argc, char **argv) {
     if (argc < 3) return 2;
     const char *root = argv[1], *cmd = argv[2];
+    if (!strcmp(cmd, "running") && argc > 3) {
+        const char *const names[] = { argv[3], NULL };
+        char found[64];
+        bool running = plat_process_running(names, found, sizeof found);
+        printf("RUNNING %d|%s\n", running ? 1 : 0, found);
+        return 0;
+    }
     char why[600] = "", name[64] = "";
     if (!strcmp(cmd, "create")) {
         bool ok = save_backup_create(root, name, sizeof name, why, sizeof why);
@@ -41,6 +49,15 @@ int main(int argc, char **argv) {
     } else if (!strcmp(cmd, "update") && argc > 3) {
         bool ok = save_backup_on_update(root, argv[3], name, sizeof name);
         printf("UPDATE %d %s|\n", ok, name);
+    } else if (!strcmp(cmd, "emu-export") && argc > 4) {
+        char backup[1100] = "";
+        bool ok = save_emu_export(root, argv[3], argv[4], backup, sizeof backup, why, sizeof why);
+        printf("EXPORT %d|%s|%s\n", ok ? 1 : 0, backup, why);
+    } else if (!strcmp(cmd, "emu-list")) {
+        SaveEmuHit hits[64];
+        int n = save_emu_find(hits, 64);
+        for (int i = 0; i < n; ++i)
+            printf("EMU %s|%s|%s|%s|%lld\n", hits[i].emu, hits[i].profile, hits[i].display, hits[i].path, hits[i].when);
     } else {
         return 2;
     }
