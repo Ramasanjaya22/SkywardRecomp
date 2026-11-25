@@ -678,7 +678,7 @@ static const char *alayer(Ctx *c, const char *r, int slot, char *buf) {
 static const char *uv2(Ctx *c, int slot, const char *x, const char *y, char *buf) {
     if (c->stage == STAGE_VERTEX) { snprintf(buf, 700, "%s2(%s, %s)", c->glsl ? "vec" : "float", x, y); return buf; }
     c->uses_rscale = true;
-    snprintf(buf, 700, "uvs(%s2(%s, %s), rscale[%d])", c->glsl ? "vec" : "float", x, y, slot + 1);
+    snprintf(buf, 700, "uvs(%s2(%s, %s), rscale[%d], rscale[0])", c->glsl ? "vec" : "float", x, y, slot + 1);
     return buf;
 }
 #define UV2(slot, x, y) uv2(c, (slot), (x), (y), alloca(700))
@@ -713,7 +713,7 @@ static void glsl_sample(Ctx *c, char *out, int slot, const char *const *co, cons
     } else if (n == 2) {
         if (off) snprintf(xs, sizeof xs, "(vec2(%s, %s) + vec2(%s) / vec2(tsize%d(%s).xy))", co[0], co[1], off, slot, L);
         else snprintf(xs, sizeof xs, "vec2(%s, %s)", co[0], co[1]);
-        if (c->stage != STAGE_VERTEX) { char w[1700]; snprintf(w, sizeof w, "uvs(%s, rscale[%d])", xs, slot + 1); strcpy(xs, w); c->uses_rscale = true; }
+        if (c->stage != STAGE_VERTEX) { char w[1700]; snprintf(w, sizeof w, "uvs(%s, rscale[%d], rscale[0])", xs, slot + 1); strcpy(xs, w); c->uses_rscale = true; }
     } else {
         if (off && !cube) snprintf(xs, sizeof xs, "vec3(vec2(%s, %s) + vec2(%s) / vec2(tsize%d(%s).xy), %s)", co[0], co[1], off, slot, L, co[2]);
         else snprintf(xs, sizeof xs, "vec3(%s, %s, %s)", co[0], co[1], co[2]);  // cube lookups take no offset
@@ -956,7 +956,7 @@ static void emit_tex(Ctx *c, uint64_t w, bool bindless) {
     if (dc) { c->reg_used[pr] = 1; sprintf(dref, "as_type<float>(r%d)", pr); pr++; }
     const char *vec = ncoord == 1 ? "" : ncoord == 2 ? "float2" : "float3";
     char cexpr[420], call[1024];
-    if (ncoord == 2 && c->stage != STAGE_VERTEX) { snprintf(cexpr, sizeof cexpr, "uvs(float2(%s), rscale[%d])", coords, slot + 1); c->uses_rscale = true; }
+    if (ncoord == 2 && c->stage != STAGE_VERTEX) { snprintf(cexpr, sizeof cexpr, "uvs(float2(%s), rscale[%d], rscale[0])", coords, slot + 1); c->uses_rscale = true; }
     else snprintf(cexpr, sizeof cexpr, "%s(%s)", vec, coords);
     if (dc)
         sprintf(call, "float4(t%d.sample_compare(s%d, %s%s%s, %s%s%s))", slot, slot, cexpr, array ? ", " : "",
@@ -2047,7 +2047,13 @@ static const char glsl_prelude[] =
     "float fswzadd(float a, float b, uint swz, uint lane) { uint m = (swz >> ((lane & 3u) * 2u)) & 3u; float ma = m == 1u ? -1.0f : (m == 3u ? 0.0f : 1.0f); float mb = m == 2u ? -1.0f : 1.0f; return a * ma + b * mb; }\n"
     "uvec2 rsc(uvec2 c, vec4 s) { return (s.x == 1.0f && s.y == 1.0f) ? c : uvec2(floor((vec2(c) + 0.5f) * s.xy)); }\n"
     // a scaled texture whose contents occupy its top-left part (Dynamic resolution): sample that part
-    "vec2 uvs(vec2 uv, vec4 s) { return (s.z == 1.0f && s.w == 1.0f) ? uv : min(uv, 1.0f) * s.zw; }\n";
+    // Screen-space UVs: a 16:9-centre pass (viewport narrower than the wide RT, or offset) samples a wide screen RT
+    // in viewport space 0..1 - remap to the full RT so the 21:9 wings sample the wing, not the clamped edge.
+    "vec2 uvs(vec2 uv, vec4 s, vec4 vp) {\n"
+    "  if (s.x > vp.x + 0.001f || vp.z != 0.0f) uv.x = uv.x * (vp.x / s.x) + vp.z / (1920.0f * s.x);\n"
+    "  if (s.y > vp.y + 0.001f || vp.w != 0.0f) uv.y = uv.y * (vp.y / s.y) + vp.w / (1080.0f * s.y);\n"
+    "  return (s.z == 1.0f && s.w == 1.0f) ? uv : min(uv, 1.0f) * s.zw;\n"
+    "}\n";
 // The half <-> float helpers (glsl_finish: glsl_h2f_exact or glsl_h2f_native, then glsl_prelude_half).
 // Half -> float in vertex (and other pre-raster) shaders: by bits, not unpackHalf2x16. NVIDIA's driver recognises
 // unpacked halves and runs some of the fp32 math after them in native fp16, differently per shader, so a depth
@@ -2500,7 +2506,11 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
     sp(&s, "static inline uint bfi(uint ins, uint ctl, uint base) { uint pos = ctl & 0xFFu, len = (ctl >> 8) & 0xFFu; if (len == 0u || pos >= 32u) return base; return insert_bits(base, ins, pos, min(len, 32u - pos)); }\n");
     sp(&s, "static inline float fswzadd(float a, float b, uint swz, uint lane) { uint m = (swz >> ((lane & 3u) * 2u)) & 3u; float ma = m == 1u ? -1.0f : (m == 3u ? 0.0f : 1.0f); float mb = m == 2u ? -1.0f : 1.0f; return a * ma + b * mb; }\n");
     sp(&s, "static inline uint2 rsc(uint2 c, float4 s) { return (s.x == 1.0f && s.y == 1.0f) ? c : uint2(floor((float2(c) + 0.5f) * s.xy)); }\n");
-    sp(&s, "static inline float2 uvs(float2 uv, float4 s) { return (s.z == 1.0f && s.w == 1.0f) ? uv : min(uv, 1.0f) * s.zw; }\n");
+    sp(&s, "static inline float2 uvs(float2 uv, float4 s, float4 vp) {\n"
+            "  if (s.x > vp.x + 0.001f || vp.z != 0.0f) uv.x = uv.x * (vp.x / s.x) + vp.z / (1920.0f * s.x);\n"
+            "  if (s.y > vp.y + 0.001f || vp.w != 0.0f) uv.y = uv.y * (vp.y / s.y) + vp.w / (1080.0f * s.y);\n"
+            "  return (s.z == 1.0f && s.w == 1.0f) ? uv : min(uv, 1.0f) * s.zw;\n"
+            "}\n");
     sp(&s, "static inline float2 hx(uint v, uint swz) { if (swz == 1u) return float2(as_type<float>(v)); float2 h = float2(as_type<half2>(v)); return swz == 2u ? h.xx : swz == 3u ? h.yy : h; }\n");
     // merges on half2 lanes rather than with integer masks: on an M1 (macOS 15.0.1) the Metal compiler miscompiled
     // (old & 0xFFFF0000u) | lo in Link's body shader - the merged low half read back as a constant 512.0 and Link
