@@ -88,6 +88,7 @@ void shader_rec_format(const ShaderRec *r, char *out, size_t n) {
         for (int k = 0; k < 8; k++) PUT("%02x", r->blend[i][k]);
     }
     PUT(" k=%u t=%u p=%u o=%u", r->a2c, r->topo, r->poly_fill, r->logic_op);
+    if (r->wide_k) PUT(" w=%u", r->wide_k);  // (last and only when set: older lines stay the same)
 #undef PUT
 }
 
@@ -173,6 +174,7 @@ bool shader_rec_parse(const char *line, ShaderRec *r) {
     }
     if ((v = field(line, "k"))) r->a2c = (uint8_t)strtoul(v, NULL, 16);
     r->topo = (v = field(line, "t")) ? (uint8_t)strtoul(v, NULL, 16) : 2;
+    if ((v = field(line, "w"))) r->wide_k = (uint16_t)strtoul(v, NULL, 10);
     r->poly_fill = (v = field(line, "p")) ? (uint8_t)strtoul(v, NULL, 16) : 1;
     r->logic_op = (v = field(line, "o")) ? (uint8_t)strtoul(v, NULL, 10) : 3;  // older records: NVN COPY
     return r->vs && r->fs;

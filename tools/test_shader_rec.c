@@ -18,5 +18,11 @@ int main(void) {
     snprintf(legacy, sizeof legacy, "%.*s", (int)(strstr(line, " o=") - line), line);
     assert(shader_rec_parse(legacy, &p));
     assert(p.logic_op == 3);  // older records without o= keep NVN COPY
+
+    assert(!strstr(line, " w="));  // (no widening: the line as before)
+    r.wide_k = 437;  // ultrawide draws (the vertex key's wide_k): prepared with it, or the draw misses them
+    shader_rec_format(&r, line, sizeof line);
+    assert(shader_rec_parse(line, &p));
+    assert(p.wide_k == 437);
     return 0;
 }
