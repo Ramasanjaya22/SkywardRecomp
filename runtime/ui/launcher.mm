@@ -2376,7 +2376,6 @@ extern "C" void launcher_run(const char *root) {
                                     "the extracted game files (exefs/romfs), or the game's .nsp package. Version 1.0.0 and "
                                     "1.0.1 are supported; for 1.0.1, keep the base game's .nsp and its update .nsp in this folder "
                                     "(or choose the update below). The game isn't included with SkywardRecomp.";
-                if (!src.empty()) src_d += "\n\nChosen: " + src + (found.empty() ? "" : "\n\n" + found);
                 // the step that's running / its result, under the rows and in the Set up row's explanation
                 const std::string &job_line = job;
                 std::string ex_d = "Copies the game files SkywardRecomp needs and recompiles the game from them. This only "
@@ -2406,7 +2405,6 @@ extern "C" void launcher_run(const char *root) {
                                          "SkywardRecomp applies it over the base game's .nsp, so the game files become 1.0.1. It is "
                                          "found by itself when it's in the game files folder; choose it here if it's somewhere else. "
                                          "Leave this empty for version 1.0.0.";
-                        if (!up.empty()) ud += "\n\nChosen: " + up;
                         static const SDL_DialogFileFilter nsp_f[] = {{"Switch package", "nsp"}, {"All files", "*"}};
                         std::string uv = up.empty() ? "Choose..." : "Selected";
                         if (busy) opt_disable_next();
@@ -2422,7 +2420,6 @@ extern "C" void launcher_run(const char *root) {
                                          "keys, dumped from your own console with Lockpick_RCM) that opens it. SkywardRecomp "
                                          "looks for it by itself next to the .nsp and where yuzu / Eden / Ryujinx keep it; "
                                          "choose it here if that didn't find it.";
-                        if (!kp.empty()) kd += "\n\nChosen: " + kp;
                         static const SDL_DialogFileFilter keys_f[] = {{"Switch keys", "keys"}, {"All files", "*"}};
                         std::string kv = kp.empty() ? "Choose..." : "Selected";
                         if (busy) opt_disable_next();
@@ -2600,6 +2597,28 @@ extern "C" void launcher_run(const char *root) {
                     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ew);
                     ImGui::TextColored(ImVec4(0.55f, 0.58f, 0.52f, 1), "%s", PICK_FOLDER_HINT);
                     ImGui::PopTextWrapPos();
+                // SKY-37: Level 3 diagnostics live here, never in the main flow.
+                ImGui::Dummy(ImVec2(0, 10 * sc));
+                if (ImGui::CollapsingHeader("Advanced details")) {
+                    char rel[64] = {0};
+                    const char *ver = game_release_label((g_root + "/exefs").c_str(), rel, sizeof rel);
+                    const ImVec4 dim_txt(0.55f, 0.58f, 0.52f, 1);
+                    const char *dash = "-";
+                    ImGui::PushTextWrapPos(0);
+                    ImGui::TextColored(dim_txt, "Game path\n%s", src.empty() ? dash : src.c_str());
+                    ImGui::TextColored(dim_txt, "Version\n%s", ver && ver[0] ? ver : dash);
+                    ImGui::TextColored(dim_txt, "ExeFS\n%s", g_root.empty() ? dash : (g_root + "/exefs").c_str());
+                    ImGui::TextColored(dim_txt, "RomFS\n%s", g_root.empty() ? dash : (g_root + "/romfs").c_str());
+                    if (!found.empty())
+                        ImGui::TextColored(dim_txt, "Detection\n%s", found.c_str());
+                    ImGui::TextColored(dim_txt, "Update\n%s", g_update_pick.empty() ? "None" : g_update_pick.c_str());
+                    ImGui::TextColored(dim_txt, "Validation\n%s", status.empty() ? "OK" : status.c_str());
+                    if (!g_keys_pick.empty())
+                        ImGui::TextColored(dim_txt, "Keys\n%s", g_keys_pick.c_str());
+                    ImGui::TextColored(dim_txt, "Config\n%s/skywardrecomp.ini", rt_data_root());
+                    ImGui::TextColored(dim_txt, "Log\n%s/skywardrecomp.log", rt_data_root());
+                    ImGui::PopTextWrapPos();
+                }
                     opt_split_end();
                 }
                 if (g_confirm_delete && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
