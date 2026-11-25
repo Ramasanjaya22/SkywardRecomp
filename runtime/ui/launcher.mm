@@ -334,6 +334,8 @@ static std::string g_found;         // what the picked folder holds, as game_fin
 static bool g_headless;             // launcher_prepare: no window, so no shader preparation (the game does it later)
 static std::string g_job;           // current setup step / result for the status line
 static std::string g_job_hint;      // a failure: what to do about it (shown under it)
+static std::string g_job_tech;      // a setup failure's raw reason (shown collapsed under "Technical details")
+static int g_job_kind;              // FAIL_* of the current failure, 0: none (it gets the Choose Another Folder button)
 static bool g_busy, g_job_failed;
 static bool g_exit_after_setup;  // (test: LARECOMP_LAUNCHER_EXTRACT)
 static bool g_confirm_delete;       // game-files page: "Delete the game files?" shown
@@ -397,39 +399,38 @@ static void set_job(const std::string &s, bool failed = false, const std::string
     g_job = s;
     g_job_failed = failed;
     g_job_hint = hint;
+    g_job_tech.clear(), g_job_kind = 0;
     pthread_mutex_unlock(&g_lock);
 }
 
 // (the not-found failure's hint, and the caption over the game files page's example folder)
 static const char *const PICK_FOLDER_HINT =
-    "Choose the folder with the game's exefs and romfs folders, or the .nsp package. "
-    "An NSP package needs an additional key file. The 1.0.1 update is optional.";
+    "Choose the folder with exefs and romfs, then press Set up game files.\n"
+    "A .nsp also needs prod.keys; the 1.0.1 update is optional.";
 
 // Setup failures: a short headline and what to do next (also LARECOMP_LAUNCHER_SHOT=<f>:fail<1-6>, screenshots)
 enum { FAIL_NOT_FOUND = 1, FAIL_UNUSABLE, FAIL_COPY, FAIL_VERSION, FAIL_MISSING, FAIL_BUILD };
 static void set_failure(int k, int have = -1, const char *reason = NULL, int want = 0) {
-    static const char *const head[] = {"", "No game files found in that folder", "Those are game packages, not game files",
-                                       "Setup didn't finish", WRONG_VERSION, "Your game files are incomplete",
-                                       "The game code didn't build"};
-    static const char *const hint[] = {
+    static const char *const head[] = {"", "No game files found", "Game files are packaged",
+                                       "Could not copy the game files", "Wrong game version", "Game files incomplete",
+                                       "Game code not built"};
+    // Each: why, then the next action. The raw reason goes to g_job_tech (the "Technical details" section), not in here.
+    static const std::string hint[] = {
         "",
-        PICK_FOLDER_HINT,
-        "SkywardRecomp needs the game's own files (the exefs and romfs folders), not .xci / .nsp / .nca files.",
-        "Make sure there's about 12 GB free and try again.",
-        "SkywardRecomp needs version 1.0.0 of the game, or 1.0.1 (the base game with its update package). Other versions aren't supported.",
-        "Some of the game's files are missing - usually a copy or unzip that stopped partway. Copy the game files "
-        "again so none are missing, then choose the folder again.",
-        "Make sure there's about 2 GB free and try again. If it keeps happening, report it on GitHub."};
+        "Why: no game files were found in that folder.\nNext: choose the folder with exefs and romfs (a .nsp also needs prod.keys).",
+        "Why: .xci, .nsp and .nca packages can't be read directly.\nNext: extract them into a folder and choose that folder.",
+        "Why: the files couldn't be written to the data folder.\nNext: check its free space and permissions, then try again.",
+        "Why: version 1.0.0 or 1.0.1 is required.\nNext: choose the base game together with its 1.0.1 update.",
+        "Why: some required files are missing.\nNext: choose the whole extracted game folder.",
+        "Why: the game code didn't compile.\nNext: see the .log files in the build folder inside the data folder, then try again."};
     if (k < 1 || k > 6) return;
-    if (k == FAIL_MISSING && have >= 0 && want) {
-        char b[320];
-        snprintf(b, sizeof b, "The romfs folder has %d of the game's %d files - some are missing, usually from a copy or "
-                 "unzip that stopped partway. Copy the game files again so none are missing, then choose the folder "
-                 "again.", have, want);
-        set_job(head[k], true, b);
-        return;
-    }
-    set_job(head[k], true, reason ? std::string(reason) + " " + hint[k] : hint[k]);
+    char b[64] = "";
+    if (k == FAIL_MISSING && have >= 0 && want) snprintf(b, sizeof b, "%d of %d romfs files are missing", have, want);
+    set_job(head[k], true, hint[k]);
+    pthread_mutex_lock(&g_lock);
+    g_job_kind = k;
+    g_job_tech = reason ? reason : b;
+    pthread_mutex_unlock(&g_lock);
 }
 
 // What the picked folder holds (runtime/game_find.c): the extracted game files (exefs + romfs folders) or a base-game .nsp, found
@@ -947,7 +948,7 @@ extern "C" int launcher_prepare(const char *root, const char *game, const char *
     if (g_job_failed && !changed) {
         fprintf(out, "%s. %s\n", g_job.c_str(), g_job_hint.c_str());
         fflush(out);
-        fprintf(stderr, "[launcher] prepare failed: %s. %s\n", g_job.c_str(), g_job_hint.c_str());
+        fprintf(stderr, "[launcher] prepare failed: %s. %s [%s]\n", g_job.c_str(), g_job_hint.c_str(), g_job_tech.c_str());
         return 1;
     }
     fprintf(out, "progress 1 %s\n", changed ? CHANGED_HEAD : "Game files ready");
@@ -2714,8 +2715,9 @@ extern "C" void launcher_run(const char *root) {
                 ImGui::Spacing();
 
                 pthread_mutex_lock(&g_lock);
-                std::string src = g_src, job = g_job, job_hint = g_job_hint, found = g_found;
+                std::string src = g_src, job = g_job, job_hint = g_job_hint, found = g_found, job_tech = g_job_tech;
                 bool failed = g_job_failed;
+                int job_kind = g_job_kind;
                 pthread_mutex_unlock(&g_lock);
                 bool ready = status.empty() && !busy;  // (set up: the window offers to delete them)
                 static double files_gb = -1;
@@ -2918,6 +2920,16 @@ extern "C" void launcher_run(const char *root) {
                                               : ImVec4(0.45f, 0.95f, 0.55f, 1), "%s", job_line.c_str());
                     if (failed && !job_hint.empty())  // (what to do next, in the rows' own text colour)
                         ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), "%s", job_hint.c_str());
+                    if (failed && job_kind && !busy) {  // a setup failure: one primary action, the raw reason collapsed
+                        ImGui::Dummy(ImVec2(0, 6 * sc));
+                        // (the same picker as the Game files folder row; no new modal)
+                        if (ImGui::Button("Choose Another Folder")) SDL_ShowOpenFolderDialog(picked, NULL, win, NULL, false);
+                        if (!job_tech.empty()) {
+                            ImGui::Dummy(ImVec2(0, 4 * sc));
+                            if (ImGui::CollapsingHeader("Technical details"))  // (collapsed by default)
+                                ImGui::TextColored(ImVec4(0.65f, 0.66f, 0.62f, 1), "%s", job_tech.c_str());
+                        }
+                    }
                     ImGui::PopTextWrapPos();
                 } else if (!busy && !status.empty() && status != "No game files yet") {
                     // (no setup run yet this session: why the game files on disk can't be played - an incomplete copy
