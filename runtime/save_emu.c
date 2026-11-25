@@ -2,10 +2,19 @@
 #include "platform.h"
 
 #include <dirent.h>
+#include <errno.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
+
+#include "paths.h"
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #define SAVE_EMU_FILE "wiiking2.sav"
 /* Only Skyward Sword HD 1.0.0 is supported; its title id is fixed here. */
@@ -271,4 +280,222 @@ bool save_emu_running(char *display, size_t n)
         }
     }
     return false;
+}
+
+static bool export_fail(char *why, size_t cap, const char *fmt, ...)
+{
+    if (why && cap) {
+        va_list ap;
+        va_start(ap, fmt);
+        vsnprintf(why, cap, fmt, ap);
+        va_end(ap);
+    }
+    return false;
+}
+
+static bool export_exists(const char *p)
+{
+    struct stat st;
+    return stat(p, &st) == 0;
+}
+
+static bool export_is_dir(const char *p)
+{
+    struct stat st;
+    return stat(p, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static bool export_is_link(const char *p)
+{
+#ifdef _WIN32
+    DWORD a = GetFileAttributesA(p);
+    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_REPARSE_POINT);
+#else
+    struct stat st;
+    return lstat(p, &st) == 0 && S_ISLNK(st.st_mode);
+#endif
+}
+
+static void export_mkdirs(const char *path)
+{
+    char p[1100];
+    size_t i;
+
+    snprintf(p, sizeof p, "%s", path);
+    for (i = 1; p[i]; ++i) {
+        if (p[i] == '/' || p[i] == '\\') {
+            char s = p[i];
+            p[i] = 0;
+            mkdir(p, 0755);
+            p[i] = s;
+        }
+    }
+    mkdir(p, 0755);
+}
+
+static bool export_copy_file(const char *src, const char *dst, char *why, size_t cap)
+{
+    char buf[1 << 16];
+    size_t k;
+    FILE *in = fopen(src, "rb");
+    FILE *out;
+
+    if (!in) return export_fail(why, cap, "Couldn't read the save (%s).", strerror(errno));
+    out = fopen(dst, "wb");
+    if (!out) {
+        fclose(in);
+        return export_fail(why, cap, "Couldn't write the save (%s).", strerror(errno));
+    }
+    while ((k = fread(buf, 1, sizeof buf, in)) > 0) {
+        if (fwrite(buf, 1, k, out) != k) {
+            fclose(in);
+            fclose(out);
+            return export_fail(why, cap, "Couldn't write the save (%s).", strerror(errno));
+        }
+    }
+    bool bad = ferror(in);
+    if (fclose(in) != 0) bad = true;
+    if (fclose(out) != 0) bad = true;
+    if (bad) return export_fail(why, cap, "Couldn't copy the save (%s).", strerror(errno));
+    return true;
+}
+
+static bool export_copy_saves(const char *from, const char *to, char *why, size_t cap)
+{
+    static const char *names[] = {
+        SAVE_EMU_FILE, "skip.dat", "0.screenshot", "1.screenshot",
+        "2.screenshot", "3.screenshot"
+    };
+    char src[1100], dst[1100];
+    size_t i;
+
+    for (i = 0; i < sizeof names / sizeof names[0]; ++i) {
+        struct stat st;
+        join(src, sizeof src, from, names[i]);
+        if (stat(src, &st) != 0 || !S_ISREG(st.st_mode)) continue;
+        if (export_is_link(src))
+            return export_fail(why, cap, "%s is a link, not a save file.", names[i]);
+        if (st.st_size > (4ULL << 20))
+            return export_fail(why, cap, "%s is too big to be a save file.", names[i]);
+        join(dst, sizeof dst, to, names[i]);
+        export_mkdirs(to);
+        if (!export_copy_file(src, dst, why, cap)) return false;
+    }
+    return true;
+}
+
+static void export_safe_name(char *out, size_t n, const char *emu)
+{
+    size_t i = 0;
+
+    for (; emu && *emu && i + 1 < n; ++emu) {
+        char c = *emu;
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_') out[i++] = c;
+        else out[i++] = '_';
+    }
+    out[i] = 0;
+    if (!i) snprintf(out, n, "folder");
+}
+
+bool save_emu_export(const char *root, const char *dst, const char *emu,
+                     char *backup_out, size_t bn, char *why, size_t cap)
+{
+    char live[1100], save[1100], partial[1100], final[1100], name[128], safe[64];
+    char sub[1100], sibling[1100], old[1100], fresh[1100];
+    const char *base, *bs;
+    bool has_sibling = false;
+    time_t t;
+
+    if (why && cap) why[0] = 0;
+    if (backup_out && bn) backup_out[0] = 0;
+    if (!root || !dst || !emu)
+        return export_fail(why, cap, "No save of the game there: start it once in the emulator and save.");
+
+    join(live, sizeof live, root, "save/save_0");
+    join(save, sizeof save, live, SAVE_EMU_FILE);
+    if (!export_exists(save))
+        return export_fail(why, cap, "No save of the game there: start it once in the emulator and save.");
+    join(save, sizeof save, dst, SAVE_EMU_FILE);
+    if (!export_exists(save))
+        return export_fail(why, cap, "No save of the game there: start it once in the emulator and save.");
+
+    export_safe_name(safe, sizeof safe, emu);
+    t = time(NULL);
+    for (;; ++t) {
+        const struct tm *lt = localtime(&t);
+        if (lt) {
+            snprintf(name, sizeof name, "export-%s-%04d%02d%02d-%02d%02d%02d", safe,
+                     lt->tm_year + 1900, lt->tm_mon + 1, lt->tm_mday,
+                     lt->tm_hour, lt->tm_min, lt->tm_sec);
+        } else {
+            snprintf(name, sizeof name, "export-%s-00000000-000000", safe);
+        }
+        snprintf(partial, sizeof partial, "%s/backups/%s.partial", root, name);
+        snprintf(final, sizeof final, "%s/backups/%s", root, name);
+        if (!export_exists(partial) && !export_exists(final)) break;
+    }
+
+    bs = strrchr(dst, '/');
+    base = strrchr(dst, '\\');
+    if (bs > base) base = bs;
+    if (base && !strcmp(base + 1, "0")) {
+        snprintf(sibling, sizeof sibling, "%.*s/1", (int)(base - dst), dst);
+        has_sibling = export_exists(sibling) && export_is_dir(sibling);
+    }
+
+    export_mkdirs(partial);
+    join(sub, sizeof sub, partial, base && base[1] ? base + 1 : "save");
+    export_mkdirs(sub);
+    if (!export_copy_saves(dst, sub, why, cap)) {
+        plat_remove_tree(partial);
+        return false;
+    }
+    if (has_sibling) {
+        join(sub, sizeof sub, partial, "1");
+        export_mkdirs(sub);
+        if (!export_copy_saves(sibling, sub, why, cap)) {
+            plat_remove_tree(partial);
+            return false;
+        }
+    }
+    if (rename(partial, final) != 0) {
+        export_fail(why, cap, "Couldn't finish the backup (%s).", strerror(errno));
+        plat_remove_tree(partial);
+        return false;
+    }
+
+    snprintf(fresh, sizeof fresh, "%s.skyrecomp-new", dst);
+    snprintf(old, sizeof old, "%s.skyrecomp-old", dst);
+    plat_remove_tree(fresh);
+    export_mkdirs(fresh);
+    // Keep the emulator's other files: only the save files are overwritten.
+    if (export_is_dir(dst) && !rt_copy_tree(dst, fresh, why, cap)) {
+        plat_remove_tree(fresh);
+        return false;
+    }
+    if (!export_copy_saves(live, fresh, why, cap)) {
+        plat_remove_tree(fresh);
+        return false;
+    }
+
+    plat_remove_tree(old);
+    if (rename(dst, old) != 0) {
+        export_fail(why, cap, "Couldn't replace the emulator's save: a file is in use (is the emulator running?) (%s).", strerror(errno));
+        plat_remove_tree(fresh);
+        return false;
+    }
+    if (rename(fresh, dst) != 0) {
+        export_fail(why, cap, "Couldn't put the save in place (%s).", strerror(errno));
+        if (rename(old, dst) != 0)
+            export_fail(why, cap, "Couldn't put the old save back (%s).", strerror(errno));
+        plat_remove_tree(fresh);
+        return false;
+    }
+    plat_remove_tree(old);
+    // Ryujinx rebuilds 1/ from 0/ when it mounts the save.
+    if (has_sibling) plat_remove_tree(sibling);
+
+    if (backup_out && bn) snprintf(backup_out, bn, "%s", final);
+    return true;
 }

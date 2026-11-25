@@ -49,6 +49,10 @@ int main(int argc, char **argv) {
     } else if (!strcmp(cmd, "update") && argc > 3) {
         bool ok = save_backup_on_update(root, argv[3], name, sizeof name);
         printf("UPDATE %d %s|\n", ok, name);
+    } else if (!strcmp(cmd, "emu-export") && argc > 4) {
+        char backup[1100] = "";
+        bool ok = save_emu_export(root, argv[3], argv[4], backup, sizeof backup, why, sizeof why);
+        printf("EXPORT %d|%s|%s\n", ok ? 1 : 0, backup, why);
     } else if (!strcmp(cmd, "emu-list")) {
         SaveEmuHit hits[64];
         int n = save_emu_find(hits, 64);

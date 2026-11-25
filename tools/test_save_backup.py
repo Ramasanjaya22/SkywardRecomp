@@ -230,3 +230,32 @@ with tempfile.TemporaryDirectory() as directory:
     assert run('running', 'no-such-process-zq')[0].startswith('RUNNING 0|'), 'bogus process found'
     print('process check: own process found, a missing one not')
 
+    # export: Ryujinx's save replaced, the old one backed up, its working folder 1/ backed up and removed
+    rsave = ryu / 'bis/user/save/0000000000000005/0'
+    old = (rsave / 'wiiking2.sav').read_bytes()
+    mine = (data / W).read_bytes()
+    put(rsave.parent / '1', 'wiiking2.sav', b'working')
+    put(data, 'save/save_0/wiiking2.sav.pending', b'junk')
+    r = run('emu-export', rsave, 'ryujinx')[0]
+    ok, why = ok_of(r, 'EXPORT')
+    assert ok, why
+    assert (rsave / 'wiiking2.sav').read_bytes() == mine and not (rsave / 'wiiking2.sav.pending').exists()
+    assert (rsave / '2.screenshot').read_bytes() == b'' and not (rsave.parent / '1').exists()
+    bk = [p for p in (data / 'backups').glob('export-ryujinx-*') if p.is_dir()]
+    assert len(bk) == 1 and (bk[0] / '0/wiiking2.sav').read_bytes() == old and (bk[0] / '1/wiiking2.sav').exists()
+    assert not list(rsave.parent.glob('*skyrecomp-*'))
+    # a folder with no save is refused, nothing made
+    ok, why = ok_of(run('emu-export', S / 'nowhere', 'eden')[0], 'EXPORT')
+    assert not ok and why and not (S / 'nowhere').exists()
+    # Windows: a file open in the target -> refused, target untouched, no leftovers
+    if os.name == 'nt':
+        esave = base / 'eden/nand/user/save/0000000000000000/AAAA/' / T
+        before = files(esave, '.')
+        with open(esave / 'wiiking2.sav', 'rb'):
+            ok, why = ok_of(run('emu-export', esave, 'eden')[0], 'EXPORT')
+            assert not ok and why, 'export with a file open should fail'
+            assert files(esave, '.') == before and not list(esave.parent.glob('*skyrecomp-*'))
+        print('export: replaced with a backup first; Ryujinx 1/ handled; missing target and file in use refused cleanly')
+    else:
+        print('export: replaced with a backup first; Ryujinx 1/ handled; missing target refused')
+
