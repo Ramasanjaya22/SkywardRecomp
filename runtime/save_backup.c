@@ -152,7 +152,8 @@ static bool create(const char *root, bool autom, char *name_out, size_t n, char 
         return fail(why, cap, "Couldn't finish the backup (%s).", strerror(errno));
     }
     if (n) snprintf(name_out, n, "%s", name);
-    if (!autom) prune(root, NULL);  // (an auto one is pruned after the swap: its source may be the oldest)
+    // (the new one kept: a clock set back, or backups made faster than one a second, can leave it the oldest name)
+    if (!autom) prune(root, name);  // (an auto one is pruned after the swap: its source may be the oldest)
     return true;
 }
 
@@ -169,8 +170,10 @@ bool save_backup_on_update(const char *root, const char *version, char *name_out
     if (f) { have[fread(have, 1, sizeof have - 1, f)] = 0; fclose(f); }
     if (!strcmp(have, version)) return false;
     // (no file: a first run, or an update from a build that didn't write it - a backup either way, when there are saves)
-    bool made = create(root, true, name_out, n, why, sizeof why) && (!n || name_out[0]);
-    if (made) prune(root, NULL);
+    char name[64];
+    bool made = create(root, true, name, sizeof name, why, sizeof why) && name[0];
+    if (made) prune(root, name);  // (the new one kept, as in create)
+    if (n) snprintf(name_out, n, "%s", made ? name : "");
     parent_dirs(path);
     if ((f = fopen(path, "wb"))) { fputs(version, f); fclose(f); }
     return made;
