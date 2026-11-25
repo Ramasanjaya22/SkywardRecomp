@@ -223,6 +223,7 @@ int main(int argc, char **argv) {
     const char *nl = getenv("LARECOMP_NO_LAUNCHER");
     bool no_launcher = nl && *nl && strcmp(nl, "0");
     bool skip_launcher = no_launcher || getenv("LARECOMP_INPUT");  // tests boot straight in
+    if (g_settings.skip_launcher) skip_launcher = true; // Saved menu toggle; --play and env still apply.
     if (getenv("LARECOMP_FORCE_LAUNCHER")) skip_launcher = false;  // (test: the start screen, then the scripted input)
     static char arg_root[1024];
     for (int i = 1; i < argc; i++) {

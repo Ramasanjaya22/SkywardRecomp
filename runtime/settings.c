@@ -32,6 +32,7 @@ Settings g_settings = {
     .reverb = true,
     .movie_audio = true,
     .rumble = true,
+    .skip_launcher = false,
     .rumble_strength = 100,
     .controller_light = true,
     .menu_confirm = MENU_CONFIRM_CONTROLLER,
@@ -201,6 +202,7 @@ void settings_load(void) {
         else if (!strcmp(key, "zr_attack")) g_settings.zr_attack = atoi(val) != 0;
         else if (!strcmp(key, "free_cam_sens")) g_settings.free_cam_sens = (float)atof(val);
         else if (!strcmp(key, "rumble")) g_settings.rumble = atoi(val) != 0;
+    else if (!strcmp(key, "skip_launcher")) g_settings.skip_launcher = atoi(val) != 0;
         else if (!strcmp(key, "rumble_strength")) g_settings.rumble_strength = atoi(val);
         else if (!strcmp(key, "controller_light")) g_settings.controller_light = atoi(val) != 0;
         else if (!strcmp(key, "background_input")) g_settings.bg_input = atoi(val) != 0;
@@ -296,6 +298,7 @@ void settings_save(void) {
     fprintf(f, "zr_attack = %d\n", g_settings.zr_attack);
     fprintf(f, "free_cam_sens = %.2f\n", g_settings.free_cam_sens);
     fprintf(f, "rumble = %d\n", g_settings.rumble);
+    fprintf(f, "skip_launcher = %d\n", g_settings.skip_launcher);
     fprintf(f, "rumble_strength = %d\n", g_settings.rumble_strength);
     fprintf(f, "controller_light = %d\n", g_settings.controller_light);
     fprintf(f, "background_input = %d\n", g_settings.bg_input);

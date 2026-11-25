@@ -421,6 +421,10 @@ static void tab_display(void) {
         g_settings.fullscreen = fs;
         g_want_fullscreen_apply.store(true);
     }
+    if (opt_toggle("Skip start screen", &g_settings.skip_launcher, false,
+                   "Start the game directly on launch.")) {
+        settings_save();
+    }
     opt_toggle("Show FPS", &g_settings.show_fps, false, "Shows the frame rate in the top right corner.");
     {   // display order -> FPS_* (settings.h)
         static const char *fps[] = {"Auto", "30", "60", "90 (experimental)", "120 (experimental)", "Unlocked (experimental)"};

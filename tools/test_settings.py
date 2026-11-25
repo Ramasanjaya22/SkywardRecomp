@@ -134,4 +134,14 @@ with tempfile.TemporaryDirectory() as directory:
         saved = ini.read_text()
         assert (f'rando_options = {value}\n' in saved) if value else 'rando_options' not in saved, saved
         count += 1
+    # Skip start screen: persisted bool round-trips, defaults off.
+    ini = directory / 'test.ini'
+    for desired, expected in [([], '0'), (['skip_launcher = 1'], '1')]:
+        ini.write_text(''.join(line + chr(10) for line in desired))
+        subprocess.run([str(exe), 'skip-launcher', expected],
+                       env=dict(os.environ, LARECOMP_SETTINGS=str(ini)),
+                       check=True, capture_output=True)
+        assert 'skip_launcher = ' + expected + chr(10) in ini.read_text(), ini.read_text()
+        count += 1
+
     print(f'{count} parser, locale, upscaler / resolution default and roundtrip cases passed (LF/CRLF, empty/nonempty seeds)')

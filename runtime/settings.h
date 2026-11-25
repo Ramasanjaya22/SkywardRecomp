@@ -52,6 +52,7 @@ typedef struct {
     bool zr_attack;      // a ZR tap jabs with the sword (runtime/hle/zr_tap.h)
     float free_cam_sens; /* camera-only right-stick scale, 0.25..2.0 */
     bool rumble;         // controller vibration from the game (runtime/hle/input.c)
+    bool skip_launcher; // Skip the start screen on launch; menu toggle restores it.
     int rumble_strength; // its intensity, percent (25 / 50 / 75 / 100)
     bool controller_light; // the controller's light bar shows Link's health (runtime/led.h, hle/input.c)
     bool bg_input;       // controllers keep working while the window isn't in front (SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS)
