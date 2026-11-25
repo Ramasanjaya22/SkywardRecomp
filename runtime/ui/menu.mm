@@ -733,8 +733,9 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float), void 
     if (prelaunch) tabs[ntabs++] = {"Prelaunch", -1, true};
     static const char *names[] = {"Video", "Audio", "Save Editor", "Randomizer", "Warp", "Cheats", "Gameplay",
                                   "Cosmetics", "Controls", "Quit", "Saves", "Mods"};
-    static const int order[] = {8, 0, 11, 1, 6, 10, 9};  // Controls, Video, Mods, Audio, Gameplay, Saves, Quit (ids stay: test hooks;
-                                                          // LA tabs 2-5 and 7 Cosmetics hidden: they read LA state)
+    static const int order[] = {8, 0, 1, 6, 10, 9};  // Controls, Video, Audio, Gameplay, Saves, Quit (ids stay: test hooks;
+                                                     // LA tabs 2-5 and 7 Cosmetics hidden: they read LA state; Mods hidden
+                                                     // until SKY-45: it is an empty shell)
     for (int i : order)  // (Quit and Mods: in game only - the start screen has its own QUIT, and a tab too many cut names short)
         if ((i != 9 && i != 11) || !prelaunch) tabs[ntabs++] = {names[i], i, true};
     int cur = 0;  // g_tab / g_tab_request hold ids

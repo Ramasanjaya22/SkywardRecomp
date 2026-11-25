@@ -1,5 +1,5 @@
 // Start screen, shown before the game boots (user 2026-10-08, styled after Dusklight's launcher): PLAY (with
-// ‹ Vanilla / seed › picker), SETTINGS, QUIT, game-files status at the lower left. Nothing of the game ships with
+// PLAY, SETTINGS, GAME FILES, SAVE DATA, QUIT, game-files status at the lower left. Nothing of the game ships with
 // SkywardRecomp: on first launch the user picks the folder with their own game files (1.0.0, or 1.0.1 with its update package), we check
 // the main module's build id (runtime/game_addresses/versions.h), copy the files and build the game's data image; PLAY stays disabled until that worked. The background is a frame of the game's own title movie (from the user's files) once extracted.
 //
@@ -1669,29 +1669,6 @@ static bool draw_home_primary(const char *label, float s, bool *hovered, bool en
     return clicked;
 }
 
-// Vanilla / seed stays reachable, but as a line under the button rather than another menu row.
-static int draw_home_seed(float s, float center_x, const std::vector<std::string> &choices, int choice) {
-    if (choices.empty()) return 0;
-    const char *lt = "\xe2\x80\xb9", *rt = "\xe2\x80\xba";
-    std::string line = std::string(lt) + "  " + choices[choice] + "  " + rt;
-    ImGui::PushFont(g_font_small);
-    ImVec2 size = ImGui::CalcTextSize(line.c_str());
-    ImVec2 at(center_x - size.x * 0.5f, ImGui::GetCursorScreenPos().y);
-    ImGui::SetCursorScreenPos(at);
-    ImGui::TextColored(PAL_TEXT2_V4, "%s", line.c_str());
-    ImVec2 lsz = ImGui::CalcTextSize(lt), rsz = ImGui::CalcTextSize(rt);
-    float lx = at.x, rx = at.x + size.x - rsz.x, pad = 10 * s;
-    ImVec2 m = ImGui::GetIO().MousePos;
-    int arrow = 0;
-    if (m.y >= at.y - pad && m.y <= at.y + size.y + pad) {
-        if (m.x >= lx - pad && m.x <= lx + lsz.x + pad) arrow = -1;
-        else if (m.x >= rx - pad && m.x <= rx + rsz.x + pad) arrow = 1;
-    }
-    ImGui::SetCursorScreenPos(ImVec2(at.x, at.y + size.y));
-    ImGui::PopFont();
-    return arrow;
-}
-
 // Controllers, as in the in-game menu (runtime/ui/menu.mm): read straight from SDL, confirm / back as the Confirm
 // button setting says (pad_nav.h: the game's layout, or the controller's convention); d-pad / left stick move.
 // (ImGui's own SDL gamepad handling is switched off: per the user, it didn't work on the start screen.)
@@ -2745,18 +2722,6 @@ extern "C" void launcher_run(const char *root) {
                 ImGui::SetCursorPosX(x0);
                 bool pressed = draw_home_primary(action, s, &hov, !busy);
 
-                int arrow = 0;
-                if (ready) {
-                    ImGui::SetCursorPos(ImVec2(x0, ImGui::GetCursorPos().y + 8 * s));
-                    ImGui::PushFont(g_font_menu);
-                    float bw = std::max(360 * s, ImGui::CalcTextSize(action).x + 60 * s);
-                    ImGui::PopFont();
-                    arrow = draw_home_seed(s, x0 + bw * 0.5f, choices, choice);
-                }
-                if (pressed && arrow && ImGui::IsMouseReleased(0)) {  // a mouse click on an arrow: cycle
-                    choice = (choice + arrow + (int)choices.size()) % (int)choices.size();
-                    pressed = false;
-                }
                 if (g_play_pending && ready) pressed = true, g_play_pending = false;
                 // first PLAY ever: the aspect ratio question, then how to reach our menu, then the game
                 if (pressed && ready) {
@@ -2772,17 +2737,6 @@ extern "C" void launcher_run(const char *root) {
                     else ImGui::OpenPopup("##menutip");
                 }
                 if (menu_tip(s)) play = true;
-                if (hov && ready) {
-                    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft))
-                        choice = (choice + (int)choices.size() - 1) % (int)choices.size();
-                    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight))
-                        choice = (choice + 1) % (int)choices.size();
-                    // left / right are ours while the action is selected: ImGui's navigation would otherwise
-                    // take them too, and scroll the window (the button loses its highlight, the cycling stops)
-                    ImGuiID own = ImGui::GetID("##play_lr");
-                    for (ImGuiKey k : {ImGuiKey_LeftArrow, ImGuiKey_RightArrow, ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight})
-                        ImGui::SetKeyOwner(k, own);
-                }
 
                 // Secondary navigation: one small row, still keyboard and gamepad reachable. Each item starts where
                 // the one before ends (measured), so a long update label can never run into QUIT.
@@ -2804,8 +2758,6 @@ extern "C" void launcher_run(const char *root) {
                     opened = true;
                     page = SETTINGS;
                 }
-                if (g_refocus == MODS) { ImGui::SetKeyboardFocusHere(), g_refocus = MAIN; }  // (back from Mods)
-                if (link("MODS", true)) page = MODS;  // (UI shell: the HTTP layer fills it in SKY-45)
                 if (ready) {
                     if (g_refocus == SETUP) { ImGui::SetKeyboardFocusHere(), g_refocus = MAIN; }
                     if (link("GAME FILES", !busy)) page = SETUP;
