@@ -71,7 +71,17 @@ float rt_frame_timestep(float game_value) {
     // A target the machine can't keep (frames slower than 1 s / target) must not play in slow motion: the world
     // advances by the time that passed, never less than the target's step (Unlocked: 1/8, its floor).
     float lo = t > 0 ? 30.0f / (float)t : 0.125f;
-    return frame_step = s < lo ? lo : s > 1.0f ? 1.0f : s;
+    // A frame over one step (a stall) gives one step, the game's own longest; the rest is carried and handed out on
+    // the next frames, each still at most one step, so the world catches up with the time that passed. Dropped, the
+    // in-engine cutscenes fall behind their streamed sound for good (SKY-40; Longshot's hos_movie_frames, same idea).
+    // Over 2 s (a load) nothing is carried: there is nothing to keep in step with.
+    static float behind;
+    if (dt > 2000000000ull) behind = 0;
+    else if (s > 1.0f) behind += s - 1.0f, s = 1.0f;
+    if (s < lo) s = lo;
+    float pay = behind < 1.0f - s ? behind : 1.0f - s;
+    if (pay > 0) behind -= pay, s += pay;
+    return frame_step = s > 1.0f ? 1.0f : s;
 }
 
 // the frame period in ms the controller stores next (FRAME_TIMESTEP + 4): its readers add rate x period every frame,
