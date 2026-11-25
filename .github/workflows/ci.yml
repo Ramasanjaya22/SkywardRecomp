@@ -46,6 +46,8 @@ jobs:
           build/test-condvar
       - name: Settings regression tests
         run: python3 tools/test_settings.py
+      - name: Settings keys frozen
+        run: python3 tools/test_settings_keys.py
       - name: Game-files delete guard (links, outside the data folder)
         run: DEPS="/opt/sdl3" python3 tools/test_delete_guard.py
       - name: Game-file detection (the right .nsp among unrelated, update, DLC and damaged files)
