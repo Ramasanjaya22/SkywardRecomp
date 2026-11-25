@@ -148,7 +148,10 @@ all: $(EXE) $(if $(GEN_SRC),$(GAMELIB)) tools-venv
 # complete, so the extractor never stops on a missing package (cryptography: the 1.0.1 update .nsp). Creates the venv
 # when missing; never fails the build (the start screen then says what to install).
 ifeq ($(PLATFORM),windows)
-TOOLS_PY ?= $(or $(wildcard $(HOME)/AppData/Local/Programs/Python/Python312/python.exe),python)
+# (the python.org Python: it has the wheels, e.g. cryptography. MSYS's own python builds them from source and hangs. Not
+# $(HOME) alone: under MSYS make that is /home/<user> and LOCALAPPDATA may be unset, so the lookup missed and the venv
+# came from MSYS python.)
+TOOLS_PY ?= $(or $(firstword $(wildcard $(subst \,/,$(LOCALAPPDATA))/Programs/Python/Python3*/python.exe /c/Users/$(notdir $(HOME))/AppData/Local/Programs/Python/Python3*/python.exe)),python)
 else
 TOOLS_PY ?= python3
 endif

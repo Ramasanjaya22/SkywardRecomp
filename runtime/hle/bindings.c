@@ -7,6 +7,8 @@
 
 #include "../hle.h"
 #include "../input_bind.h"
+#include "../kbm_preset.h"
+#include "../settings.h"
 
 _Static_assert(PADB_LTRIGGER == SDL_GAMEPAD_BUTTON_COUNT, "trigger pseudo-buttons follow SDL's buttons");
 
@@ -102,6 +104,14 @@ void bind_reset(int dev) {
     result(5, dev, -1, -1);
 }
 
+void bind_apply_kbm_preset(void) {
+    memcpy(g_bind_key, k_kbm_key, sizeof g_bind_key);
+    g_settings.mouse_camera = g_settings.mouse_combat = g_settings.free_cam = true;
+    settings_save();
+    LOG("[input] keyboard bindings set to the Keyboard + Mouse preset\n");
+    result(5, BIND_DEV_KEY, -1, -1);
+}
+
 bool bind_is_default(int dev) {
     return dev == BIND_DEV_PAD ? !memcmp(g_bind_pad, k_def_pad, sizeof g_bind_pad) : !memcmp(g_bind_key, k_def_key, sizeof g_bind_key);
 }
@@ -111,6 +121,21 @@ bool bind_is_default_slot(int dev, int slot) {
 }
 
 int bind_prompt_host(int slot) { return slot >= 0 && slot < BIND_PAD_COUNT ? g_bind_pad[slot] : -1; }
+
+// The key a prompt shows while the keyboard / mouse is the last input: the key bound to that Switch input (NULL: its
+// controller label, as before). Long SDL names get the short words a glyph has room for.
+const char *bind_prompt_key(int slot) {
+    static const struct { const char *name, *shown; } shorter[] = {
+        {"Left Shift", "Shift"}, {"Right Shift", "Shift"}, {"Left Ctrl", "Ctrl"}, {"Right Ctrl", "Ctrl"},
+        {"Left Alt", "Alt"}, {"Right Alt", "Alt"}, {"Escape", "Esc"}, {"Return", "Enter"}};
+    if (!input_kbm_last() || slot < 0 || slot >= BIND_KEY_COUNT) return NULL;
+    if (g_bind_key[slot] <= 0 || g_bind_key[slot] >= SDL_SCANCODE_COUNT) return NULL;
+    const char *n = SDL_GetScancodeName((SDL_Scancode)g_bind_key[slot]);
+    if (!n || !*n) return NULL;
+    for (unsigned i = 0; i < sizeof shorter / sizeof *shorter; i++)
+        if (!strcmp(n, shorter[i].name)) return shorter[i].shown;
+    return n;
+}
 
 // ------------------------------------------------------------------ capture
 static _Atomic int cap_dev = -1, cap_slot = -1;

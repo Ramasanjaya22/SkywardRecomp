@@ -106,6 +106,22 @@ int main(void) {
     rt_frame_timestep(0.5f);
     CHECK(NEAR(rt_frame_period(16.666667f), 10.0f));
 
+    // a fixed target's frames slower than its period: the time that really passed (real speed, not slow motion)
+    g_settings.fps_target = FPS_60;
+    rt_frame_timestep(0.5f);
+    t_ns += 20000000ull;  // 20 ms
+    CHECK(NEAR(rt_frame_timestep(0.5f), 0.6f));
+    g_settings.fps_target = FPS_120;  // a 60 Hz display: 16.7 ms frames under a 120 target
+    rt_frame_timestep(0.5f);
+    t_ns += 16666667ull;
+    CHECK(NEAR(rt_frame_timestep(0.5f), 0.5f));
+    t_ns += 4000000ull;  // 4 ms: faster than the target's frame, so the target's step
+    CHECK(NEAR(rt_frame_timestep(0.5f), 0.25f));
+    g_settings.fps_target = FPS_90;  // 33 ms frames: the real 1/30 s step
+    rt_frame_timestep(0.5f);
+    t_ns += 33333333ull;
+    CHECK(NEAR(rt_frame_timestep(0.5f), 1.0f));
+
     g_settings.fps_target = FPS_120;  // a version without the controller site: Auto
     ga.FRAME_CTRL_INTERVAL_SITE = 0;
     CHECK(rt_fps_target() == FPS_AUTO);

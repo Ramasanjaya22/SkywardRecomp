@@ -1642,6 +1642,12 @@ void backend_quit(void) {
     }
 }
 
+static void mouse_mode_sync(void) {  // relative mouse mode while the mouse steers the game (runtime/hle/input.c)
+    static bool rel;
+    bool want = input_mouse_captured();
+    if (want != rel && SDL_SetWindowRelativeMouseMode(window, want)) rel = want;  // (a failed call retries next poll)
+}
+
 int ui_run(void) {
     // The emulated vsync/timer threads need precise sleeps; App Nap timer coalescing
     // otherwise stretches 16ms sleeps to ~100ms whenever the window isn't frontmost.
@@ -1656,6 +1662,7 @@ int ui_run(void) {
         if (rt_reboot_requested()) return rt_reboot_requested();  // (runtime/main.c tears the game down)
         SDL_Event e;
         while (SDL_WaitEventTimeout(&e, 16)) {
+            mouse_mode_sync();  // (also here: a steady stream of mouse motion keeps the loop out of the timeout)
             input_rumble_poll();
             if (e.type == SDL_EVENT_QUIT) { input_rumble_stop(); input_led_stop(); LOG("window closed\n"); backend_quit(); exit(0); }
             if (input_user_blocked(&e)) continue;  // scripted test runs: the real keyboard / mouse / pads do nothing
@@ -1663,6 +1670,7 @@ int ui_run(void) {
             if (menu_handle_event(&e)) continue;
             input_handle_event(&e);
         }
+        mouse_mode_sync();
         menu_apply_window_requests(window);
         input_rumble_poll();
         input_led_poll();

@@ -412,7 +412,7 @@ static void tab_display(void) {
                        "Auto: the game's own choice (60, or 30 when frames don't fit). 30 / 60: held there. 90 / 120: "
                        "faster than the Switch, for high refresh displays. Unlocked: as fast as your PC runs, up to 240. "
                        "Experimental: some game systems may not keep their speed. Over your "
-                       "display's refresh rate the image can tear. At 60-120, a PC that can't keep up runs the game slower.", false))
+                       "display's refresh rate the image can tear. At 60-120, a PC that can't keep up shows fewer frames, at the game's real speed.", false))
             g_settings.fps_target = fps_value[fi];
     }
     opt_toggle("Free camera look", &g_settings.free_cam, false, "Move the camera with the right stick without holding L. Tap L to switch it on/off for this session.");

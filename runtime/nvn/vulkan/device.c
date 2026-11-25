@@ -1370,6 +1370,12 @@ void backend_clear_window(void) {
     if (g_vk.dev && vk_frame_begin(black)) vk_frame_end(NULL);
 }
 
+static void mouse_mode_sync(void) {  // relative mouse mode while the mouse steers the game (runtime/hle/input.c)
+    static bool rel;
+    bool want = input_mouse_captured();
+    if (want != rel && SDL_SetWindowRelativeMouseMode(window, want)) rel = want;  // (a failed call retries next poll)
+}
+
 int ui_run(void) {
     ui_window_init();
     atomic_store(&ui_ready, true);
@@ -1377,6 +1383,7 @@ int ui_run(void) {
         if (rt_reboot_requested()) return rt_reboot_requested();  // (runtime/main.c tears the game down)
         SDL_Event e;
         while (SDL_WaitEventTimeout(&e, 16)) {
+            mouse_mode_sync();  // (also here: a steady stream of mouse motion keeps the loop out of the timeout)
             input_rumble_poll();
             if (e.type == SDL_EVENT_QUIT) {
                 input_rumble_stop();
@@ -1391,6 +1398,7 @@ int ui_run(void) {
             if (menu_handle_event(&e)) continue;
             input_handle_event(&e);
         }
+        mouse_mode_sync();
         menu_apply_window_requests(window);
         input_rumble_poll();
         input_led_poll();

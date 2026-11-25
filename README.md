@@ -69,6 +69,26 @@ Start here: [docs/SETUP.md](docs/SETUP.md) (requirements, game files, prod.keys,
 
 See [Saving and transferring data](docs/saves.md) for backups and emulator save transfers.
 
+## Keyboard + mouse
+
+Controls tab → **Keyboard + Mouse** applies the preset and turns on Mouse camera, Mouse combat and Free camera look (the mouse camera needs Free camera). The sliders are on the same page.
+
+| Input | Action |
+|---|---|
+| W A S D | move |
+| Mouse | camera |
+| Left click | sword slash, in the direction you move the mouse |
+| Middle click | thrust |
+| Right click | target + shield |
+| Mouse 4 (held) | aim the item, then left click uses it |
+| Shift / Space / E / F | sprint / jump / interact / item action |
+| Q | free camera toggle |
+| R | item wheel |
+| Tab / M / Enter | inventory / map / pause |
+| Esc | overlay menu |
+
+The key layout is not yet checked in a full game session and may change.
+
 ## Building (Windows)
 
 See [docs/BUILD-windows.md](docs/BUILD-windows.md) (MSYS2 UCRT64, clang, Vulkan 1.3 GPU, AVX2/FMA CPU).

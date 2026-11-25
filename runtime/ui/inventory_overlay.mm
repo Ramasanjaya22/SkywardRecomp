@@ -257,6 +257,16 @@ static void confirm_glyph(ImDrawList *dl, ImFont *font, ImVec2 c, float r) {
     ImU32 bg = IM_COL32(240, 232, 210, 255), fg = IM_COL32(52, 38, 20, 255);
     dl->AddCircleFilled(c, r, bg, 24);
     float t = r * 0.16f;
+    if (const char *key = bind_prompt_key(BIND_A)) {  // the keyboard / mouse is the last input: the key's name
+        float fs = r * 1.45f;
+        ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0, key);
+        if (ts.x > r * 1.5f) {  // a long name ("Enter") is shrunk to the disc
+            fs *= r * 1.5f / ts.x;
+            ts = font->CalcTextSizeA(fs, FLT_MAX, 0, key);
+        }
+        dl->AddText(font, fs, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), fg, key);
+        return;
+    }
     if (fam == 2 && h >= 0 && h <= 3) {  // PlayStation: cross / circle / square / triangle (south, east, west, north)
         float k = r * 0.45f;
         if (h == 0) {

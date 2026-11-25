@@ -26,6 +26,7 @@ void input_led_poll(void);  // controller light: UI thread, after input_rumble_p
 void input_led_stop(void);
 bool input_user_blocked(const SDL_Event *e);
 void input_cursor_event(const SDL_Event *e);  // hide the mouse cursor on pad / key play, show it on mouse use
+bool input_mouse_captured(void);  // the mouse steers the game (camera / sword): the window grabs it (relative mode)
 // g_settings.bg_input -> SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS (before SDL_Init, and again when the setting
 // changes: SDL reads the hint live)
 void input_apply_background(void);

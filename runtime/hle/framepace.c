@@ -49,9 +49,11 @@ uint32_t rt_frame_steps(uint32_t interval) {
 // The frame rate setting (Settings.fps_target). SS HD's frame controller (tools/patches.py FRAME_CTRL_INTERVAL_SITE)
 // averages its last 10 frames' time in vsyncs: 1.5 or more picks present interval 2 and a world timestep of 1.0 (in
 // 1/30 s), else interval 1 and 0.5 (its FRAME_TIMESTEP global). With a target, the average reads as 2 (30) or 1 (the
-// rest: the game never drops itself to 30), and the timestep is the target's frame time - or, Unlocked, the time that
-// really passed since the last frame (1/8 to 1 step: a stall doesn't jump the world ahead). runtime/nvn/pace.c paces
-// the frames to the target. Auto, or a game version without the site: the game's own values.
+// rest: the game never drops itself to 30), and the timestep is the target's frame time, or the time that really passed
+// since the last frame when that is longer (1/8 to 1 step: a stall doesn't jump the world ahead). So a PC that can't keep
+// up, or a frame that drops (a turn, a busy view), runs the world at its real speed, not slow motion. Unlocked: the time
+// that really passed. runtime/nvn/pace.c paces the frames to the target. Auto, or a game version without the site: the
+// game's own values.
 int rt_fps_target(void) { return g_ga && GA(FRAME_CTRL_INTERVAL_SITE) ? g_settings.fps_target : FPS_AUTO; }
 
 float rt_frame_interval_avg(float game_avg) {
