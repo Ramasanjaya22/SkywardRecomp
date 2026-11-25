@@ -343,9 +343,8 @@ static void set_job(const std::string &s, bool failed = false, const std::string
 
 // (the not-found failure's hint, and the caption over the game files page's example folder)
 static const char *const PICK_FOLDER_HINT =
-    "Choose the folder that has the game's exefs and romfs folders (or the .nsp package, and for 1.0.1 its update .nsp) in it.\n\n"
-    "Using a .nsp? It also needs your prod.keys (your Switch's encryption keys, dumped from your own console with "
-    "Lockpick_RCM): it's found by itself next to the .nsp, or choose it in the prod.keys row. Other files in the folder are fine.";
+    "Choose the folder with the game's exefs and romfs folders, or the .nsp package. "
+    "An NSP package needs an additional key file. The 1.0.1 update is optional.";
 
 // Setup failures: a short headline and what to do next (also LARECOMP_LAUNCHER_SHOT=<f>:fail<1-6>, screenshots)
 enum { FAIL_NOT_FOUND = 1, FAIL_UNUSABLE, FAIL_COPY, FAIL_VERSION, FAIL_MISSING, FAIL_BUILD };
@@ -392,6 +391,32 @@ static void find_game(const std::string &dir, GameFind &f, std::string *describe
     game_find_describe(&f, text, sizeof text);
     fprintf(stderr, "[launcher] looking in %s (%d folders, %d files)\n%s\n", dir.c_str(), f.dirs, f.files, text);
     if (described) *described = text;
+}
+
+// Contextual setup fields: a folder with exefs/romfs needs nothing else, an NSP package may need a key file
+// and can take an optional 1.0.1 update. Remember what find_game() saw so drawing never re-scans a drive.
+struct PickContext {
+    bool nsp;            // a base-game .nsp was picked
+    bool update;         // the 1.0.1 update was found next to it
+    std::string nsp_dir; // where to look for the key file
+    std::string version; // the picked exefs' release ("1.0.0" / "1.0.1"), if known
+};
+static PickContext g_pick;  // (g_lock)
+
+static void note_pick_context(const GameFind &f) {
+    PickContext c;
+    c.nsp = f.nsp[0] != '\0';
+    c.update = f.update[0] != '\0';
+    if (c.nsp) {
+        std::string p = f.nsp;
+        size_t slash = p.find_last_of("/\\");
+        c.nsp_dir = slash == std::string::npos ? "." : p.substr(0, slash);
+    }
+    char label[32] = {};
+    if (game_release_label(f.exefs, label, sizeof label)) c.version = label;
+    pthread_mutex_lock(&g_lock);
+    g_pick = c;
+    pthread_mutex_unlock(&g_lock);
 }
 
 // A supported game version (runtime/game_addresses/versions.h)? Logs which one.
@@ -562,6 +587,50 @@ static std::string find_prod_keys(const std::string &nsp_dir) {
             if (scan_for_keys(h + s, 4, &budget, &found)) return found;
         if (scan_for_keys(h, 1, &budget, &found)) return found;  // (the home folder itself, one level: AppData etc. are huge)
     }
+    return "";
+}
+
+// Which extra fields apply to this pick: an NSP package needs a key file; its 1.0.1 update is optional,
+// and hidden when found with the package or already chosen. An exefs/romfs folder needs neither field.
+static bool picked_nsp_package() {
+    pthread_mutex_lock(&g_lock);
+    bool nsp = g_pick.nsp;
+    pthread_mutex_unlock(&g_lock);
+    return nsp;
+}
+
+static bool update_field_applies() {
+    pthread_mutex_lock(&g_lock);
+    bool applies = g_pick.nsp && !g_pick.update && g_update_pick.empty();
+    pthread_mutex_unlock(&g_lock);
+    return applies;
+}
+
+// The chosen key wins; otherwise use scan_for_keys()'s bounded search. Cached per folder so drawing stays cheap.
+static std::string detected_key_file() {
+    pthread_mutex_lock(&g_lock);
+    std::string chosen = g_keys_pick, dir = g_pick.nsp_dir;
+    bool nsp = g_pick.nsp;
+    pthread_mutex_unlock(&g_lock);
+    if (!nsp) return "";
+    if (!chosen.empty() && looks_like_prod_keys(chosen)) return chosen;
+    static std::string scanned_dir, scanned_keys;
+    static bool scanned = false;
+    if (scanned && scanned_dir == dir) return scanned_keys;
+    scanned_dir = dir;
+    scanned_keys = find_prod_keys(dir);
+    scanned = true;
+    return scanned_keys;
+}
+
+// What the picked files already are: the exefs build id, or the NSP plus its optional update.
+static std::string detected_game_version() {
+    pthread_mutex_lock(&g_lock);
+    PickContext c = g_pick;
+    bool update_chosen = !g_update_pick.empty();
+    pthread_mutex_unlock(&g_lock);
+    if (!c.version.empty()) return c.version;
+    if (c.nsp) return (c.update || update_chosen) ? "1.0.1" : "1.0.0";
     return "";
 }
 
@@ -852,6 +921,7 @@ static void SDLCALL picked(void *, const char *const *files, int) {
     {
         GameFind *f = new GameFind;
         find_game(files[0], *f, &found);
+        note_pick_context(*f);
         delete f;
     }
     pthread_mutex_lock(&g_lock);
@@ -2377,6 +2447,7 @@ extern "C" void launcher_run(const char *root) {
                                     "1.0.1 are supported; for 1.0.1, keep the base game's .nsp and its update .nsp in this folder "
                                     "(or choose the update below). The game isn't included with SkywardRecomp.";
                 if (!src.empty()) src_d += "\n\nChosen: " + src + (found.empty() ? "" : "\n\n" + found);
+                if (std::string v = detected_game_version(); !v.empty()) src_d += "\n\nDetected version: " + v + ".";
                 // the step that's running / its result, under the rows and in the Set up row's explanation
                 const std::string &job_line = job;
                 std::string ex_d = "Copies the game files SkywardRecomp needs and recompiles the game from them. This only "
@@ -2398,35 +2469,25 @@ extern "C" void launcher_run(const char *root) {
                         SDL_ShowOpenFolderDialog(picked, NULL, win, NULL, false);
                     check_left_of_value(src_v);
                     first_row();
-                    {  // (only for 1.0.1 from a .nsp, and only when the update isn't in the game files folder)
+                    if (update_field_applies()) {
                         pthread_mutex_lock(&g_lock);
                         std::string up = g_update_pick;
                         pthread_mutex_unlock(&g_lock);
-                        std::string ud = "Optional, for version 1.0.1: the update .nsp (\"[01002DA013484800][v65536]\") of the game. "
-                                         "SkywardRecomp applies it over the base game's .nsp, so the game files become 1.0.1. It is "
-                                         "found by itself when it's in the game files folder; choose it here if it's somewhere else. "
-                                         "Leave this empty for version 1.0.0.";
-                        if (!up.empty()) ud += "\n\nChosen: " + up;
+                        std::string ud = "Optional. Adds version 1.0.1 over the base game. Version 1.0.0 works too.";
                         static const SDL_DialogFileFilter nsp_f[] = {{"Switch package", "nsp"}, {"All files", "*"}};
-                        std::string uv = up.empty() ? "Choose..." : "Selected";
+                        std::string uv = up.empty() ? "Optional" : "Selected";
                         if (busy) opt_disable_next();
-                        if (opt_action("Update 1.0.1 (optional .nsp)", uv.c_str(), ud.c_str(), true))
+                        if (opt_action("Update 1.0.1 (Optional)", uv.c_str(), ud.c_str(), true))
                             SDL_ShowOpenFileDialog(picked_update, NULL, win, nsp_f, 2, NULL, false);
                         check_left_of_value(uv);
                     }
-                    {  // (only a .nsp needs it; found by itself when it's next to the .nsp or where yuzu / Ryujinx keep it)
-                        pthread_mutex_lock(&g_lock);
-                        std::string kp = g_keys_pick;
-                        pthread_mutex_unlock(&g_lock);
-                        std::string kd = "Only needed when you chose a .nsp package: the prod.keys file (your Switch's encryption "
-                                         "keys, dumped from your own console with Lockpick_RCM) that opens it. SkywardRecomp "
-                                         "looks for it by itself next to the .nsp and where yuzu / Eden / Ryujinx keep it; "
-                                         "choose it here if that didn't find it.";
-                        if (!kp.empty()) kd += "\n\nChosen: " + kp;
+                    if (picked_nsp_package()) {  // (only an NSP package needs a key file)
+                        std::string key = detected_key_file();
+                        std::string kd = "Only needed for an NSP package.";
                         static const SDL_DialogFileFilter keys_f[] = {{"Switch keys", "keys"}, {"All files", "*"}};
-                        std::string kv = kp.empty() ? "Choose..." : "Selected";
+                        std::string kv = key.empty() ? "Choose..." : "Key file detected";
                         if (busy) opt_disable_next();
-                        if (opt_action("prod.keys (for a .nsp)", kv.c_str(), kd.c_str(), true))
+                        if (opt_action("Additional key file required.", kv.c_str(), kd.c_str(), true))
                             SDL_ShowOpenFileDialog(picked_keys, NULL, win, keys_f, 2, NULL, false);
                         check_left_of_value(kv);
                     }
