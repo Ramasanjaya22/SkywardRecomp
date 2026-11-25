@@ -15,6 +15,7 @@
 #include "imgui.h"
 #include "option_rows.h"
 #include "palette.h"
+#include "mods.h"
 #include "imgui_internal.h"  // (NavCursorVisible)
 #include "osk.h"
 #include "pad_nav.h"
@@ -728,11 +729,12 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     int ntabs = 0;
     if (prelaunch) tabs[ntabs++] = {"Prelaunch", -1, true};
     static const char *names[] = {"Video", "Audio", "Save Editor", "Randomizer", "Warp", "Cheats", "Gameplay",
-                                  "Cosmetics", "Controls", "Quit", "Saves"};
-    static const int order[] = {8, 0, 1, 6, 10, 9};  // Controls, Video, Audio, Gameplay, Saves, Quit (ids stay: test hooks;
-                                                      // LA tabs 2-5 and 7 Cosmetics hidden: they read LA state)
-    for (int i : order)  // (Quit, Saves: in game only - the start screen has its own QUIT and Save data, and an eleventh tab cut names short)
-        if ((i != 9 && i != 10) || !prelaunch) tabs[ntabs++] = {names[i], i, true};
+                                  "Cosmetics", "Controls", "Quit", "Saves", "Mods"};
+    static const int order[] = {8, 0, 11, 1, 6, 10, 9};  // Controls, Video, Mods, Audio, Gameplay, Saves, Quit (ids stay: test hooks;
+                                                          // LA tabs 2-5 and 7 Cosmetics hidden: they read LA state)
+    for (int i : order)  // (Quit, Saves and Mods: in game only - the start screen has its own QUIT / Save data, and
+                         //  a tab too many cut names short)
+        if ((i != 9 && i != 10 && i != 11) || !prelaunch) tabs[ntabs++] = {names[i], i, true};
     int cur = 0;  // g_tab / g_tab_request hold ids
     for (int i = 0; i < ntabs; i++) if (tabs[i].id == g_tab) cur = i;
     if (!tabs[cur].on) cur = 0;
@@ -839,6 +841,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 case 8: controls_tab_draw(scale); break;
                 case 9: tab_quit(scale, in_game); break;
                 case 10: tab_saves(); break;
+                case 11: mods_tab_draw(scale); break;  // (state shared with the launcher: mods.h)
                 }
                 static const char *scroll_test = getenv("LARECOMP_MENU_SCROLL");  // test hook: page scroll, 0..1
                 if (scroll_test) ImGui::SetScrollY(ImGui::GetScrollMaxY() * (float)atof(scroll_test));

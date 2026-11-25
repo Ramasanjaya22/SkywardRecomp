@@ -26,6 +26,7 @@
 #include "imgui_internal.h"  // (SetKeyOwner)
 #include "option_rows.h"
 #include "palette.h"
+#include "mods.h"
 #include "extract_current.h"
 #include "osk.h"
 #include "pad_nav.h"
@@ -1298,8 +1299,40 @@ static std::vector<std::string> list_seeds() {
 
 // ------------------------------------------------------------------ screen
 static ImFont *g_font_title, *g_font_menu, *g_font_small;
-enum Page { MAIN, SETTINGS, SETUP };  // SETTINGS: the in-game menu's tabs (runtime/ui/menu.mm)
+enum Page { MAIN, SETTINGS, SETUP, MODS };  // SETTINGS: the in-game menu's tabs (runtime/ui/menu.mm)
 static int g_refocus = MAIN;  // back on the main page: select the item of the page we came from (controllers)
+
+// The Mods state lives in mods.h so the launcher and the in-game menu show the same thing. A downloaded mod is never
+// bundled or executed by the UI.
+ModsSource g_mods_source = {false};
+const char *mods_not_available() { return "Mods need network. Mods will appear here when available."; }
+
+// Browse-tab body, shared with the in-game menu's Mods tab (runtime/ui/menu.mm). No network yet: a greyed row shows
+// the layout without claiming a mod exists. The caller owns the surrounding frame and close/back handling.
+void mods_tab_draw(float sc) {
+    ImGui::TextColored(ImVec4(0.93f, 0.76f, 0.33f, 1), "Browse");
+    ImGui::Spacing();
+    static char mods_search[128] = "";
+    ImGui::InputTextWithHint("##mods_search", "Search", mods_search, sizeof mods_search);
+    if (!g_mods_source.available) {
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", mods_not_available());
+        ImGui::Spacing();
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        float thumb = 64 * sc;
+        ImGui::GetWindowDrawList()->AddRectFilled(p, ImVec2(p.x + thumb, p.y + thumb), IM_COL32(70, 75, 95, 120), 6 * sc);
+        ImGui::Dummy(ImVec2(thumb, 0));
+        ImGui::SameLine();
+        ImGui::BeginGroup();
+        ImGui::TextDisabled("No mods loaded");
+        ImGui::TextDisabled("Mod list needs network");
+        ImGui::EndGroup();
+        ImGui::Spacing();
+        ImGui::BeginDisabled();
+        ImGui::Button("Install");
+        ImGui::EndDisabled();
+    }
+}
 
 // A big menu line: gold + a marker when focused / hovered (keyboard, gamepad or mouse), grey when disabled
 static bool g_menu_small;  // sub pages: buttons in the small font
@@ -2645,6 +2678,8 @@ extern "C" void launcher_run(const char *root) {
                     opened = true;
                     page = SETTINGS;
                 }
+                if (g_refocus == MODS) { ImGui::SetKeyboardFocusHere(), g_refocus = MAIN; }  // (back from Mods)
+                if (link("MODS", true)) page = MODS;  // (UI shell: the HTTP layer fills it in SKY-45)
                 if (ready) {
                     if (g_refocus == SETUP) { ImGui::SetKeyboardFocusHere(), g_refocus = MAIN; }
                     if (link("GAME FILES", !busy)) page = SETUP;
@@ -2729,6 +2764,48 @@ extern "C" void launcher_run(const char *root) {
                     for (size_t i = 0; i < choices.size(); i++)
                         if (choices[i] == cur) choice = (int)i;
                 }
+            } else if (page == MODS) {
+                // MODS: Browse tab shell. No network in the launcher yet (SKY-45), so it says so plainly instead of
+                // listing invented mods; the real list, download and install land in SKY-45/48/51. Child window like
+                // Settings: NavFlattened + a close X, B / Esc back - keyboard and pad reach every widget.
+                float sc = ds.y / 1080.0f, w = fminf(ds.x * 0.9f, 1500 * sc), h = ds.y - 2 * 18 * sc;
+                ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetWindowPos(), ImVec2(ImGui::GetWindowPos().x + ds.x,
+                                                          ImGui::GetWindowPos().y + ds.y), IM_COL32(0, 0, 0, 110));
+                ImVec2 wp = ImGui::GetWindowPos();
+                ImGui::SetCursorScreenPos(ImVec2(wp.x + (ds.x - w) * 0.5f, wp.y + (ds.y - h) * 0.5f));
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.06f, 0.09f, 0.08f, 0.96f));
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14 * sc);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(28 * sc, 24 * sc));
+                ImGui::BeginChild("##mods", ImVec2(w, h), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NavFlattened);
+                ImGui::PopStyleVar(2);
+                ImGui::PopStyleColor();
+                ImGui::PushFont(g_font_small);
+                ImGui::PushFont(g_font_menu);
+                ImGui::TextColored(ImVec4(0.93f, 0.76f, 0.33f, 1), "Mods");
+                ImGui::PopFont();
+                bool back = false;
+                {
+                    float bx = 44 * sc;
+                    ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - bx);
+                    ImVec2 p = ImGui::GetCursorScreenPos();
+                    ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
+                    back = ImGui::InvisibleButton("##mods_close", ImVec2(bx, bx), ImGuiButtonFlags_EnableNav);
+                    ImGui::PopStyleColor();
+                    bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
+                    ImU32 col = hot ? IM_COL32(236, 194, 84, 255) : IM_COL32(220, 216, 205, 255);
+                    float m = bx * 0.3f, t = (hot ? 3.0f : 2.4f) * sc * 1.5f;
+                    ImDrawList *dl = ImGui::GetWindowDrawList();
+                    if (hot) dl->AddRectFilled(p, ImVec2(p.x + bx, p.y + bx), IM_COL32(255, 255, 255, 20), 8 * sc);
+                    dl->AddLine(ImVec2(p.x + m, p.y + m), ImVec2(p.x + bx - m, p.y + bx - m), col, t);
+                    dl->AddLine(ImVec2(p.x + bx - m, p.y + m), ImVec2(p.x + m, p.y + bx - m), col, t);
+                }
+                ImGui::Spacing();
+                mods_tab_draw(sc);
+                if (!typing && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
+                    back = true;
+                ImGui::PopFont();
+                ImGui::EndChild();
+                if (back) page = MAIN, g_refocus = MODS;
             } else if (update_only) {
                 pthread_mutex_lock(&g_lock);
                 std::string job = g_job;
