@@ -5377,7 +5377,7 @@ bool renderer_prepare(const ShaderRec *r, const ShaderBlob *vsb, const ShaderBlo
     vkey.flip_y = fkey.flip_y = (r->flags & SR_FLIP_Y) != 0;
     vkey.depth_minus_one = (r->flags & SR_DEPTH_MINUS_ONE) != 0;
     vkey.flip_x = fkey.flip_x = (r->flags & SR_FLIP_X) != 0;
-    vkey.wide_k = r->wide_k;
+    vkey.wide_k = fkey.wide_k = r->wide_k;
     for (int i = 0; i < r->nattrib; i++) vkey.attr_kind[i] = (uint8_t)attr_kind(r->attrib[i] & 0xFF);
     for (int i = 0; i < r->ncolor && i < 8; i++) if (r->color[i]) fkey.rt_kind[i] = (uint8_t)rt_kind(r->color[i]);
     if ((r->blend_on & 1) && dual_src_kind(r->blend[0])) fkey.rt_kind[1] = 3;
@@ -5741,7 +5741,7 @@ static void draw_(CmdRec *r, bool indexed) {
         // copies it to the shadow map; squeezed, the map no longer matched its receivers - big dark triangles)
         if (tsx > tsy * 1.005f && st.ds[0] && st.rt.depth && st.viewport[0][0] == 0 && st.viewport[0][2] >= t->width &&
             !getenv("LARECOMP_NO_WIDE_PROJ"))
-            vkey.wide_k = (uint16_t)(1000.0f * tsy / tsx + 0.5f);
+            vkey.wide_k = fkey.wide_k = (uint16_t)(1000.0f * tsy / tsx + 0.5f);
     }
     for (int i = 0; i < st.nattrib; i++) vkey.attr_kind[i] = (uint8_t)attr_kind(st.attrib[i] & 0xFF);
     for (int i = 0; i < st.rt.ncolor; i++) if (st.rt.color[i]) fkey.rt_kind[i] = (uint8_t)rt_kind(st.rt.color[i]->format);

@@ -2049,8 +2049,11 @@ static const char glsl_prelude[] =
     // a scaled texture whose contents occupy its top-left part (Dynamic resolution): sample that part
     // Screen-space UVs: a 16:9-centre pass (viewport narrower than the wide RT, or offset) samples a wide screen RT
     // in viewport space 0..1 - remap to the full RT so the 21:9 wings sample the wing, not the clamped edge.
+    // ultrawide: a screen-space UV the vertex shader derived from the unwidened clip x, looked up in a scaled image, is
+    // mapped to the widened view: clip x * wide_k puts the world at (u - 0.5) * wide_k + 0.5 (WIDE_UK is 1 when off)
     "vec2 uvs(vec2 uv, vec4 s, vec4 vp) {\n"
     "  if (s.x > vp.x + 0.001f || vp.z != 0.0f) uv.x = uv.x * (vp.x / s.x) + vp.z / (1920.0f * s.x);\n"
+    "  else if (s.x > 1.001f) uv.x = (uv.x - 0.5f) * WIDE_UK + 0.5f;\n"
     "  if (s.y > vp.y + 0.001f || vp.w != 0.0f) uv.y = uv.y * (vp.y / s.y) + vp.w / (1080.0f * s.y);\n"
     "  return (s.z == 1.0f && s.w == 1.0f) ? uv : min(uv, 1.0f) * s.zw;\n"
     "}\n";
@@ -2113,6 +2116,7 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     Str s = {0};
     sp(&s, "#version 460\n");  // (the prelude's first line; an extension directive has to follow it)
     if (info->uses_gmem && maxwell_gmem_chunk_shift && maxwell_gmem_lazy) sp(&s, "#extension GL_EXT_buffer_reference : require\n");
+    sp(&s, "#define WIDE_UK %.6ff\n", stage == STAGE_FRAGMENT && key && key->wide_k && !getenv("LARECOMP_VK_NO_WIDE_UV") ? key->wide_k / 1000.0 : 1.0);
     sp(&s, "%s", glsl_prelude + sizeof "#version 460\n" - 1);
     static int exact = -1;
     if (exact < 0) exact = getenv("LARECOMP_VK_EXACT_H2F") && atoi(getenv("LARECOMP_VK_EXACT_H2F")) != 0;
@@ -2506,8 +2510,11 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
     sp(&s, "static inline uint bfi(uint ins, uint ctl, uint base) { uint pos = ctl & 0xFFu, len = (ctl >> 8) & 0xFFu; if (len == 0u || pos >= 32u) return base; return insert_bits(base, ins, pos, min(len, 32u - pos)); }\n");
     sp(&s, "static inline float fswzadd(float a, float b, uint swz, uint lane) { uint m = (swz >> ((lane & 3u) * 2u)) & 3u; float ma = m == 1u ? -1.0f : (m == 3u ? 0.0f : 1.0f); float mb = m == 2u ? -1.0f : 1.0f; return a * ma + b * mb; }\n");
     sp(&s, "static inline uint2 rsc(uint2 c, float4 s) { return (s.x == 1.0f && s.y == 1.0f) ? c : uint2(floor((float2(c) + 0.5f) * s.xy)); }\n");
+    // (as the GLSL prelude's uvs: the 16:9-centre remap, else the widened view's screen-space UV; inert while Metal leaves wide_k unset)
+    sp(&s, "constant float WIDE_UK = %.6ff;\n", c->stage == STAGE_FRAGMENT && c->key && c->key->wide_k ? c->key->wide_k / 1000.0 : 1.0);
     sp(&s, "static inline float2 uvs(float2 uv, float4 s, float4 vp) {\n"
             "  if (s.x > vp.x + 0.001f || vp.z != 0.0f) uv.x = uv.x * (vp.x / s.x) + vp.z / (1920.0f * s.x);\n"
+            "  else if (s.x > 1.001f) uv.x = (uv.x - 0.5f) * WIDE_UK + 0.5f;\n"
             "  if (s.y > vp.y + 0.001f || vp.w != 0.0f) uv.y = uv.y * (vp.y / s.y) + vp.w / (1080.0f * s.y);\n"
             "  return (s.z == 1.0f && s.w == 1.0f) ? uv : min(uv, 1.0f) * s.zw;\n"
             "}\n");
