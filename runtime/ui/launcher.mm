@@ -331,6 +331,8 @@ static std::string g_src;           // the picked folder (launcher_prepare: or a
 static std::string g_keys_pick;     // the prod.keys the player chose (g_lock); empty: search for one
 static std::string g_update_pick;   // the 1.0.1 update .nsp the player chose (g_lock); empty: the one found next to the base game
 static std::string g_found;         // what the picked folder holds, as game_find_describe says it (g_lock): shown under the folder row
+static bool g_scan_base, g_scan_update, g_scan_keys, g_scan_nsp; // what the folder scan found, for the setup checklist (g_lock)
+static int g_copied_ok = -1;        // check_copied_files(g_root).empty() cached for the draw loop (g_lock); -1: recompute
 static bool g_headless;             // launcher_prepare: no window, so no shader preparation (the game does it later)
 static std::string g_job;           // current setup step / result for the status line
 static std::string g_job_hint;      // a failure: what to do about it (shown under it)
@@ -974,16 +976,27 @@ static std::string picker_hint(const char *what) {
 static void SDLCALL picked(void *, const char *const *files, int) {
     if (!files) { set_job(PICKER_FAILED, true, picker_hint("folder")); return; }
     if (!files[0]) return;
-    std::string found;  // (what's in the folder, so a wrong pick can be seen before Set up)
+    std::string found;  // game_find_describe(found): what the folder has and why
+    bool base = false, update = false, keys = false, nsp = false;
     {
         GameFind *f = new GameFind;
         find_game(files[0], *f, &found);
         note_pick_context(*f);
+        base = (f->exefs[0] && f->romfs[0]) || f->nsp[0] != 0;
+        nsp = f->nsp[0] != 0;
+        update = f->update[0] != 0;
         delete f;
     }
+    keys = !find_prod_keys(files[0]).empty();
     pthread_mutex_lock(&g_lock);
     g_src = files[0];
     g_found = found;
+    g_scan_base = base;
+    g_scan_update = update;
+    g_scan_keys = keys;
+    g_scan_nsp = nsp;
+    g_update_pick.clear(), g_keys_pick.clear();  // (a pick made for the earlier folder)
+    g_copied_ok = -1;
     if (g_job == PICKER_FAILED) g_job.clear(), g_job_hint.clear(), g_job_failed = false;
     pthread_mutex_unlock(&g_lock);
 }
@@ -2718,14 +2731,25 @@ extern "C" void launcher_run(const char *root) {
                 std::string src = g_src, job = g_job, job_hint = g_job_hint, found = g_found, job_tech = g_job_tech, upick = g_update_pick, kpick = g_keys_pick;
                 bool failed = g_job_failed;
                 int job_kind = g_job_kind;
+                bool scan_base = g_scan_base, scan_update = g_scan_update, scan_keys = g_scan_keys, scan_nsp = g_scan_nsp;
+                static bool prev_busy;
+                if (busy != prev_busy) g_copied_ok = -1;  // (a setup just ran or ended)
+                prev_busy = busy;
+                int copied_ok = g_copied_ok;
                 pthread_mutex_unlock(&g_lock);
+                if (copied_ok < 0) {  // once per pick / setup, not every frame
+                    copied_ok = check_copied_files(g_root).empty();
+                    pthread_mutex_lock(&g_lock);
+                    g_copied_ok = copied_ok;
+                    pthread_mutex_unlock(&g_lock);
+                }
                 bool ready = status.empty() && !busy;  // (set up: the window offers to delete them)
                 static double files_gb = -1;
                 // chosen: "Selected" with a green check (long paths ran over the label); the path is in the
                 // explanation, and choosing again opens the picker again
                 std::string src_v = src.empty() ? "Choose..." : "Selected";
-                auto check_left_of_value = [&](const std::string &v) {
-                    if (v != "Selected" && v != "Key file detected") return;
+                auto check_left_of_value = [&](bool chosen, const std::string &v) {
+                    if (!chosen) return;
                     ImVec2 rb = ImGui::GetItemRectMax(), ra = ImGui::GetItemRectMin();
                     float fs = ImGui::GetFontSize(), vw = ImGui::CalcTextSize(v.c_str()).x;
                     float x = rb.x - 16 * sc - vw - fs * 0.95f, cy = (ra.y + rb.y) * 0.5f, u = fs * 0.62f;
@@ -2756,34 +2780,47 @@ extern "C" void launcher_run(const char *root) {
                 if (!ready) {
                     opt_section("Your copy of the game");
                     if (busy) opt_disable_next();
-                    if (opt_action("Game files folder", src_v.c_str(), src_d.c_str(), true))
+                    static const SDL_DialogFileFilter nsp_f[] = {{"Switch package", "nsp"}, {"All files", "*"}};
+                    static const SDL_DialogFileFilter keys_f[] = {{"Switch keys", "keys"}, {"All files", "*"}};
+                    // One picker for the whole set: the scan fills the checklist below and we ask only for what it
+                    // could not find.
+                    if (opt_action("Choose Game Files", src_v.c_str(), src_d.c_str(), true))
                         SDL_ShowOpenFolderDialog(picked, NULL, win, NULL, false);
-                    check_left_of_value(src_v);
+                    check_left_of_value(!src.empty(), src_v);
                     first_row();
-                    if (update_field_applies()) {
-                        pthread_mutex_lock(&g_lock);
-                        std::string up = g_update_pick;
-                        pthread_mutex_unlock(&g_lock);
-                        std::string ud = "Optional. Adds version 1.0.1 over the base game. Version 1.0.0 works too.";
-                        static const SDL_DialogFileFilter nsp_f[] = {{"Switch package", "nsp"}, {"All files", "*"}};
-                        std::string uv = up.empty() ? "Optional" : "Selected";
-                        if (busy) opt_disable_next();
-                        if (opt_action("Update 1.0.1 (Optional)", uv.c_str(), ud.c_str(), true))
-                            SDL_ShowOpenFileDialog(picked_update, NULL, win, nsp_f, 2, NULL, false);
-                        check_left_of_value(uv);
+
+                    auto base_name = [](const std::string &path) {
+                        size_t i = path.find_last_of("/\\");
+                        return i == std::string::npos ? path : path.substr(i + 1);
+                    };
+                    const bool is_nsp = picked_nsp_package();  // (SKY-34's rule: only a .nsp needs prod.keys, its update is optional)
+                    const std::string key_file = detected_key_file();
+                    const bool have_files = scan_base || copied_ok;
+                    const bool have_update = scan_update || !upick.empty();
+                    if (!src.empty()) {
+                        ImGui::Text("Files      %s", have_files ? "found" : "missing");
+                        ImGui::Text("Version    %s", have_update ? "1.0.1" : have_files ? "1.0.0" : "?");
+                        ImGui::Text("Update     %s", have_update ? "found" : "not chosen (optional)");
+                        if (is_nsp) ImGui::Text("prod.keys  %s", key_file.empty() ? "missing" : "found");
+                        if (!have_files)
+                            ImGui::TextDisabled("Choose a folder with exefs/ and romfs/, or a .nsp.");
                     }
-                    if (picked_nsp_package()) {  // (only an NSP package needs a key file)
-                        std::string key = detected_key_file();
-                        std::string kd = "Only needed for an NSP package.";
-                        static const SDL_DialogFileFilter keys_f[] = {{"Switch keys", "keys"}, {"All files", "*"}};
-                        std::string kv = key.empty() ? "Choose..." : "Key file detected";
+                    if (!src.empty() && have_files && update_field_applies()) {  // optional: never blocks Set up
+                        std::string upd_v = upick.empty() ? "Choose..." : base_name(upick);
                         if (busy) opt_disable_next();
-                        if (opt_action("Additional key file required.", kv.c_str(), kd.c_str(), true))
+                        if (opt_action("Choose update (optional)", upd_v.c_str(), "Optional. Adds version 1.0.1 over the base game; 1.0.0 works too.", true))
+                            SDL_ShowOpenFileDialog(picked_update, NULL, win, nsp_f, 2, NULL, false);
+                        check_left_of_value(!upick.empty(), upd_v);
+                    }
+                    if (!src.empty() && is_nsp) {  // (stays visible once found, to show and change it)
+                        std::string keys_v = key_file.empty() ? "Choose..." : "Key file detected";
+                        if (busy) opt_disable_next();
+                        if (opt_action("Choose prod.keys", keys_v.c_str(), "Only needed for a .nsp package: your prod.keys, if it is not next to the .nsp.", true))
                             SDL_ShowOpenFileDialog(picked_keys, NULL, win, keys_f, 2, NULL, false);
-                        check_left_of_value(kv);
+                        check_left_of_value(!key_file.empty(), keys_v);
                     }
                     opt_section("Set up");
-                    if (busy || (src.empty() && !check_copied_files(g_root).empty())) opt_disable_next();
+                    if (busy || (src.empty() && !copied_ok)) opt_disable_next();
                     bool resume = !busy && src.empty() && resumable_build();
                     if (opt_action(resume ? "Resume game code" : "Set up game files", busy ? "Working..." : "", ex_d.c_str(), true)) {
                         pthread_mutex_lock(&g_lock);
