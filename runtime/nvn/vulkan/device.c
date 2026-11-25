@@ -926,6 +926,11 @@ static void save_window_image(VkCommandBuffer cb, VkSpan *out) {
 }
 
 // End rendering into the window image and present it. shot_path: also save the window image as PNG.
+// The launcher draws ~10 frames a second when idle: with anti-lag on, AMD's driver thread then spins at ~50% of a core
+// (measured on a RX 9060 XT; 2.5% with anti-lag off), and a menu has no input latency to save. Mode off for its frames.
+static bool antilag_paused;
+void vk_antilag_pause(bool on) { antilag_paused = on; }
+
 void vk_frame_end(const char *shot_path) {
     if (!cur_frame.ok) return;
     VkCommandBuffer cb = vk_cmd();
@@ -941,7 +946,7 @@ void vk_frame_end(const char *shot_path) {
     if (g_vk.antilag && g_vk.antilag_update) {
         VkAntiLagPresentationInfoAMD pi = {.sType = VK_STRUCTURE_TYPE_ANTI_LAG_PRESENTATION_INFO_AMD,
                                             .stage = VK_ANTI_LAG_STAGE_PRESENT_AMD, .frameIndex = cur_frame.id};
-        VkAntiLagDataAMD ad = {.sType = VK_STRUCTURE_TYPE_ANTI_LAG_DATA_AMD, .mode = VK_ANTI_LAG_MODE_ON_AMD,
+        VkAntiLagDataAMD ad = {.sType = VK_STRUCTURE_TYPE_ANTI_LAG_DATA_AMD, .mode = antilag_paused ? VK_ANTI_LAG_MODE_OFF_AMD : VK_ANTI_LAG_MODE_ON_AMD,
                                .maxFPS = 0, .pPresentationInfo = &pi};
         g_vk.antilag_update(g_vk.dev, &ad);
     }

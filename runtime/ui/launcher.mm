@@ -64,6 +64,7 @@ void *ui_metal_device(void);
 #else
 // runtime/nvn/vulkan: window frames and ImGui plumbing
 bool vk_frame_begin(const float clear[4]);
+void vk_antilag_pause(bool on);
 void vk_frame_end(const char *shot_path);
 void *vk_frame_cmd(void);
 bool vk_imgui_backend_init(void);
@@ -2378,6 +2379,9 @@ extern "C" void launcher_run(const char *root) {
             bg_logged = true;
             fprintf(stderr, "[launcher] background shader preparation: %llu frames meanwhile, longest %llu ms\n",
                     (unsigned long long)bg_frames, (unsigned long long)bg_gap);
+#ifndef __APPLE__
+    vk_antilag_pause(true);
+#endif
         }
         last_frame = now;
         if (play_at_env && status.empty() && now - loop_t0 >= (uint64_t)(atof(play_at_env) * 1000)) play = true, play_at_env = NULL;
@@ -2420,8 +2424,25 @@ extern "C" void launcher_run(const char *root) {
             if (!launcher_pad_event(e)) ImGui_ImplSDL3_ProcessEvent(&e);
             if (e.type == SDL_EVENT_QUIT) exit(0);
         }
+        // Idle: nothing moves unless an event, a held key / button, a text cursor or a background job asks for it, so
+        // draw ~10 fps (~4 fps unfocused; none minimized / hidden) and wake at once on any event. The start screen
+        // has no animation of its own, so the lower rate shows nothing different. (tests keep their frame counts)
+        static uint64_t last_active;
+        bool minimized = SDL_GetWindowFlags(win) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_OCCLUDED);
+        {
+            pthread_mutex_lock(&g_lock);
+            bool job = g_busy;
+            pthread_mutex_unlock(&g_lock);
+            bool hot = job || g_bg_prep || g_prep_wait || shot_at || play_at_env || skip_at_env || io.WantTextInput ||
+                       now - last_active < 500;
+            for (int k = ImGuiKey_NamedKey_BEGIN; !hot && k < ImGuiKey_NamedKey_END; k++) hot = io.KeysData[k - ImGuiKey_NamedKey_BEGIN].Down;
+            bool focused = SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS;
+            if (minimized || (!focused && !job && !g_bg_prep && !g_prep_wait && !shot_at)) SDL_WaitEventTimeout(NULL, 250);
+            else if (!hot) SDL_WaitEventTimeout(NULL, 100);
+        }
         // extraction finished: re-check, load the background
         pthread_mutex_lock(&g_lock);
+            last_active = SDL_GetTicks();
         bool busy = g_busy;
         pthread_mutex_unlock(&g_lock);
         static bool was_busy;
@@ -2444,6 +2465,7 @@ extern "C" void launcher_run(const char *root) {
         layer.drawableSize = CGSizeMake(w, h);
         @autoreleasepool {
             id<CAMetalDrawable> drawable = [layer nextDrawable];
+        if (minimized) continue;  // (no GPU work while nobody can see the window; events above still wake us)
             if (!drawable) { SDL_Delay(16); continue; }
             MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
             rp.colorAttachments[0].texture = drawable.texture;
@@ -3183,6 +3205,9 @@ extern "C" void launcher_run(const char *root) {
     // play: remember the choice, hand the window to the game
     snprintf(g_settings.rando_seed, sizeof g_settings.rando_seed, "%s", choice ? choices[choice].c_str() : "");
     settings_save();
+#ifndef __APPLE__
+    vk_antilag_pause(false);
+#endif
 #ifdef __APPLE__
     ImGui_ImplMetal_Shutdown();
 #else
