@@ -1,4 +1,5 @@
 #include "save_emu.h"
+#include "platform.h"
 
 #include <dirent.h>
 #include <stdio.h>
@@ -248,4 +249,26 @@ int save_emu_find_under(const char *dir, const char *emu, SaveEmuHit *out, int m
     walk(dir, &ctx, 0);
     qsort(out, ctx.count, sizeof *out, compare_hits);
     return ctx.count;
+}
+
+bool save_emu_running(char *display, size_t n)
+{
+    if (!display || !n)
+        return false;
+    display[0] = '\0';
+    const size_t count = sizeof EMUS / sizeof EMUS[0];
+    const char *names[sizeof EMUS / sizeof EMUS[0] + 1];
+    for (size_t i = 0; i < count; ++i)
+        names[i] = EMUS[i].process;
+    names[count] = NULL;
+    char found[32];
+    if (!plat_process_running(names, found, sizeof found))
+        return false;
+    for (size_t i = 0; i < count; ++i) {
+        if (!strcmp(found, EMUS[i].process)) {
+            snprintf(display, n, "%s", EMUS[i].display);
+            return true;
+        }
+    }
+    return false;
 }

@@ -94,6 +94,10 @@ PlatProc plat_spawn_no_cfg(const char *const argv[], const char *log_path, bool 
 void plat_proc_kill(PlatProc p);             // end it and what it started (then it's gone: no wait)
 bool plat_remove_tree(const char *dir);      // rm -rf
 // dir is synced by OneDrive (Windows: under a OneDrive folder, or a cloud file); false on other systems
+/* True if any of the NULL-terminated `names` (lowercase basenames, no .exe) is
+ * running; copies the matched name into `found`. */
+bool plat_process_running(const char *const *names, char *found, size_t n);
+
 bool plat_onedrive_synced(const char *dir);
 #ifdef _WIN32
 #define PLAT_EXE_SUFFIX ".exe"

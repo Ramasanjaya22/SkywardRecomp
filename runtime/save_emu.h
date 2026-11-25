@@ -1,5 +1,8 @@
 #pragma once
 
+#include <stdbool.h>
+#include <stddef.h>
+
 /* A save found in an emulator's data folder. */
 typedef struct {
     char emu[32];      /* "eden", "fritchii", "ryujinx" */
@@ -14,3 +17,6 @@ int save_emu_find(SaveEmuHit *out, int max);
 
 /* Saves under dir, newest first. emu is a table name or "folder" for any save. */
 int save_emu_find_under(const char *dir, const char *emu, SaveEmuHit *out, int max);
+
+/* True if a known emulator is running; puts its display name in display. */
+bool save_emu_running(char *display, size_t n);

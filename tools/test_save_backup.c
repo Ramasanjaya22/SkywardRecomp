@@ -24,6 +24,13 @@ const char *rt_host_fn_name(uint64_t pc, uint64_t *offset) { (void)pc, (void)off
 int main(int argc, char **argv) {
     if (argc < 3) return 2;
     const char *root = argv[1], *cmd = argv[2];
+    if (!strcmp(cmd, "running") && argc > 3) {
+        const char *const names[] = { argv[3], NULL };
+        char found[64];
+        bool running = plat_process_running(names, found, sizeof found);
+        printf("RUNNING %d|%s\n", running ? 1 : 0, found);
+        return 0;
+    }
     char why[600] = "", name[64] = "";
     if (!strcmp(cmd, "create")) {
         bool ok = save_backup_create(root, name, sizeof name, why, sizeof why);

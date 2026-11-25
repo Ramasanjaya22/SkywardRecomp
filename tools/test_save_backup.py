@@ -225,4 +225,8 @@ with tempfile.TemporaryDirectory() as directory:
     assert ok and (data / W).read_bytes() == w, why
     print('emulators: Eden (both layouts), Citron, Fritchii, Ryujinx found; empty profile and other games skipped; data folder import')
 
-    print(f'{plat}: save backups ok')
+    r = run('running', 'save-backup-test')[0]
+    assert r.startswith('RUNNING 1|save-backup-test'), r
+    assert run('running', 'no-such-process-zq')[0].startswith('RUNNING 0|'), 'bogus process found'
+    print('process check: own process found, a missing one not')
+

@@ -14,7 +14,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
+#include <libproc.h>
 #include <sys/mman.h>
 #include <sys/sysctl.h>
 #include <sys/ucontext.h>
@@ -289,4 +291,24 @@ static int rm_entry(const char *path, const struct stat *sb, int flag, struct FT
     return remove(path) == 0 || errno == ENOENT ? 0 : -1;  // (gone already: e.g. a ._ file macOS removed with its folder on exFAT)
 }
 bool plat_remove_tree(const char *dir) { return nftw(dir, rm_entry, 16, FTW_DEPTH | FTW_PHYS) == 0; }
+
+// proc_name gives the process name (case kept: "Ryujinx")
+bool plat_process_running(const char *const *names, char *found, size_t n) {
+    if (n) found[0] = 0;
+    int count = proc_listallpids(NULL, 0);
+    if (count <= 0) return false;
+    pid_t *pids = calloc((size_t)count, sizeof *pids);
+    if (!pids) return false;
+    count = proc_listallpids(pids, (int)(count * sizeof *pids));
+    bool hit = false;
+    for (int i = 0; i < count && !hit; i++) {
+        char name[64];  // (proc_name: up to 2 * MAXCOMLEN)
+        if (pids[i] <= 0 || proc_name(pids[i], name, sizeof name) <= 0) continue;
+        for (int j = 0; names[j] && !hit; j++)
+            if (!strcasecmp(name, names[j])) snprintf(found, n, "%s", names[j]), hit = true;
+    }
+    free(pids);
+    return hit;
+}
+
 bool plat_onedrive_synced(const char *dir) { (void)dir; return false; }
