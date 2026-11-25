@@ -40,7 +40,7 @@ with tempfile.TemporaryDirectory() as t:
     empty.mkdir()
     rc, out = prepare(data, f'--game={empty}')
     assert rc == 1, (rc, out)
-    assert 'No game files found in that folder' in out, out
+    assert 'No game files found' in out, out  # (the headline; its hint says 'in that folder')
     outs = [out]
 
     # a package that isn't a base .nsp, given as a separate argument (not taken as the game folder argument)
