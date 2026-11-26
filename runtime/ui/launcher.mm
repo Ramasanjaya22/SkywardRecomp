@@ -105,7 +105,7 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 // test build (a pre-release for a few players to try a fix) is test-<name>: the start screen says "Test build <name>",
 // and it previews LARECOMP_TEST_OF - the update check offers that release (or a later one) as soon as it's out, so its
 // players move to it.
-#define LARECOMP_VERSION "v0.8.3"
+#define LARECOMP_VERSION "v0.8.4"
 #define LARECOMP_TEST_OF "v0.8.0"
 extern "C" const char *larecomp_version(void) { return LARECOMP_VERSION; }
 
@@ -2243,15 +2243,20 @@ static void draw_status_checklist(const std::string &status, bool busy, float x0
 
 // Save data table and actions, shared by Game Files > More and Settings > Saves.
 static void save_data_ui(float sc, bool busy) {
-    (void)sc;
     if (!busy) {
         opt_section("Save data");
         char why[512] = "", made[64] = "";
         static char msg[512];
         static bool bad;
-        auto report = [&](bool ok, const char *done, const char *err) {
+        static double msg_at;  // (when the result was set: a success shows for a while, then goes)
+        static bool pop_result;  // (a pop-up says how the action went: the banner alone was easy to miss)
+        static bool pop_ask;     // (the pop-up that asks before a restore)
+        static std::string ask_name, ask_when, ask_size;
+        auto report = [&](bool ok, const char *done, const char *err, bool popup = true) {
             bad = !ok;
             snprintf(msg, sizeof msg, "%s", ok ? done : (err && *err ? err : done));
+            msg_at = ImGui::GetTime();
+            if (popup) pop_result = true;
         };
         std::string picked_dir;
         pthread_mutex_lock(&g_lock);
@@ -2260,7 +2265,25 @@ static void save_data_ui(float sc, bool busy) {
         if (!picked_dir.empty()) {
             bool ok = save_backup_import(rt_data_root(), picked_dir.c_str(), why, sizeof why);
             if (ok) set_job("Save data imported."); else set_job("Could not import the save data.", true, why);
-            report(ok, "Save data imported.", why);
+            report(ok, "Save data imported. Your previous saves were backed up first.", why);
+        }
+        // The result of the last action, right under the heading where it is seen (not below the lists, off screen)
+        if (msg[0] && !bad && ImGui::GetTime() - msg_at > 12) msg[0] = 0;  // (a failure stays until the next action)
+        if (msg[0]) {
+            ImVec4 c = bad ? PAL_ERR_V4 : PAL_OK_V4;
+            ImVec2 p0 = ImGui::GetCursorScreenPos();
+            float w = ImGui::GetContentRegionAvail().x, pad = ImGui::GetFontSize() * 0.6f;
+            ImVec2 sz = ImGui::CalcTextSize(msg, NULL, false, w - 2 * pad);
+            ImDrawList *dl = ImGui::GetWindowDrawList();
+            ImVec2 p1(p0.x + w, p0.y + sz.y + 2 * pad);
+            dl->AddRectFilled(p0, p1, ImGui::ColorConvertFloat4ToU32(ImVec4(c.x, c.y, c.z, 0.18f)), pad * 0.6f);
+            dl->AddRect(p0, p1, ImGui::ColorConvertFloat4ToU32(c), pad * 0.6f);
+            ImGui::SetCursorScreenPos(ImVec2(p0.x + pad, p0.y + pad));
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w - 2 * pad);
+            ImGui::TextColored(c, "%s", msg);
+            ImGui::PopTextWrapPos();
+            ImGui::SetCursorScreenPos(p0);
+            ImGui::Dummy(ImVec2(w, sz.y + 2 * pad + pad * 0.5f));
         }
         ImGui::PushFont(g_font_small);
         ImGui::PushTextWrapPos(0);
@@ -2271,7 +2294,11 @@ static void save_data_ui(float sc, bool busy) {
                        "folder. An unchanged save is not backed up twice; the newest 20 are kept.", true)) {
             bool ok = save_backup_create(rt_data_root(), made, sizeof made, why, sizeof why);
             if (ok) set_job("Saves backed up."); else set_job("Could not back up the saves.", true, why);
-            report(ok, made[0] ? "Saves backed up." : "Save data unchanged; no new backup.", why);
+            {
+                char done[160];
+                snprintf(done, sizeof done, made[0] ? "Saves backed up (%s)." : "Save data unchanged: no new backup needed.", made);
+                report(ok, done, why);
+            }
         }
         if (opt_action("Import save...", "", "Takes saves from a folder: a backup folder, or one with "
                        "wiiking2.sav, savedataN.bin or zelda.sav (and skip.dat / screenshots). Your current saves "
@@ -2362,23 +2389,20 @@ static void save_data_ui(float sc, bool busy) {
                     time_t t = (time_t)list[i].when;
                     strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S", localtime(&t));
                     snprintf(size, sizeof size, "%.1f MB", list[i].bytes / 1e6);
-                    bool asking = g_sb_confirm == list[i].name;
-                    auto restore = [&] {
-                        g_sb_confirm.clear();
-                        bool ok = save_backup_restore(rt_data_root(), list[i].name, why, sizeof why);
-                        if (ok) set_job("Saves restored."); else set_job("Could not restore the saves.", true, why);
-                        report(ok, "Saves restored.", ok ? NULL : why);
+                    auto ask = [&] {
+                        ask_name = list[i].name, ask_when = when, ask_size = size;
+                        pop_ask = true;
                     };
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);
                     ImGui::PushID(list[i].name);
-                    if (ImGui::Selectable(when, false)) asking ? restore() : (void)(g_sb_confirm = list[i].name);
+                    if (ImGui::Selectable(when, false)) ask();
                     ImGui::TableSetColumnIndex(1);
                     ImGui::TextUnformatted(strstr(list[i].name, "-auto") ? "Auto" : "Manual");
                     ImGui::TableSetColumnIndex(2);
                     ImGui::TextUnformatted(size);
                     ImGui::TableSetColumnIndex(3);
-                    if (ImGui::SmallButton(asking ? "Confirm" : "Restore")) asking ? restore() : (void)(g_sb_confirm = list[i].name);
+                    if (ImGui::SmallButton("Restore")) ask();
                     ImGui::PopID();
                 }
                 ImGui::EndTable();
@@ -2389,20 +2413,66 @@ static void save_data_ui(float sc, bool busy) {
                       g_sb_confirm.rfind("export:", 0) != 0;
         if (asking && opt_action("Cancel", "", "Keeps your current saves.", true)) {
             g_sb_confirm.clear();
-            report(true, "Cancelled.", NULL);
+            report(true, "Cancelled.", NULL, false);
         }
         if (opt_action("Open backups folder", "", "Shows the folder the backups are kept in.", true)) {
             std::string dir = std::string(rt_data_root()) + "/backups";
             mkdir(dir.c_str(), 0755);
-            if (SDL_OpenURL(("file:///" + dir).c_str()) == 0) report(true, "Backups folder opened.", NULL);
+            if (SDL_OpenURL(("file:///" + dir).c_str()) == 0) report(true, "Backups folder opened.", NULL, false);
             else report(false, NULL, "Couldn't open the backups folder.");
         }
-        if (msg[0]) {
-            ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.5f));
-            ImGui::PushTextWrapPos(0);
-            ImGui::TextColored(bad ? PAL_ERR_V4 : PAL_OK_V4, "%s", msg);
+
+        // Pop-ups (modal): the question before a restore, and the result of every action.
+        ImGuiViewport *vp = ImGui::GetMainViewport();
+        ImVec2 mid(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f);
+        float pw = std::min(520.f * sc, vp->Size.x * 0.9f);
+        if (pop_ask) ImGui::OpenPopup("Restore saves?##sd"), pop_ask = false;
+        else if (pop_result) ImGui::OpenPopup("Save data##sd"), pop_result = false;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24 * sc, 20 * sc));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12 * sc);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10 * sc, 12 * sc));
+        ImGui::SetNextWindowPos(mid, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(pw, 0));
+        if (ImGui::BeginPopupModal("Restore saves?##sd", NULL, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushFont(g_font_menu);
+            ImGui::TextColored(PAL_ACCENT_V4, "Restore this backup?");
+            ImGui::PopFont();
+            ImGui::PushTextWrapPos(pw - 24 * sc);
+            ImGui::Text("Backup of %s (%s).", ask_when.c_str(), ask_size.c_str());
+            ImGui::TextDisabled("Your current saves are backed up first, so you can undo this.");
             ImGui::PopTextWrapPos();
+            ImGui::Spacing();
+            bool go = false, cancel = ImGui::IsKeyPressed(ImGuiKey_Escape);
+            if (ImGui::Button("Restore", ImVec2(150 * sc, 0))) go = true;
+            ImGui::SetItemDefaultFocus();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(150 * sc, 0))) cancel = true;
+            if (go) {
+                bool ok = save_backup_restore(rt_data_root(), ask_name.c_str(), why, sizeof why);
+                char done[300];
+                snprintf(done, sizeof done, "Saves restored from the backup of %s.\nThe saves you had were backed up first. "
+                         "Start the game to use the restored saves.", ask_when.c_str());
+                if (ok) set_job("Saves restored."); else set_job("Could not restore the saves.", true, why);
+                report(ok, done, ok ? NULL : why);
+                ImGui::CloseCurrentPopup();
+            } else if (cancel) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
         }
+        ImGui::SetNextWindowPos(mid, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(pw, 0));
+        if (ImGui::BeginPopupModal("Save data##sd", NULL, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushFont(g_font_menu);
+            ImGui::TextColored(bad ? PAL_ERR_V4 : PAL_OK_V4, "%s", bad ? "That did not work" : "Done");
+            ImGui::PopFont();
+            ImGui::PushTextWrapPos(pw - 24 * sc);
+            ImGui::TextUnformatted(msg);
+            ImGui::PopTextWrapPos();
+            ImGui::Spacing();
+            if (ImGui::Button("OK", ImVec2(150 * sc, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+            ImGui::SetItemDefaultFocus();
+            ImGui::EndPopup();
+        }
+        ImGui::PopStyleVar(3);
     }
 }
 

@@ -7,7 +7,7 @@ ARG SDL_VERSION=3.4.16
 ARG SDL_SHA256=7322236cd12090c3eb40b9728be4d49c76f66ad17d04369584d4ecad5cf77c68
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git python3 python3-venv \
-        clang lld make pkg-config cmake ninja-build \
+        clang libclang-rt-dev lld make pkg-config cmake ninja-build \
         libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libvulkan-dev libshaderc-dev \
         libvulkan-memory-allocator-dev glslc spirv-tools \
         libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev libxtst-dev \

@@ -3,7 +3,7 @@
 Work-in-progress static recompilation of *The Legend of Zelda: Skyward Sword HD* (Switch, v1.0.0 and v1.0.1) into a native
 Windows app with a Vulkan renderer. Derived from [LAS Recomp](https://github.com/peiikai/LASRecomp).
 
-<a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+<a href="https://recomplauncher.com/game/skywardrecomp"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
 
 > **Unofficial fan project, not affiliated with or endorsed by Nintendo.** "The Legend of Zelda" and "Skyward Sword"
 > are trademarks of Nintendo. This repository contains **no** game code, assets, fonts, keys or game files.
@@ -49,7 +49,7 @@ Running natively on Windows (Vulkan, 21:9 ultrawide).
 | Area | Progress | State |
 |---|---|---|
 | Loader, kernel/HLE services, boot to title screen | `██████████` 100% | done |
-| Threading (condvar lost-wakeup fix), 30 fps pacing | `██████████` 100% | done |
+| Threading (condvar lost-wakeup fix), frame pacing (30 / 60 / 90 / 120 fps) | `██████████` 100% | done |
 | Audio (audren voices) | `██████████` 100% | done |
 | App builds and tests pass on Windows, Linux and macOS (CI) | `██████████` 100% | done |
 | Vulkan renderer: textures, depth/stencil, dual-source blend (eyes) | `██████████` 100% | done, eyes confirmed in game 2026-11-18 |
@@ -58,7 +58,7 @@ Running natively on Windows (Vulkan, 21:9 ultrawide).
 | Save-file names (`□□` glyphs) | `██████████` 100% | fixed (swkbd UTF-16), confirmed in game 2026-11-19 |
 | LA-specific HLE modules and address tables replaced for SS | partial | 2 verified SS addresses per patch table (`runtime/game_addresses/patches_v1_0_{0,1}.h`); runtime tables still all `0x0`; the former 30% counted LA leftovers, not SS addresses |
 | Ultrawide, resolution options | `██████████` 100% | 21:9 textures, shadows and characters confirmed in game 2026-11-19 |
-| 60 fps | implemented, not end-to-end verified | frame-rate setting Auto/30/60/90/120/Unlocked wired; 90 s `--play` baseline 59-60 fps; 90/120/Unlocked experimental |
+| 60 / 90 / 120 fps | supported | frame-rate setting Auto/30/60/90/120/Unlocked (Settings, and RecompLauncher's Frame Rate); 90 s `--play` baseline 59-60 fps; 90/120/Unlocked still experimental |
 | Long-session stability / full playthrough | `███░░░░░░░` 30% | 150 s+ runs OK, no full playthrough |
 
 Where shown, the percentage is a rough milestone estimate, not a measured figure; the two rows above are qualitative because the available evidence supplies no defensible percentage for them after 2026-11-22. Evidence: `TASKS.md:28` (old SS-table 30% was LA leftovers), `TASKS.md:165` (90 s 59-60 fps baseline), commits `316eec43`, `068ceed6`, `9d4fbbfd`, `61de4f7c` (frame-rate setting/pacing), and the current address tables (2 verified SS addresses in each patch table, runtime tables all `0x0`).

@@ -7,6 +7,10 @@
 #undef NDEBUG
 #include <assert.h>
 
+#ifdef _WIN32
+void hotsample_thread(uintptr_t handle) { (void)handle; }  // (the sampler is runtime/hotsample.c: not under test)
+#endif
+
 // Unused platform/IPC entry points from the included kernel translation unit.
 // Abort if a test accidentally leaves the synchronization code under test.
 Module g_modules[4];

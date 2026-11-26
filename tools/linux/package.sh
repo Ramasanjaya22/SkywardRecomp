@@ -57,8 +57,8 @@ cp runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h tools/gameli
    "$APPDIR/usr/bin/gamelib-src/"
 cp tools/linux/AppRun "$APPDIR/" && chmod +x "$APPDIR/AppRun"
 cp tools/linux/skywardrecomp.desktop "$APPDIR/"
-# RecompLauncher reads /recomplauncher.json from the AppImage: this release's prepare.version, the Linux game code library
-sed -e "s/\"version\": \"v[^\"]*\"/\"version\": \"$VERSION\"/" -e 's/skywardgame\.dll/skywardgame.so/g' recomplauncher.json \
+# RecompLauncher reads /recomplauncher.json from the AppImage: the Linux game code library
+sed -e 's/skywardgame\.dll/skywardgame.so/g' recomplauncher.json \
     > "$APPDIR/recomplauncher.json"
 cp docs/icon/icon_1024.png "$APPDIR/skywardrecomp.png" && ln -sf skywardrecomp.png "$APPDIR/.DirIcon"
 

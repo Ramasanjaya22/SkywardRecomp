@@ -47,7 +47,7 @@ with tempfile.TemporaryDirectory() as t:
     xci = t/'game.xci'
     xci.write_bytes(b'\0' * 64)
     rc, out = prepare(data, '--game', str(xci), '--keys', str(t/'missing.keys'))
-    assert rc == 1 and 'Those are game packages, not game files' in out, (rc, out)
+    assert rc == 1 and 'Game files are packaged' in out, (rc, out)
     outs.append(out)
 
     # every progress line has the launcher's shape

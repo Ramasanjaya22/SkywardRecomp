@@ -84,8 +84,8 @@ if [ ! -f "$P/lib/libavcodec.so" ]; then
         --enable-shared --disable-static --enable-pic \
         --disable-autodetect --disable-programs --disable-doc --disable-network --disable-avdevice --disable-avfilter \
         --disable-swresample --disable-everything \
-        --enable-protocol=file --enable-demuxer=matroska,mov \
-        --enable-decoder=vp9,vp8,vorbis,opus,h264,aac --enable-parser=vp9,vp8,vorbis,opus,h264,aac \
+        --enable-protocol=file --enable-demuxer=matroska,mov,image2,image_jpeg_pipe,image_png_pipe \
+        --enable-decoder=vp9,vp8,vorbis,opus,h264,aac,mjpeg,png --enable-parser=vp9,vp8,vorbis,opus,h264,aac,mjpeg,png \
         && make -j"$JOBS" && make install)
 fi
 grep -q 'GPL version 3\|--enable-gpl' "$P/lib/pkgconfig/libavcodec.pc" && { echo "deps: FFmpeg is not LGPL"; exit 1; }
